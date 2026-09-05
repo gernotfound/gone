@@ -4,11 +4,11 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 export type WeaponModelType = 'assalto' | 'cecchino' | 'pompa' | 'mitraglietta' | 'coltello';
 
 export const WEAPON_SCALES: Record<WeaponModelType, number> = {
-  assalto: 0.15,
-  cecchino: 0.15,
-  pompa: 0.15,
-  mitraglietta: 0.15,
-  coltello: 0.08
+  assalto: 0.23,
+  cecchino: 0.23,
+  pompa: 0.23,
+  mitraglietta: 0.23,
+  coltello: 0.12
 };
 
 export const WEAPON_TYPES: readonly WeaponModelType[] = [
@@ -608,27 +608,27 @@ export const VIEWMODEL_TRANSFORMS: Record<WeaponModelType, ViewModelTransform> =
   assalto: {
     position: new THREE.Vector3(0.28, -0.24, -0.60),
     rotation: new THREE.Euler(-0.02, Math.PI / 2 - 0.04, 0.02),
-    scale: 0.15
+    scale: 0.23
   },
   cecchino: {
     position: new THREE.Vector3(0.32, -0.28, -0.80),
     rotation: new THREE.Euler(-0.02, Math.PI / 2 - 0.03, 0.01),
-    scale: 0.13
+    scale: 0.20
   },
   pompa: {
     position: new THREE.Vector3(0.26, -0.24, -0.55),
     rotation: new THREE.Euler(-0.02, Math.PI / 2 - 0.05, 0.02),
-    scale: 0.15
+    scale: 0.23
   },
   mitraglietta: {
     position: new THREE.Vector3(0.24, -0.22, -0.50),
     rotation: new THREE.Euler(-0.02, Math.PI / 2 - 0.04, 0.02),
-    scale: 0.15
+    scale: 0.23
   },
   coltello: {
     position: new THREE.Vector3(0.28, -0.22, -0.45),
-    rotation: new THREE.Euler(0.15, Math.PI / 2 - 0.10, -0.20),
-    scale: 0.08
+    rotation: new THREE.Euler(0.15, -Math.PI / 2 - 0.10, -0.20),
+    scale: 0.12
   }
 };
 

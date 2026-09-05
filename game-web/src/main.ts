@@ -13,7 +13,6 @@ import {
     attachWeaponToRobot,
     ROBOT_SCALE,
 } from './models/index.ts';
-import { CyberpunkColorPicker } from './ui/colorPicker.ts';
 import { P2PClient } from './net/p2pClient.ts';
 
 // --- MENU LOGIC ---
@@ -26,6 +25,7 @@ const btnEnter = document.getElementById('btn-enter') as HTMLButtonElement;
 const btnMusicToggle = document.getElementById('btn-music-toggle') as HTMLButtonElement;
 const musicStatus = document.getElementById('music-status') as HTMLElement;
 const btnSettings = document.getElementById('btn-settings') as HTMLButtonElement;
+const btnExit = document.getElementById('btn-exit') as HTMLButtonElement;
 const btnBack = document.getElementById('btn-back') as HTMLButtonElement;
 const volMaster = document.getElementById('vol-master') as HTMLInputElement;
 const volMusic = document.getElementById('vol-music') as HTMLInputElement;
@@ -116,26 +116,6 @@ volSfx.addEventListener('input', updateVolumes);
 let localPlayerColor = '#00F0FF';
 let localRobotPreview: THREE.Group | null = null;
 let activeP2PClient: P2PClient | null = null;
-
-const colorPickerContainer = document.getElementById('color-picker-container');
-let colorPicker: CyberpunkColorPicker | null = null;
-
-if (colorPickerContainer) {
-    colorPicker = new CyberpunkColorPicker({
-        initialColor: localPlayerColor,
-        onColorSelected: (colorHex: string) => {
-            localPlayerColor = colorHex;
-            player.color = colorHex;
-            if (localRobotPreview && localRobotPreview.visible) {
-                applyFluoColor(localRobotPreview, colorHex);
-            }
-            if (activeP2PClient) {
-                activeP2PClient.proposedColor = colorHex;
-            }
-        }
-    });
-    colorPicker.mount(colorPickerContainer);
-}
 
 // --- GAME LOGIC ---
 let isGameRunning = false;
@@ -500,7 +480,7 @@ function initGame() {
     
     bgMusic.volume = 0.5;
 
-    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.5, 3000);
+    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.01, 3000);
     camera.userData.currentY = get_height_at(0, 0) + player.eyeHeight + player.floatHeight;
 
     renderer = new THREE.WebGLRenderer({ canvas: gameCanvas, antialias: true });
@@ -708,7 +688,12 @@ function setupInput() {
             gameUi.classList.add('hidden');
             btnEnter.textContent = "RIPRENDI";
             btnEnter.disabled = false;
+            btnExit.classList.remove('hidden');
         }
+    });
+
+    btnExit.addEventListener('click', () => {
+        location.reload();
     });
 }
 
@@ -904,15 +889,11 @@ function drawMinimap() {
     remotePlayers,
     viewmodelRoot,
     recoilContainer,
-    colorPicker,
     player,
     getLocalPlayerColor: () => localPlayerColor,
     setLocalPlayerColor: (hex: string) => {
         localPlayerColor = hex;
         player.color = hex;
-        if (colorPicker) {
-            colorPicker.setSelectedColor(hex);
-        }
         if (localRobotPreview && localRobotPreview.visible) {
             applyFluoColor(localRobotPreview, hex);
         }
