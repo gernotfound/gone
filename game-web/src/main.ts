@@ -137,6 +137,9 @@ const loadingBar = document.getElementById('loading-bar') as HTMLDivElement;
 const loadingText = document.getElementById('loading-text') as HTMLDivElement;
 
 async function preLoadGame() {
+    loadingScreen.classList.remove('hidden');
+    loadingScreen.style.opacity = '1';
+    
     const updateProgress = (pct: number, msg: string) => {
         loadingBar.style.width = `${pct}%`;
         loadingText.textContent = `${msg} ${pct}%`;
@@ -144,7 +147,7 @@ async function preLoadGame() {
 
     try {
         updateProgress(10, 'DOWNLOAD MOTORE WASM...');
-        await new Promise(r => setTimeout(r, 200)); // Simuliamo per fluidità UI
+        await new Promise(r => setTimeout(r, 200)); 
         
         await init();
         hasInitializedWasm = true;
@@ -152,12 +155,11 @@ async function preLoadGame() {
         await new Promise(r => setTimeout(r, 200));
 
         isGameRunning = true;
-        initGame(); // Crea scena, nebbia, ecc
+        initGame(); 
         
         updateProgress(80, 'GENERAZIONE CHUNK PROCEDURALI...');
         await new Promise(r => setTimeout(r, 200));
         
-        // Forza il primo render per compilare i materiali e rimuovere il lag iniziale
         renderer.compile(scene, camera);
         
         updateProgress(100, 'MONDO PRONTO!');
@@ -166,6 +168,7 @@ async function preLoadGame() {
         loadingScreen.style.opacity = '0';
         setTimeout(() => {
             loadingScreen.classList.add('hidden');
+            startGameplay();
         }, 500);
 
     } catch(e) {
@@ -175,14 +178,7 @@ async function preLoadGame() {
     }
 }
 
-// Avvia automaticamente il caricamento appena si apre la pagina
-window.addEventListener('DOMContentLoaded', () => {
-    preLoadGame();
-});
-
-btnEnter.addEventListener('click', async () => {
-    if (!hasInitializedWasm) return; // Se non ha ancora finito non fa nulla
-    
+function startGameplay() {
     mainMenu.classList.add('hidden');
     gameUi.classList.remove('hidden');
     gameCanvas.classList.remove('hidden');
@@ -195,6 +191,16 @@ btnEnter.addEventListener('click', async () => {
     }
     
     document.body.requestPointerLock();
+}
+
+btnEnter.addEventListener('click', async () => {
+    if (!hasInitializedWasm) {
+        // Primo avvio: mostra caricamento, carica, poi entra
+        preLoadGame();
+    } else {
+        // Ripresa del gioco dalla pausa (esc)
+        startGameplay();
+    }
 });
 
 let rayGeo: THREE.CylinderGeometry;
@@ -480,8 +486,20 @@ function updatePhysics(delta: number) {
     if (!player.isGrounded) player.velocity.y -= player.gravity * delta;
     player.position.y += player.velocity.y * delta;
 
-    // Use WASM for terrain height
-    const groundHeight = get_height_at(player.position.x, player.position.z) + player.height + player.floatHeight;
+    // Use WASM for terrain height - pseudo capsule collision
+    // Campioniamo 5 punti per creare un cilindro di collisione di raggio 1.5
+    // Questo impedisce alla visuale di penetrare in muri verticali o forme a "V"
+    const r = 1.5;
+    const px = player.position.x;
+    const pz = player.position.z;
+    const hCenter = get_height_at(px, pz);
+    const h1 = get_height_at(px + r, pz);
+    const h2 = get_height_at(px - r, pz);
+    const h3 = get_height_at(px, pz + r);
+    const h4 = get_height_at(px, pz - r);
+    const maxTerrainHeight = Math.max(hCenter, h1, h2, h3, h4);
+
+    const groundHeight = maxTerrainHeight + player.height + player.floatHeight;
 
     if (player.position.y <= groundHeight) {
         player.position.y = groundHeight;
