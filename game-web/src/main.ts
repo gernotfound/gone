@@ -123,8 +123,10 @@ const player = {
     sprintMultiplier: 2.0, // Sprint è 2x
     crouchMultiplier: 0.6, // Accovacciamento è 0.6x
     crouchEyeHeight: 1.0,
-    jumpForce: 15.0, // Salto più alto e soddisfacente (prima era 12)
-    gravity: 30.0,   // Gravità leggermente aumentata per bilanciare il tempo in aria
+    jumpForce: 25.0, // Salto altissimo
+    gravity: 9.8,    // Gravità reale terrestre
+    gravityScale: 5.0, // Moltiplicatore da videogioco per evitare l'effetto "luna"
+    mass: 80.0,      // Peso in kg
     velocity: new THREE.Vector3(), 
     position: new THREE.Vector3(0, 30, 0),
     isGrounded: false
@@ -492,7 +494,12 @@ function updatePhysics(delta: number) {
     player.position.x += moveDirection.x * currentSpeed * delta;
     player.position.z += moveDirection.z * currentSpeed * delta;
 
-    if (!player.isGrounded) player.velocity.y -= player.gravity * delta;
+    // Applichiamo la gravità reale scalata, con limite di velocità terminale per un uomo di 80kg (circa 54 m/s)
+    if (!player.isGrounded) {
+        player.velocity.y -= (player.gravity * player.gravityScale) * delta;
+        // Terminal velocity per 80kg in caduta libera pancia a terra
+        if (player.velocity.y < -54.0) player.velocity.y = -54.0; 
+    }
     player.position.y += player.velocity.y * delta;
 
     // Use WASM for terrain height - pseudo capsule collision
