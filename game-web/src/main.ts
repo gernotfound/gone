@@ -123,8 +123,8 @@ const player = {
     sprintMultiplier: 2.0, // Sprint è 2x
     crouchMultiplier: 0.6, // Accovacciamento è 0.6x
     crouchEyeHeight: 1.0,
-    jumpForce: 12.0,
-    gravity: 28.0, 
+    jumpForce: 15.0, // Salto più alto e soddisfacente (prima era 12)
+    gravity: 30.0,   // Gravità leggermente aumentata per bilanciare il tempo in aria
     velocity: new THREE.Vector3(), 
     position: new THREE.Vector3(0, 30, 0),
     isGrounded: false
@@ -508,7 +508,10 @@ function updatePhysics(delta: number) {
 
     const groundHeight = maxTerrainHeight + player.height + player.floatHeight;
 
-    if (player.position.y <= groundHeight) {
+    // Aggiungiamo un margine per lo "snap to ground" per evitare che 
+    // scendendo da una rampa il giocatore risulti "in aria" e non possa saltare.
+    const groundSnapMargin = 0.5; 
+    if (player.position.y <= groundHeight || (player.velocity.y <= 0 && player.position.y - groundHeight < groundSnapMargin)) {
         player.position.y = groundHeight;
         player.velocity.y = 0;
         player.isGrounded = true;
