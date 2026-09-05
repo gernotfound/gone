@@ -190,10 +190,15 @@ function startGameplay() {
         musicStatus.className = 'text-emerald-400';
     }
     
-    document.body.requestPointerLock();
+    try {
+        const promise = document.body.requestPointerLock();
+        if (promise) promise.catch(() => {});
+    } catch(e) {}
 }
 
-btnEnter.addEventListener('click', async () => {
+btnEnter.addEventListener('click', async (e) => {
+    e.stopPropagation(); // Evita il bubbling al document, che causerebbe un doppio requestPointerLock
+    
     if (!hasInitializedWasm) {
         // Primo avvio: mostra caricamento, carica, poi entra
         preLoadGame();
@@ -214,9 +219,9 @@ function initGame() {
     const fogColor = 0x1e293b; // slate-800 (Cielo notturno nebbioso, molto visibile)
     scene.background = new THREE.Color(fogColor);
     
-    // Usiamo Fog (lineare) per nascondere precisamente il limite del chunk
-    const fogNear = CHUNK_SIZE * (CHUNK_RADIUS - 1.2); 
-    const fogFar = CHUNK_SIZE * CHUNK_RADIUS;
+    // Usiamo Fog (lineare) per nascondere precisamente il limite del chunk (molto prima che carichino)
+    const fogNear = CHUNK_SIZE * (CHUNK_RADIUS - 1.6); // Es. inizia a sfocare a 160m
+    const fogFar = CHUNK_SIZE * (CHUNK_RADIUS - 0.7);  // Es. totalmente opaco a 520m, mentre i chunk sono a 800m
     scene.fog = new THREE.Fog(fogColor, fogNear, fogFar);
 
     // Setup per i raggi di sole volumetrici (God Rays fake)
@@ -230,6 +235,8 @@ function initGame() {
         depthWrite: false,
         side: THREE.DoubleSide
     });
+    
+    bgMusic.volume = 0.5;
 
     camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.5, 3000);
     camera.userData.currentY = get_height_at(0, 0) + player.eyeHeight + player.floatHeight;
