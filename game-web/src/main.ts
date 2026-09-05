@@ -164,19 +164,33 @@ btnEnter.addEventListener('click', async () => {
     }
 });
 
+let rayGeo: THREE.CylinderGeometry;
+let rayMat: THREE.MeshBasicMaterial;
+
 function initGame() {
     scene = new THREE.Scene();
     
-    // Cielo e nebbia perfettamente raccordati alla distanza di rendering (Chunk)
-    // Questo nasconde il "popping" dei chunk in modo naturale, come in Minecraft.
-    const fogColor = 0x020617; // slate-950 (Molto scuro, atmosfera da esplorazione)
+    // Cielo e nebbia perfettamente raccordati alla distanza di rendering.
+    // Usiamo uno "slate" medio-scuro per far sì che la nebbia sia visibile (se è nera non si vede!).
+    const fogColor = 0x1e293b; // slate-800 (Cielo notturno nebbioso, molto visibile)
     scene.background = new THREE.Color(fogColor);
     
-    // Usiamo Fog (lineare) invece di FogExp2, così abbiamo il controllo totale 
-    // sull'inizio e fine della nebbia.
+    // Usiamo Fog (lineare) per nascondere precisamente il limite del chunk
     const fogNear = CHUNK_SIZE * (CHUNK_RADIUS - 1.2); 
     const fogFar = CHUNK_SIZE * CHUNK_RADIUS;
     scene.fog = new THREE.Fog(fogColor, fogNear, fogFar);
+
+    // Setup per i raggi di sole volumetrici (God Rays fake)
+    rayGeo = new THREE.CylinderGeometry(20, 45, 800, 16, 1, true); // aperte sopra e sotto
+    rayGeo.translate(0, 400, 0); // Spostiamo l'origine alla base del raggio
+    rayMat = new THREE.MeshBasicMaterial({
+        color: 0xfef08a,
+        transparent: true,
+        opacity: 0.04,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide
+    });
 
     camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.5, 3000);
     camera.userData.currentY = get_height_at(0, 0) + player.eyeHeight + player.floatHeight;
@@ -296,6 +310,26 @@ function updateChunks() {
                         instancedRocks.setMatrixAt(i, dummy.matrix);
                     }
                     mesh.add(instancedRocks);
+                }
+
+                // Generazione procedurale dei raggi di luce volumentrici (God Rays)
+                // Usiamo un seed basato sul chunk ID per renderli persistenti, o un random semplice per ora.
+                const random = Math.sin(cx * 12.9898 + cz * 78.233) * 43758.5453;
+                if ((random - Math.floor(random)) > 0.6) { 
+                    // 40% di possibilità per un gruppo di raggi nel chunk
+                    const rayCount = 1 + Math.floor((random * 10) % 3);
+                    const sunDir = new THREE.Vector3(200, 300, -100).normalize();
+                    const up = new THREE.Vector3(0, 1, 0);
+                    const quaternion = new THREE.Quaternion().setFromUnitVectors(up, sunDir);
+
+                    for (let r = 0; r < rayCount; r++) {
+                        const ray = new THREE.Mesh(rayGeo, rayMat);
+                        const rX = ((Math.random() - 0.5) * CHUNK_SIZE);
+                        const rZ = ((Math.random() - 0.5) * CHUNK_SIZE);
+                        ray.position.set(rX, -50, rZ); // Parte da sottoterra per nascondere il taglio netto
+                        ray.quaternion.copy(quaternion);
+                        mesh.add(ray);
+                    }
                 }
 
                 scene.add(mesh);
