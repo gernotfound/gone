@@ -1,7 +1,20 @@
 import './style.css'
 import * as THREE from 'three';
-// We will import the wasm module dynamically when entering the game
 import init, { generate_chunk, get_height_at } from '../pkg/game_core.js';
+import {
+    type WeaponModelType,
+    WEAPON_TYPES,
+    createWeaponViewModel,
+    loadWeaponViewModel,
+    createThirdPersonWeapon,
+    createProceduralRobot,
+    loadRobotModel,
+    applyFluoColor,
+    attachWeaponToRobot,
+    ROBOT_SCALE,
+} from './models/index.ts';
+import { CyberpunkColorPicker } from './ui/colorPicker.ts';
+import { P2PClient } from './net/p2pClient.ts';
 
 // --- MENU LOGIC ---
 const bgMusic = document.getElementById('bg-music') as HTMLAudioElement;
@@ -99,6 +112,31 @@ volMaster.addEventListener('input', updateVolumes);
 volMusic.addEventListener('input', updateVolumes);
 volSfx.addEventListener('input', updateVolumes);
 
+// --- CYBERPUNK COLOR PICKER & PLAYER CUSTOMIZATION ---
+let localPlayerColor = '#00F0FF';
+let localRobotPreview: THREE.Group | null = null;
+let activeP2PClient: P2PClient | null = null;
+
+const colorPickerContainer = document.getElementById('color-picker-container');
+let colorPicker: CyberpunkColorPicker | null = null;
+
+if (colorPickerContainer) {
+    colorPicker = new CyberpunkColorPicker({
+        initialColor: localPlayerColor,
+        onColorSelected: (colorHex: string) => {
+            localPlayerColor = colorHex;
+            player.color = colorHex;
+            if (localRobotPreview && localRobotPreview.visible) {
+                applyFluoColor(localRobotPreview, colorHex);
+            }
+            if (activeP2PClient) {
+                activeP2PClient.proposedColor = colorHex;
+            }
+        }
+    });
+    colorPicker.mount(colorPickerContainer);
+}
+
 // --- GAME LOGIC ---
 let isGameRunning = false;
 let scene: THREE.Scene, camera: THREE.PerspectiveCamera, renderer: THREE.WebGLRenderer;
@@ -129,8 +167,228 @@ const player = {
     mass: 80.0,      // Peso in kg
     velocity: new THREE.Vector3(), 
     position: new THREE.Vector3(0, 30, 0),
-    isGrounded: false
+    isGrounded: false,
+    color: localPlayerColor
 };
+
+// --- WEAPON VIEWMODEL & REMOTE PLAYERS ---
+let currentWeaponIndex = 0;
+let currentWeaponType: WeaponModelType = 'assalto';
+const viewmodelRoot = new THREE.Group();
+viewmodelRoot.name = 'ViewmodelRoot';
+const recoilContainer = new THREE.Group();
+recoilContainer.name = 'RecoilContainer';
+viewmodelRoot.add(recoilContainer);
+
+const viewmodelCache = new Map<WeaponModelType, THREE.Group>();
+const recoilOffset = new THREE.Vector3(0, 0, 0);
+const recoilRotation = new THREE.Euler(0, 0, 0);
+let walkBobTimer = 0;
+let switchAnimationTimer = 0;
+
+function updateWeaponHud(name: string, index: number) {
+    let el = document.getElementById('weapon-hud');
+    if (!el && gameUi) {
+        el = document.createElement('div');
+        el.id = 'weapon-hud';
+        el.className = 'absolute bottom-6 right-8 flex flex-col items-end pointer-events-none font-mono';
+        gameUi.appendChild(el);
+    }
+    if (el) {
+        el.innerHTML = `
+            <div class="text-xs text-slate-400 uppercase tracking-widest">[1-5] ARMA SELEZIONATA</div>
+            <div class="text-2xl font-black text-cyan-400 tracking-wider uppercase drop-shadow-[0_0_8px_rgba(0,240,255,0.6)]">
+                ${index + 1}. ${name}
+            </div>
+        `;
+    }
+}
+
+async function switchWeapon(index: number): Promise<void> {
+    if (index < 0 || index >= WEAPON_TYPES.length) return;
+    if (index === currentWeaponIndex && recoilContainer.children.length > 0) return;
+
+    currentWeaponIndex = index;
+    currentWeaponType = WEAPON_TYPES[index];
+
+    // Clear current viewmodel mesh
+    while (recoilContainer.children.length > 0) {
+        recoilContainer.remove(recoilContainer.children[0]);
+    }
+
+    // Switch animation kick
+    switchAnimationTimer = 0.15;
+    recoilContainer.position.y = -0.12;
+
+    if (!viewmodelCache.has(currentWeaponType)) {
+        const proceduralVm = createWeaponViewModel(currentWeaponType);
+        viewmodelCache.set(currentWeaponType, proceduralVm);
+        // Attempt async upgrade to GLB asset
+        loadWeaponViewModel(currentWeaponType).then((glbVm) => {
+            viewmodelCache.set(currentWeaponType, glbVm);
+            if (currentWeaponType === WEAPON_TYPES[currentWeaponIndex]) {
+                while (recoilContainer.children.length > 0) {
+                    recoilContainer.remove(recoilContainer.children[0]);
+                }
+                recoilContainer.add(glbVm);
+            }
+        }).catch(() => {});
+    }
+
+    const activeVm = viewmodelCache.get(currentWeaponType)!;
+    recoilContainer.add(activeVm);
+
+    updateWeaponHud(currentWeaponType, currentWeaponIndex);
+}
+
+function fireWeapon(): void {
+    if (!isGameRunning || document.pointerLockElement !== document.body || !mainMenu.classList.contains('hidden') || isMapOpen) {
+        return;
+    }
+
+    let kickZ = 0.05;
+    let kickPitch = 0.04;
+    let kickYaw = (Math.random() - 0.5) * 0.01;
+
+    switch (currentWeaponType) {
+        case 'cecchino':
+            kickZ = 0.12;
+            kickPitch = 0.08;
+            break;
+        case 'pompa':
+            kickZ = 0.10;
+            kickPitch = 0.07;
+            break;
+        case 'mitraglietta':
+            kickZ = 0.03;
+            kickPitch = 0.025;
+            break;
+        case 'coltello':
+            kickZ = 0.08;
+            kickPitch = -0.05;
+            break;
+        case 'assalto':
+        default:
+            kickZ = 0.05;
+            kickPitch = 0.04;
+            break;
+    }
+
+    recoilOffset.z += kickZ;
+    recoilRotation.x += kickPitch;
+    recoilRotation.y += kickYaw;
+
+    // Bump camera pitch slightly for gun kick feel
+    pitch = Math.max(-Math.PI / 2 + 0.1, Math.min(Math.PI / 2 - 0.1, pitch + kickPitch * 0.2));
+}
+
+function updateViewmodel(delta: number): void {
+    // Smooth recoil recovery spring
+    recoilOffset.lerp(new THREE.Vector3(0, 0, 0), Math.min(1.0, 18.0 * delta));
+    recoilRotation.x = THREE.MathUtils.lerp(recoilRotation.x, 0, Math.min(1.0, 15.0 * delta));
+    recoilRotation.y = THREE.MathUtils.lerp(recoilRotation.y, 0, Math.min(1.0, 15.0 * delta));
+    recoilRotation.z = THREE.MathUtils.lerp(recoilRotation.z, 0, Math.min(1.0, 15.0 * delta));
+
+    if (switchAnimationTimer > 0) {
+        switchAnimationTimer -= delta;
+        recoilContainer.position.y = THREE.MathUtils.lerp(recoilContainer.position.y, 0, Math.min(1.0, 16.0 * delta));
+    } else {
+        recoilContainer.position.y = recoilOffset.y;
+    }
+    recoilContainer.position.x = recoilOffset.x;
+    recoilContainer.position.z = recoilOffset.z;
+    recoilContainer.rotation.set(recoilRotation.x, recoilRotation.y, recoilRotation.z);
+
+    // Natural walk bobbing
+    if (moveDirection.lengthSq() > 0.01 && player.isGrounded) {
+        const bobSpeed = keys.shift ? 14.0 : 9.0;
+        walkBobTimer += delta * bobSpeed;
+        const bobX = Math.cos(walkBobTimer) * 0.005;
+        const bobY = Math.sin(walkBobTimer * 2) * 0.005;
+        viewmodelRoot.position.set(bobX, bobY, 0);
+    } else {
+        viewmodelRoot.position.lerp(new THREE.Vector3(0, 0, 0), Math.min(1.0, 8.0 * delta));
+    }
+}
+
+// --- REMOTE PLAYERS REGISTRY ---
+export interface RemotePlayerInstance {
+    id: string;
+    color: string;
+    weaponType: WeaponModelType;
+    group: THREE.Group;
+}
+
+export const remotePlayers = new Map<string, RemotePlayerInstance>();
+
+export function addOrUpdateRemotePlayer(
+    id: string,
+    x: number,
+    y: number,
+    z: number,
+    yawAngle: number,
+    fluoColor: string = '#00F0FF',
+    weapon: WeaponModelType | number = 'assalto'
+): RemotePlayerInstance {
+    const resolvedWeapon = typeof weapon === 'number' ? (WEAPON_TYPES[weapon] ?? 'assalto') : weapon;
+    let entry = remotePlayers.get(id);
+
+    if (!entry) {
+        const robot = createProceduralRobot(fluoColor);
+        robot.scale.set(ROBOT_SCALE, ROBOT_SCALE, ROBOT_SCALE);
+        robot.position.set(x, y, z);
+        robot.rotation.y = yawAngle;
+
+        const tpWeapon = createThirdPersonWeapon(resolvedWeapon);
+        attachWeaponToRobot(robot, tpWeapon);
+
+        scene.add(robot);
+
+        entry = {
+            id,
+            color: fluoColor,
+            weaponType: resolvedWeapon,
+            group: robot
+        };
+        remotePlayers.set(id, entry);
+
+        // Async upgrade to GLTF robot
+        loadRobotModel('assets/modello.glb', fluoColor).then((glbRobot) => {
+            if (remotePlayers.has(id)) {
+                scene.remove(entry!.group);
+                glbRobot.scale.set(ROBOT_SCALE, ROBOT_SCALE, ROBOT_SCALE);
+                glbRobot.position.copy(entry!.group.position);
+                glbRobot.rotation.copy(entry!.group.rotation);
+                attachWeaponToRobot(glbRobot, createThirdPersonWeapon(entry!.weaponType));
+                scene.add(glbRobot);
+                entry!.group = glbRobot;
+            }
+        }).catch(() => {});
+    } else {
+        entry.group.position.set(x, y, z);
+        entry.group.rotation.y = yawAngle;
+
+        if (entry.color !== fluoColor) {
+            entry.color = fluoColor;
+            applyFluoColor(entry.group, fluoColor);
+        }
+
+        if (entry.weaponType !== resolvedWeapon) {
+            entry.weaponType = resolvedWeapon;
+            attachWeaponToRobot(entry.group, createThirdPersonWeapon(resolvedWeapon));
+        }
+    }
+
+    return entry;
+}
+
+export function removeRemotePlayer(id: string): void {
+    const entry = remotePlayers.get(id);
+    if (entry) {
+        scene.remove(entry.group);
+        remotePlayers.delete(id);
+    }
+}
 
 let hasInitializedWasm = false;
 
@@ -285,6 +543,11 @@ function initGame() {
 
     player.position.set(0, get_height_at(0, 0) + player.height + player.floatHeight + 2.0, 0);
 
+    // Attach camera to scene and viewmodel to camera
+    scene.add(camera);
+    camera.add(viewmodelRoot);
+    switchWeapon(0);
+
     setupInput();
     window.addEventListener('resize', () => {
         camera.aspect = window.innerWidth / window.innerHeight;
@@ -424,6 +687,13 @@ function setupInput() {
     window.addEventListener('keydown', (e) => handleKey(e, true));
     window.addEventListener('keyup', (e) => handleKey(e, false));
     
+    // Fire weapon on left click when in pointer lock
+    window.addEventListener('mousedown', (e) => {
+        if (e.button === 0 && document.pointerLockElement === document.body) {
+            fireWeapon();
+        }
+    });
+
     // Unpause on click
     document.addEventListener('click', () => {
         if(isGameRunning && document.pointerLockElement !== document.body && mainMenu.classList.contains('hidden') && settingsMenu.classList.contains('hidden') && !isMapOpen) {
@@ -472,6 +742,11 @@ function handleKey(e: KeyboardEvent, isDown: boolean) {
                 player.isGrounded = false;
             }
             break;
+        case 'Digit1': if (isDown) switchWeapon(0); break;
+        case 'Digit2': if (isDown) switchWeapon(1); break;
+        case 'Digit3': if (isDown) switchWeapon(2); break;
+        case 'Digit4': if (isDown) switchWeapon(3); break;
+        case 'Digit5': if (isDown) switchWeapon(4); break;
     }
 }
 
@@ -556,6 +831,7 @@ function animate() {
         // nemmeno quando sei nel menu o hai la mappa aperta!
         updatePhysics(delta);
         updateChunks(); 
+        updateViewmodel(delta);
     }
 
     renderer.render(scene, camera);
@@ -616,3 +892,41 @@ function drawMinimap() {
         playerDot.style.transform = `rotate(${-yaw}rad)`;
     }
 }
+
+// Global API exposure for testing, UI, and networking integration
+(window as any).goneGame = {
+    switchWeapon,
+    fireWeapon,
+    getActiveWeapon: () => currentWeaponType,
+    getActiveWeaponIndex: () => currentWeaponIndex,
+    addOrUpdateRemotePlayer,
+    removeRemotePlayer,
+    remotePlayers,
+    viewmodelRoot,
+    recoilContainer,
+    colorPicker,
+    player,
+    getLocalPlayerColor: () => localPlayerColor,
+    setLocalPlayerColor: (hex: string) => {
+        localPlayerColor = hex;
+        player.color = hex;
+        if (colorPicker) {
+            colorPicker.setSelectedColor(hex);
+        }
+        if (localRobotPreview && localRobotPreview.visible) {
+            applyFluoColor(localRobotPreview, hex);
+        }
+        if (activeP2PClient) {
+            activeP2PClient.proposedColor = hex;
+        }
+    },
+    getLocalRobotPreview: () => localRobotPreview,
+    setLocalRobotPreview: (preview: THREE.Group | null) => {
+        localRobotPreview = preview;
+    },
+    getP2PClient: () => activeP2PClient,
+    setP2PClient: (client: P2PClient | null) => {
+        activeP2PClient = client;
+    }
+};
+

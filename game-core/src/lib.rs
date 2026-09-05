@@ -1,5 +1,11 @@
 use wasm_bindgen::prelude::*;
 
+pub mod colors;
+pub mod weapons;
+
+pub use colors::WasmColorRegistry;
+pub use weapons::WasmCombatEngine;
+
 // Pseudo-random hash
 fn hash(x: f64, y: f64) -> f64 {
     let n = (x * 12.9898 + y * 78.233).sin() * 43758.5453;
@@ -274,7 +280,7 @@ pub fn generate_chunk(cx: f64, cz: f64, offset_x: f64, offset_z: f64, size: f64,
             let slope = 1.0 / (nx*nx + 1.0 + nz*nz).sqrt();
             
             let mut t = (slope - 0.5) * 2.5;
-            t = t.max(0.0).min(1.0);
+            t = t.clamp(0.0, 1.0);
             
             let r1 = 30.0/255.0; let g1 = 41.0/255.0; let b1 = 59.0/255.0;
             let r2 = 2.0/255.0;  let g2 = 6.0/255.0;  let b2 = 15.0/255.0;
