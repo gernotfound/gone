@@ -12,6 +12,22 @@
     <audio id="bg-music" src="/Colossus March.mp3" loop></audio>
 
     <div id="app" class="w-full h-full absolute inset-0 flex items-center justify-center">
+      
+      <!-- LOADING SCREEN -->
+      <div id="loading-screen" class="absolute inset-0 z-50 bg-slate-950 flex flex-col items-center justify-center transition-opacity duration-500">
+        <div class="relative flex items-center justify-center mb-8">
+            <div class="absolute w-24 h-24 border-t-4 border-blue-500 border-solid rounded-full animate-spin"></div>
+            <div class="absolute w-16 h-16 border-b-4 border-emerald-500 border-solid rounded-full animate-spin" style="animation-direction: reverse; animation-duration: 1.5s;"></div>
+        </div>
+        <h1 class="text-3xl font-black tracking-widest text-white mb-6 uppercase">
+          Costruzione Mondo
+        </h1>
+        <div class="w-80 h-2 bg-slate-900 rounded-full overflow-hidden border border-slate-800">
+            <div id="loading-bar" class="h-full bg-gradient-to-r from-blue-500 to-emerald-500 w-0 transition-all duration-300"></div>
+        </div>
+        <div id="loading-text" class="mt-4 text-emerald-400 font-mono text-sm tracking-widest font-bold">CARICAMENTO RISORSE 0%</div>
+      </div>
+
       <!-- MAIN MENU -->
       <div id="main-menu" class="flex flex-col items-center bg-slate-900/80 p-12 rounded-[2rem] border border-slate-700/50 box-glow backdrop-blur-md shadow-2xl relative z-10 w-full max-w-md transition-all duration-300">
         

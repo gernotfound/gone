@@ -131,37 +131,70 @@ const player = {
 };
 
 let hasInitializedWasm = false;
-btnEnter.addEventListener('click', async () => {
-    btnEnter.disabled = true;
-    btnEnter.textContent = "CARICAMENTO MOTORE...";
-    
+
+const loadingScreen = document.getElementById('loading-screen') as HTMLDivElement;
+const loadingBar = document.getElementById('loading-bar') as HTMLDivElement;
+const loadingText = document.getElementById('loading-text') as HTMLDivElement;
+
+async function preLoadGame() {
+    const updateProgress = (pct: number, msg: string) => {
+        loadingBar.style.width = `${pct}%`;
+        loadingText.textContent = `${msg} ${pct}%`;
+    };
+
     try {
-        if (!hasInitializedWasm) {
-            await init();
-            hasInitializedWasm = true;
-        }
+        updateProgress(10, 'DOWNLOAD MOTORE WASM...');
+        await new Promise(r => setTimeout(r, 200)); // Simuliamo per fluidità UI
         
-        mainMenu.classList.add('hidden');
-        gameUi.classList.remove('hidden');
-        gameCanvas.classList.remove('hidden');
+        await init();
+        hasInitializedWasm = true;
+        updateProgress(50, 'INIZIALIZZAZIONE SHADER THREE.JS...');
+        await new Promise(r => setTimeout(r, 200));
+
+        isGameRunning = true;
+        initGame(); // Crea scena, nebbia, ecc
         
-        if (!isMusicPlaying) {
-            bgMusic.play().catch(() => {});
-            isMusicPlaying = true;
-            musicStatus.textContent = 'ON';
-            musicStatus.className = 'text-emerald-400';
-        }
+        updateProgress(80, 'GENERAZIONE CHUNK PROCEDURALI...');
+        await new Promise(r => setTimeout(r, 200));
         
-        document.body.requestPointerLock();
-        if(!isGameRunning) {
-            isGameRunning = true;
-            initGame();
-        }
-    } catch (e) {
-        console.error("Errore caricamento Wasm", e);
-        btnEnter.textContent = "ERRORE!";
-        btnEnter.disabled = false;
+        // Forza il primo render per compilare i materiali e rimuovere il lag iniziale
+        renderer.compile(scene, camera);
+        
+        updateProgress(100, 'MONDO PRONTO!');
+        await new Promise(r => setTimeout(r, 300));
+        
+        loadingScreen.style.opacity = '0';
+        setTimeout(() => {
+            loadingScreen.classList.add('hidden');
+        }, 500);
+
+    } catch(e) {
+        loadingText.textContent = "ERRORE CRITICO CARICAMENTO";
+        loadingText.className = "mt-4 text-red-500 font-mono text-sm tracking-widest font-bold";
+        console.error(e);
     }
+}
+
+// Avvia automaticamente il caricamento appena si apre la pagina
+window.addEventListener('DOMContentLoaded', () => {
+    preLoadGame();
+});
+
+btnEnter.addEventListener('click', async () => {
+    if (!hasInitializedWasm) return; // Se non ha ancora finito non fa nulla
+    
+    mainMenu.classList.add('hidden');
+    gameUi.classList.remove('hidden');
+    gameCanvas.classList.remove('hidden');
+    
+    if (!isMusicPlaying && musicStatus.textContent !== 'OFF') {
+        bgMusic.play().catch(() => {});
+        isMusicPlaying = true;
+        musicStatus.textContent = 'ON';
+        musicStatus.className = 'text-emerald-400';
+    }
+    
+    document.body.requestPointerLock();
 });
 
 let rayGeo: THREE.CylinderGeometry;
@@ -218,12 +251,6 @@ function initGame() {
     sunLight.shadow.camera.top = d;
     sunLight.shadow.camera.bottom = -d;
     scene.add(sunLight);
-
-    const sunGeo = new THREE.SphereGeometry(15, 16, 16);
-    const sunMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
-    const sunMesh = new THREE.Mesh(sunGeo, sunMat);
-    sunMesh.position.copy(sunLight.position);
-    scene.add(sunMesh);
 
     terrainMaterial = new THREE.MeshStandardMaterial({
         color: 0xffffff,
