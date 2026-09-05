@@ -166,16 +166,17 @@ btnEnter.addEventListener('click', async () => {
 
 function initGame() {
     scene = new THREE.Scene();
-    // Colore smog/grigio nuvoloso per la nebbia volumetrica
-    const smogColor = 0x64748b; // slate-500
-    scene.fog = new THREE.FogExp2(smogColor, 0.0035);
-
-    // Caricamento texture Cielo Epico
-    const textureLoader = new THREE.TextureLoader();
-    const skyTexture = textureLoader.load('/sky.jpg');
-    skyTexture.mapping = THREE.EquirectangularReflectionMapping;
-    skyTexture.colorSpace = THREE.SRGBColorSpace;
-    scene.background = skyTexture;
+    
+    // Cielo e nebbia perfettamente raccordati alla distanza di rendering (Chunk)
+    // Questo nasconde il "popping" dei chunk in modo naturale, come in Minecraft.
+    const fogColor = 0x020617; // slate-950 (Molto scuro, atmosfera da esplorazione)
+    scene.background = new THREE.Color(fogColor);
+    
+    // Usiamo Fog (lineare) invece di FogExp2, così abbiamo il controllo totale 
+    // sull'inizio e fine della nebbia.
+    const fogNear = CHUNK_SIZE * (CHUNK_RADIUS - 1.2); 
+    const fogFar = CHUNK_SIZE * CHUNK_RADIUS;
+    scene.fog = new THREE.Fog(fogColor, fogNear, fogFar);
 
     camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.5, 3000);
     camera.userData.currentY = get_height_at(0, 0) + player.eyeHeight + player.floatHeight;
@@ -186,11 +187,11 @@ function initGame() {
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-    const hemiLight = new THREE.HemisphereLight(0x94a3b8, 0x1e293b, 1.2);
+    // Luci più dark/cyberpunk per il nuovo cielo scuro
+    const hemiLight = new THREE.HemisphereLight(0x0f172a, 0x020617, 1.5);
     scene.add(hemiLight);
 
-    // Sole pallido che penetra lo smog
-    const sunLight = new THREE.DirectionalLight(0xfef08a, 1.5);
+    const sunLight = new THREE.DirectionalLight(0x38bdf8, 1.2); // Raggio azzurro neon
     sunLight.position.set(200, 300, -100);
     sunLight.castShadow = true;
     sunLight.shadow.mapSize.width = 2048;
@@ -205,7 +206,7 @@ function initGame() {
     scene.add(sunLight);
 
     const sunGeo = new THREE.SphereGeometry(15, 16, 16);
-    const sunMat = new THREE.MeshBasicMaterial({ color: 0xfef08a });
+    const sunMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
     const sunMesh = new THREE.Mesh(sunGeo, sunMat);
     sunMesh.position.copy(sunLight.position);
     scene.add(sunMesh);
