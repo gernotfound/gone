@@ -93,13 +93,16 @@ const player = {
     isGrounded: false
 };
 
+let hasInitializedWasm = false;
 btnEnter.addEventListener('click', async () => {
     btnEnter.disabled = true;
     btnEnter.textContent = "CARICAMENTO MOTORE...";
     
     try {
-        // Init WASM
-        await init();
+        if (!hasInitializedWasm) {
+            await init();
+            hasInitializedWasm = true;
+        }
         
         mainMenu.classList.add('hidden');
         gameUi.classList.remove('hidden');
@@ -120,6 +123,7 @@ btnEnter.addEventListener('click', async () => {
     } catch (e) {
         console.error("Errore caricamento Wasm", e);
         btnEnter.textContent = "ERRORE!";
+        btnEnter.disabled = false;
     }
 });
 
@@ -285,9 +289,20 @@ function setupInput() {
     window.addEventListener('keyup', (e) => handleKey(e, false));
     
     // Unpause on click
-    document.addEventListener('click', () => {
-        if(isGameRunning && document.pointerLockElement !== document.body) {
+    document.addEventListener('click', (e) => {
+        // Verifica che il click non sia avvenuto su elementi della UI (menu)
+        if(isGameRunning && document.pointerLockElement !== document.body && mainMenu.classList.contains('hidden') && settingsMenu.classList.contains('hidden')) {
             document.body.requestPointerLock();
+        }
+    });
+
+    // Ritorna al menu quando si preme ESC (esce dal pointer lock)
+    document.addEventListener('pointerlockchange', () => {
+        if (document.pointerLockElement === null && isGameRunning) {
+            mainMenu.classList.remove('hidden');
+            gameUi.classList.add('hidden');
+            btnEnter.textContent = "RIPRENDI";
+            btnEnter.disabled = false;
         }
     });
 }
