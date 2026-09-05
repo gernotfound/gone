@@ -121,7 +121,7 @@ let activeP2PClient: P2PClient | null = null;
 let isGameRunning = false;
 let scene: THREE.Scene, camera: THREE.PerspectiveCamera, renderer: THREE.WebGLRenderer;
 let terrainMaterial: THREE.MeshStandardMaterial, rockGeo: THREE.DodecahedronGeometry, rockMat: THREE.MeshStandardMaterial;
-const clock = new THREE.Clock();
+const clock = new THREE.Timer();
 const activeChunks = new Map<string, any>();
 const CHUNK_SIZE = 400;
 const CHUNK_RESOLUTION = 64;
@@ -487,8 +487,9 @@ function initGame() {
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-
+    renderer.shadowMap.type = THREE.PCFShadowMap;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    
     // Luci più dark/cyberpunk per il nuovo cielo scuro
     const hemiLight = new THREE.HemisphereLight(0x0f172a, 0x020617, 1.5);
     scene.add(hemiLight);

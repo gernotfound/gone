@@ -627,7 +627,7 @@ export const VIEWMODEL_TRANSFORMS: Record<WeaponModelType, ViewModelTransform> =
   },
   coltello: {
     position: new THREE.Vector3(0.28, -0.22, -0.45),
-    rotation: new THREE.Euler(0.15, -Math.PI / 2 - 0.10, -0.20),
+    rotation: new THREE.Euler(0.15, Math.PI / 2 - 0.10, -0.20),
     scale: 0.12
   }
 };
