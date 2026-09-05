@@ -166,10 +166,16 @@ btnEnter.addEventListener('click', async () => {
 
 function initGame() {
     scene = new THREE.Scene();
-    // Colore smog/grigio nuvoloso
+    // Colore smog/grigio nuvoloso per la nebbia volumetrica
     const smogColor = 0x64748b; // slate-500
-    scene.background = new THREE.Color(smogColor);
     scene.fog = new THREE.FogExp2(smogColor, 0.0035);
+
+    // Caricamento texture Cielo Epico
+    const textureLoader = new THREE.TextureLoader();
+    const skyTexture = textureLoader.load('/sky.jpg');
+    skyTexture.mapping = THREE.EquirectangularReflectionMapping;
+    skyTexture.colorSpace = THREE.SRGBColorSpace;
+    scene.background = skyTexture;
 
     camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.5, 3000);
     camera.userData.currentY = get_height_at(0, 0) + player.eyeHeight + player.floatHeight;
@@ -353,9 +359,9 @@ function handleKey(e: KeyboardEvent, isDown: boolean) {
         case 'KeyS': keys.backward = isDown; break;
         case 'KeyA': keys.left = isDown; break;
         case 'KeyD': keys.right = isDown; break;
-        case 'ShiftLeft': keys.shift = isDown; break;
+        case 'ShiftLeft': keys.ctrl = isDown; break; // L'utente vuole accovacciarsi con MAIUSC
         case 'ControlLeft':
-        case 'KeyC': keys.ctrl = isDown; break;
+        case 'KeyC': keys.shift = isDown; break; // Spostiamo lo sprint su CTRL/C
         case 'Space':
             if (isDown && player.isGrounded) {
                 player.velocity.y = player.jumpForce;
