@@ -20,6 +20,41 @@ const volSfx = document.getElementById('vol-sfx') as HTMLInputElement;
 const valMaster = document.getElementById('val-master') as HTMLElement;
 const valMusic = document.getElementById('val-music') as HTMLElement;
 const valSfx = document.getElementById('val-sfx') as HTMLElement;
+const fpsCounter = document.getElementById('fps-counter')!;
+const netDot = document.getElementById('net-dot') as HTMLElement;
+const netText = document.getElementById('net-text') as HTMLElement;
+
+function updateNetworkStatus() {
+    if (!navigator.onLine) {
+        netDot.className = 'w-2 h-2 rounded-full bg-red-500 shadow-[0_0_5px_rgba(239,68,68,0.8)]';
+        netText.textContent = 'OFFLINE';
+        netText.className = 'text-xs font-bold text-red-400 uppercase tracking-wider';
+        return;
+    }
+
+    // Se l'API Connection è disponibile, verifichiamo la latenza/banda
+    const conn = (navigator as any).connection;
+    if (conn) {
+        if (conn.saveData || conn.effectiveType === '2g' || conn.rtt > 300) {
+            netDot.className = 'w-2 h-2 rounded-full bg-yellow-500 shadow-[0_0_5px_rgba(234,179,8,0.8)]';
+            netText.textContent = 'LENTA';
+            netText.className = 'text-xs font-bold text-yellow-400 uppercase tracking-wider';
+            return;
+        }
+    }
+
+    netDot.className = 'w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_5px_rgba(16,185,129,0.8)]';
+    netText.textContent = 'ONLINE';
+    netText.className = 'text-xs font-bold text-emerald-400 uppercase tracking-wider';
+}
+
+window.addEventListener('online', updateNetworkStatus);
+window.addEventListener('offline', updateNetworkStatus);
+if ((navigator as any).connection) {
+    (navigator as any).connection.addEventListener('change', updateNetworkStatus);
+}
+// Init subito
+updateNetworkStatus();
 
 let isMusicPlaying = false;
 let volumes = { master: 1.0, music: 1.0, sfx: 1.0 };
@@ -289,7 +324,7 @@ function setupInput() {
     window.addEventListener('keyup', (e) => handleKey(e, false));
     
     // Unpause on click
-    document.addEventListener('click', (e) => {
+    document.addEventListener('click', () => {
         // Verifica che il click non sia avvenuto su elementi della UI (menu)
         if(isGameRunning && document.pointerLockElement !== document.body && mainMenu.classList.contains('hidden') && settingsMenu.classList.contains('hidden')) {
             document.body.requestPointerLock();
@@ -368,7 +403,6 @@ function updatePhysics(delta: number) {
 
 let frames = 0;
 let lastFpsTime = performance.now();
-const fpsCounter = document.getElementById('fps-counter')!;
 
 function animate() {
     requestAnimationFrame(animate);
