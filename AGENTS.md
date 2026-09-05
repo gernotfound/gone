@@ -37,5 +37,8 @@ Questo file è la "Bibbia" architetturale del videogioco **G.O.N.E.** (FPS Onlin
 - Questo significa che l'AI deve garantire che il codice sia **privo di errori di sintassi, compilabile e perfetto al primo colpo**.
 - Per decisioni architetturali o cambi drastici, **redigere sempre un piano** (`implementation_plan.md` o in chat) prima di stravolgere il codice.
 
-## 7. Appunti sul Gameplay (MVP)
-- **Modello del Giocatore:** Attualmente fluttua a 50cm dal suolo per evitare calcoli complessi di Inverse Kinematics sulle gambe rispetto ai dislivelli procedurali.
+## 7. Appunti sul Gameplay e UI (MVP)
+- **Modello del Giocatore:** Fluttua a 50cm dal suolo (nessun calcolo Inverse Kinematics complesso per le gambe).
+- **Mappatura Tasti:** `W A S D` per muoversi. `MAIUSC (Shift)` per correre (velocità 2x). `C` per accovacciarsi (abbassa la telecamera e rallenta a 0.6x). `M` per aprire/chiudere l'overlay della Mappa. `Spazio` per saltare.
+- **Ciclo di Vita (Online-First):** In quanto gioco multiplayer P2P, **il gioco non va in pausa MAI**. Se il giocatore apre il menu (ESC) o la mappa (M), le funzioni `updatePhysics` e `updateChunks` nel Game Loop (`animate`) devono continuare a essere eseguite. 
+- **Atmosfera Globale:** L'estetica è dark (Sfondo Slate-950). Viene usata la Nebbia Lineare (`THREE.Fog`) raccordata matematicamente al Chunk Rendering Radius per nascondere il culling procedurale (come Minecraft). I God Rays (raggi di sole volumetrici) sono generati casualmente ma con Seed deterministici in base alle coordinate dei Chunk, affinché siano coerenti e permanenti. Le rocce sono "sotterrate" rispetto alla loro origine per non galleggiare nei dislivelli.
