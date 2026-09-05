@@ -303,7 +303,8 @@ function updateChunks() {
                     const dummy = new THREE.Object3D();
                     for(let i = 0; i < rockCount; i++) {
                         let idx = i * 9;
-                        dummy.position.set(rocks[idx], rocks[idx+1], rocks[idx+2]);
+                        // Abbassiamo la roccia di un bel po' rispetto alla sua scala Y per evitare che voli
+                        dummy.position.set(rocks[idx], rocks[idx+1] - rocks[idx+4] * 0.8, rocks[idx+2]);
                         dummy.scale.set(rocks[idx+3], rocks[idx+4], rocks[idx+5]); 
                         dummy.rotation.set(rocks[idx+6], rocks[idx+7], rocks[idx+8]);
                         dummy.updateMatrix();
@@ -313,20 +314,25 @@ function updateChunks() {
                 }
 
                 // Generazione procedurale dei raggi di luce volumentrici (God Rays)
-                // Usiamo un seed basato sul chunk ID per renderli persistenti, o un random semplice per ora.
-                const random = Math.sin(cx * 12.9898 + cz * 78.233) * 43758.5453;
-                if ((random - Math.floor(random)) > 0.6) { 
+                // Usiamo una funzione pseudo-random basata sulle coordinate per avere seed fissi
+                const seededRandom = (s: number) => {
+                    const r = Math.sin(s) * 43758.5453;
+                    return r - Math.floor(r);
+                };
+                
+                const chunkSeed = cx * 12.9898 + cz * 78.233;
+                if (seededRandom(chunkSeed) > 0.6) { 
                     // 40% di possibilità per un gruppo di raggi nel chunk
-                    const rayCount = 1 + Math.floor((random * 10) % 3);
+                    const rayCount = 1 + Math.floor((seededRandom(chunkSeed + 1) * 10) % 3);
                     const sunDir = new THREE.Vector3(200, 300, -100).normalize();
                     const up = new THREE.Vector3(0, 1, 0);
                     const quaternion = new THREE.Quaternion().setFromUnitVectors(up, sunDir);
 
                     for (let r = 0; r < rayCount; r++) {
                         const ray = new THREE.Mesh(rayGeo, rayMat);
-                        const rX = ((Math.random() - 0.5) * CHUNK_SIZE);
-                        const rZ = ((Math.random() - 0.5) * CHUNK_SIZE);
-                        ray.position.set(rX, -50, rZ); // Parte da sottoterra per nascondere il taglio netto
+                        const rX = ((seededRandom(chunkSeed + r * 2.1) - 0.5) * CHUNK_SIZE);
+                        const rZ = ((seededRandom(chunkSeed + r * 3.7) - 0.5) * CHUNK_SIZE);
+                        ray.position.set(rX, -50, rZ); 
                         ray.quaternion.copy(quaternion);
                         mesh.add(ray);
                     }
@@ -357,6 +363,11 @@ function updateChunks() {
     }
 }
 
+const mapUi = document.getElementById('map-ui') as HTMLDivElement;
+const minimapCanvas = document.getElementById('minimap-canvas') as HTMLCanvasElement;
+const minimapCtx = minimapCanvas.getContext('2d')!;
+let isMapOpen = false;
+
 function setupInput() {
     document.addEventListener('mousemove', (e) => {
         if (document.pointerLockElement !== document.body) return;
@@ -371,15 +382,14 @@ function setupInput() {
     
     // Unpause on click
     document.addEventListener('click', () => {
-        // Verifica che il click non sia avvenuto su elementi della UI (menu)
-        if(isGameRunning && document.pointerLockElement !== document.body && mainMenu.classList.contains('hidden') && settingsMenu.classList.contains('hidden')) {
+        if(isGameRunning && document.pointerLockElement !== document.body && mainMenu.classList.contains('hidden') && settingsMenu.classList.contains('hidden') && !isMapOpen) {
             document.body.requestPointerLock();
         }
     });
 
-    // Ritorna al menu quando si preme ESC (esce dal pointer lock)
+    // Ritorna al menu quando si preme ESC (esce dal pointer lock), ma non se la mappa è aperta
     document.addEventListener('pointerlockchange', () => {
-        if (document.pointerLockElement === null && isGameRunning) {
+        if (document.pointerLockElement === null && isGameRunning && !isMapOpen) {
             mainMenu.classList.remove('hidden');
             gameUi.classList.add('hidden');
             btnEnter.textContent = "RIPRENDI";
@@ -394,9 +404,24 @@ function handleKey(e: KeyboardEvent, isDown: boolean) {
         case 'KeyS': keys.backward = isDown; break;
         case 'KeyA': keys.left = isDown; break;
         case 'KeyD': keys.right = isDown; break;
-        case 'ShiftLeft': keys.ctrl = isDown; break; // L'utente vuole accovacciarsi con MAIUSC
+        case 'ShiftLeft': keys.shift = isDown; break; // Ripristinato Corsa su MAIUSC
         case 'ControlLeft':
-        case 'KeyC': keys.shift = isDown; break; // Spostiamo lo sprint su CTRL/C
+        case 'KeyC': keys.ctrl = isDown; break; // Ripristinato Crouch su C
+        case 'KeyM':
+            if (isDown && isGameRunning && mainMenu.classList.contains('hidden')) {
+                isMapOpen = !isMapOpen;
+                if (isMapOpen) {
+                    mapUi.classList.remove('hidden');
+                    if (document.pointerLockElement === document.body) {
+                        document.exitPointerLock();
+                    }
+                    drawMinimap();
+                } else {
+                    mapUi.classList.add('hidden');
+                    document.body.requestPointerLock();
+                }
+            }
+            break;
         case 'Space':
             if (isDown && player.isGrounded) {
                 player.velocity.y = player.jumpForce;
@@ -462,7 +487,9 @@ function animate() {
     requestAnimationFrame(animate);
     const delta = Math.min(clock.getDelta(), 0.1);
 
-    if (document.pointerLockElement === document.body) {
+    if (isGameRunning) {
+        // In un gioco online, la fisica e la rete non si fermano mai, 
+        // nemmeno quando sei nel menu o hai la mappa aperta!
         updatePhysics(delta);
         updateChunks(); 
     }
@@ -475,4 +502,10 @@ function animate() {
         frames = 0;
         lastFpsTime = performance.now();
     }
+}
+
+// Funzione placeholder per disegnare la minimappa
+function drawMinimap() {
+    // La mappa per ora è solo un quadrato estetico.
+    // In futuro possiamo chiamare WASM per renderizzare una vista 2D vera.
 }
