@@ -507,5 +507,6 @@ function animate() {
 // Funzione placeholder per disegnare la minimappa
 function drawMinimap() {
     // La mappa per ora è solo un quadrato estetico.
-    // In futuro possiamo chiamare WASM per renderizzare una vista 2D vera.
+    // Puliamo il canvas per renderlo predisposto a future renderizzazioni
+    minimapCtx.clearRect(0, 0, minimapCanvas.width, minimapCanvas.height);
 }
