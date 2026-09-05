@@ -111,7 +111,7 @@ const CHUNK_RADIUS = 2;
 
 let yaw = 0;
 let pitch = 0;
-const keys = { forward: false, backward: false, left: false, right: false, shift: false };
+const keys = { forward: false, backward: false, left: false, right: false, shift: false, ctrl: false };
 const moveDirection = new THREE.Vector3();
 
 // Float character mechanics (as requested: "fluttua a qualche decina di cm in aria")
@@ -119,8 +119,10 @@ const player = {
     height: 2.0, 
     eyeHeight: 1.8, 
     floatHeight: 0.5, // 50cm floating
-    speed: 12.0, 
-    sprintMultiplier: 8.0, 
+    speed: 12.0, // Velocità base (camminata)
+    sprintMultiplier: 2.0, // Sprint è 2x
+    crouchMultiplier: 0.6, // Accovacciamento è 0.6x
+    crouchEyeHeight: 1.0,
     jumpForce: 12.0,
     gravity: 28.0, 
     velocity: new THREE.Vector3(), 
@@ -164,8 +166,10 @@ btnEnter.addEventListener('click', async () => {
 
 function initGame() {
     scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x020617);
-    scene.fog = new THREE.FogExp2(0x020617, 0.002);
+    // Colore smog/grigio nuvoloso
+    const smogColor = 0x64748b; // slate-500
+    scene.background = new THREE.Color(smogColor);
+    scene.fog = new THREE.FogExp2(smogColor, 0.0035);
 
     camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.5, 3000);
     camera.userData.currentY = get_height_at(0, 0) + player.eyeHeight + player.floatHeight;
@@ -176,10 +180,11 @@ function initGame() {
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-    const hemiLight = new THREE.HemisphereLight(0x0f172a, 0x020617, 1.5);
+    const hemiLight = new THREE.HemisphereLight(0x94a3b8, 0x1e293b, 1.2);
     scene.add(hemiLight);
 
-    const sunLight = new THREE.DirectionalLight(0x38bdf8, 1.2);
+    // Sole pallido che penetra lo smog
+    const sunLight = new THREE.DirectionalLight(0xfef08a, 1.5);
     sunLight.position.set(200, 300, -100);
     sunLight.castShadow = true;
     sunLight.shadow.mapSize.width = 2048;
@@ -194,7 +199,7 @@ function initGame() {
     scene.add(sunLight);
 
     const sunGeo = new THREE.SphereGeometry(15, 16, 16);
-    const sunMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
+    const sunMat = new THREE.MeshBasicMaterial({ color: 0xfef08a });
     const sunMesh = new THREE.Mesh(sunGeo, sunMat);
     sunMesh.position.copy(sunLight.position);
     scene.add(sunMesh);
@@ -349,6 +354,8 @@ function handleKey(e: KeyboardEvent, isDown: boolean) {
         case 'KeyA': keys.left = isDown; break;
         case 'KeyD': keys.right = isDown; break;
         case 'ShiftLeft': keys.shift = isDown; break;
+        case 'ControlLeft':
+        case 'KeyC': keys.ctrl = isDown; break;
         case 'Space':
             if (isDown && player.isGrounded) {
                 player.velocity.y = player.jumpForce;
@@ -367,7 +374,12 @@ function updatePhysics(delta: number) {
     moveDirection.normalize();
     moveDirection.applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
 
-    let currentSpeed = keys.shift ? player.speed * player.sprintMultiplier : player.speed;
+    let currentSpeed = player.speed;
+    if (keys.shift && !keys.ctrl) {
+        currentSpeed = player.speed * player.sprintMultiplier;
+    } else if (keys.ctrl) {
+        currentSpeed = player.speed * player.crouchMultiplier;
+    }
 
     player.position.x += moveDirection.x * currentSpeed * delta;
     player.position.z += moveDirection.z * currentSpeed * delta;
@@ -386,7 +398,8 @@ function updatePhysics(delta: number) {
         player.isGrounded = false;
     }
 
-    const targetCamY = player.position.y + player.eyeHeight - player.height;
+    const eyeH = keys.ctrl ? player.crouchEyeHeight : player.eyeHeight;
+    const targetCamY = player.position.y + eyeH - player.height;
     if (camera.userData.currentY === undefined) {
         camera.userData.currentY = targetCamY;
     }
