@@ -1,5 +1,0 @@
-{
-  "buildCommand": "cd game-web && bash build.sh",
-  "outputDirectory": "game-web/dist",
-  "installCommand": "echo skip"
-}
