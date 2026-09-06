@@ -703,8 +703,25 @@ function initGame() {
         opacity: 0.04,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
-        side: THREE.DoubleSide
+        side: THREE.DoubleSide,
+        fog: true
     });
+    
+    rayMat.onBeforeCompile = (shader) => {
+        shader.fragmentShader = shader.fragmentShader.replace(
+            `#include <fog_fragment>`,
+            `
+            #ifdef USE_FOG
+                #ifdef FOG_EXP2
+                    float fogFactor = 1.0 - exp( - fogDensity * fogDensity * vFogDepth * vFogDepth );
+                #else
+                    float fogFactor = smoothstep( fogNear, fogFar, vFogDepth );
+                #endif
+                gl_FragColor.rgb = mix( gl_FragColor.rgb, vec3(0.0), fogFactor );
+            #endif
+            `
+        );
+    };
     
     bgMusic.volume = 0.5;
 
@@ -786,7 +803,7 @@ function updateChunks() {
             currentChunks.add(id);
 
             if (!activeChunks.has(id)) {
-                activeChunks.set(id, { mesh: null });
+                activeChunks.set(id, { mesh: null, targetY: 0 });
                 
                 let offsetX = cx * CHUNK_SIZE;
                 let offsetZ = cz * CHUNK_SIZE;
