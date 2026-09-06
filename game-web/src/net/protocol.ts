@@ -40,12 +40,14 @@ export interface SessionPlayerInfo {
   id: string;
   name: string;
   color: string;
+  slot?: number;
 }
 
 export interface JoinAcceptedMessage {
   type: 'JOIN_ACCEPTED';
   playerId: string;
   assignedColor: string;
+  assignedSlot?: number;
   sessionPlayers: SessionPlayerInfo[];
 }
 
@@ -117,12 +119,39 @@ export type NetMessage =
 
 // --- DataChannel Transport Abstraction ---
 export interface IDataChannel {
-  send(data: string): void;
+  binaryType?: 'blob' | 'arraybuffer';
+  send(data: string | ArrayBuffer | ArrayBufferView): void;
   close?(): void;
   readyState?: string;
   onmessage?: ((ev: { data: any }) => void) | null;
+  onopen?: (() => void) | null;
   onclose?: (() => void) | null;
   onerror?: ((err: any) => void) | null;
+}
+
+// --- Binary Message Identification Utilities ---
+
+/**
+ * Type guard checking if an incoming payload is binary data.
+ */
+export function isBinaryMessage(data: unknown): data is ArrayBuffer | ArrayBufferView {
+  return (
+    data instanceof ArrayBuffer ||
+    (typeof ArrayBuffer !== 'undefined' && ArrayBuffer.isView(data))
+  );
+}
+
+/**
+ * Normalizes any binary payload (ArrayBuffer, TypedArray, DataView, Buffer) into an ArrayBuffer.
+ */
+export function toArrayBuffer(data: ArrayBuffer | ArrayBufferView): ArrayBuffer {
+  if (data instanceof ArrayBuffer) {
+    return data;
+  }
+  if (ArrayBuffer.isView(data)) {
+    return (data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)) as ArrayBuffer;
+  }
+  throw new Error('Unsupported binary message format');
 }
 
 // --- Color Normalization & HSV Fluorescence Validation ---

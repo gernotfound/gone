@@ -9,3 +9,26 @@ export function generate_chunk() {
 export function get_height_at() {
   return 0;
 }
+
+export class WasmLagCompensator {
+  constructor(max_history_ms) {}
+  free() {}
+  record_player_position(player_id, timestamp_ms, x, y, z, radius, height) {}
+  validate_rewind_hitscan(
+    shooter_id,
+    victim_id,
+    weapon_type,
+    shot_time_ms,
+    max_unlag_ms,
+    origin_x,
+    origin_y,
+    origin_z,
+    dir_x,
+    dir_y,
+    dir_z,
+    max_range
+  ) {
+    return JSON.stringify({ hit: false, damage: 0.0, is_headshot: false, distance: 0.0 });
+  }
+  clear_player(player_id) {}
+}

@@ -15,9 +15,15 @@ import {
     ROBOT_SCALE,
 } from './models/index.ts';
 import { P2PClient } from './net/p2pClient.ts';
+import { P2PHost } from './net/p2pHost.ts';
+import { InterpolationBuffer } from './net/interpolationBuffer.ts';
 import { type FireHitscanMessage } from './net/protocol.ts';
+import { STATE_FLAGS, type WorldSnapshotData, type FireHitscanData, type HitConfirmedData } from './net/binaryProtocol.ts';
 import { soundSynth } from './audio/index.ts';
 import { vfxManager } from './vfx/index.ts';
+import { healthHud } from './ui/healthHud.ts';
+import { shieldVfxController } from './vfx/shieldVfx.ts';
+import type { HitConfirmationEvent } from './net/p2pHost.ts';
 
 // --- MENU LOGIC ---
 const bgMusic = document.getElementById('bg-music') as HTMLAudioElement;
@@ -130,6 +136,7 @@ volSfx.addEventListener('input', updateVolumes);
 let localPlayerColor = '#00F0FF';
 let localRobotPreview: THREE.Group | null = null;
 let activeP2PClient: P2PClient | null = null;
+let activeP2PHost: P2PHost | null = null;
 
 // --- GAME LOGIC ---
 let isGameRunning = false;
@@ -265,10 +272,90 @@ const player = {
     gravityScale: 5.0, // Moltiplicatore da videogioco per evitare l'effetto "luna"
     mass: 80.0,      // Peso in kg
     velocity: new THREE.Vector3(), 
-    position: new THREE.Vector3(0, 30, 0),
+    position: new THREE.Vector3(0, 17.5, 0),
     isGrounded: false,
-    color: localPlayerColor
+    color: localPlayerColor,
+    hp: 100,
+    maxHp: 100,
+    isAlive: true,
+    isInvulnerable: true,
+    shieldExpiresAt: performance.now() + 10000,
+    deathTimer: 0,
 };
+
+// --- COMBAT LIFECYCLE & SHIELD ANCHOR ---
+let localShieldAnchor: THREE.Group = new THREE.Group();
+localShieldAnchor.name = 'LocalShieldAnchor';
+let deathCameraPos = new THREE.Vector3(0, 20.0, 0);
+let deathCameraYaw = 0;
+let deathCameraPitch = -0.35;
+
+export function handleLocalPlayerDeath(): void {
+    if (!player.isAlive && player.deathTimer > 0) return;
+    player.isAlive = false;
+    player.hp = 0;
+    player.deathTimer = 5.0;
+    player.isInvulnerable = false;
+    player.shieldExpiresAt = 0;
+
+    // Detach local shield if any
+    shieldVfxController.detachShield(localShieldAnchor);
+    healthHud.updateShield(0);
+
+    // Freeze inputs
+    resetInputState();
+
+    // Hide viewmodel
+    viewmodelRoot.visible = false;
+
+    // Static spectator camera positioned at death elevation with subtle downward angle
+    deathCameraPos.set(player.position.x, player.position.y + 2.5, player.position.z);
+    deathCameraYaw = baseYaw;
+    deathCameraPitch = -0.35;
+
+    // Show 5-second death overlay with countdown
+    healthHud.showDeathOverlay(5.0);
+}
+
+export function handleLocalPlayerRespawn(): void {
+    player.isAlive = true;
+    player.hp = 100;
+    player.deathTimer = 0;
+    player.isInvulnerable = true;
+    const now = performance.now();
+    player.shieldExpiresAt = now + 10000;
+
+    // Teleport to central platform [0.0, 17.5, 0.0]
+    player.position.set(0.0, 17.5, 0.0);
+    player.velocity.set(0, 0, 0);
+
+    // Restore viewmodel and inputs
+    viewmodelRoot.visible = true;
+
+    // Reset camera orientation
+    basePitch = 0;
+    recoilCamPitch = 0;
+    recoilCamYaw = 0;
+
+    // Hide death overlay and reset health bar
+    healthHud.hideDeathOverlay();
+    healthHud.updateHealth(100, 100);
+
+    // Activate 10-second invulnerability shield
+    shieldVfxController.attachShield(localShieldAnchor, 10.0, new THREE.Vector3(0, 0, 0));
+    healthHud.updateShield(10.0);
+}
+
+export function handleLocalPlayerDamage(newHp: number): void {
+    if (!player.isAlive) return;
+
+    player.hp = Math.max(0, newHp);
+    healthHud.updateHealth(player.hp, player.maxHp);
+
+    if (player.hp <= 0) {
+        handleLocalPlayerDeath();
+    }
+}
 
 // --- WEAPON VIEWMODEL & REMOTE PLAYERS ---
 let currentWeaponIndex = 0;
@@ -346,7 +433,7 @@ async function switchWeapon(index: number): Promise<void> {
 }
 
 function fireWeapon(): void {
-    if (!isGameRunning || document.pointerLockElement !== document.body || !mainMenu.classList.contains('hidden') || isMapOpen) {
+    if (!isGameRunning || !player.isAlive || document.pointerLockElement !== document.body || !mainMenu.classList.contains('hidden') || isMapOpen) {
         return;
     }
     if (shotCooldown > 1e-4) {
@@ -438,8 +525,15 @@ function fireWeapon(): void {
         vfxManager.spawnImpact(hitPoint, hitNormal, currentWeaponType);
     }
 
-    // P2P Network Synchronization
-    if (activeP2PClient && activeP2PClient.status === 'connected') {
+    // P2P Network Synchronization (Host authoritative check or Client transmission)
+    if (activeP2PHost) {
+        activeP2PHost.fireHitscan(
+            activeP2PHost.hostPlayer.id,
+            stats.id,
+            [muzzleWorldPos.x, muzzleWorldPos.y, muzzleWorldPos.z],
+            [rayDir.x, rayDir.y, rayDir.z]
+        );
+    } else if (activeP2PClient && activeP2PClient.status === 'connected') {
         activeP2PClient.fireHitscan(
             stats.id,
             [muzzleWorldPos.x, muzzleWorldPos.y, muzzleWorldPos.z],
@@ -480,9 +574,11 @@ function updateViewmodel(delta: number): void {
 // --- REMOTE PLAYERS REGISTRY ---
 export interface RemotePlayerInstance {
     id: string;
+    slot?: number;
     color: string;
     weaponType: WeaponModelType;
     group: THREE.Group;
+    interpolator: InterpolationBuffer;
 }
 
 export const remotePlayers = new Map<string, RemotePlayerInstance>();
@@ -494,7 +590,8 @@ export function addOrUpdateRemotePlayer(
     z: number,
     yawAngle: number,
     fluoColor: string = '#00F0FF',
-    weapon: WeaponModelType | number = 'assalto'
+    weapon: WeaponModelType | number = 'assalto',
+    slot?: number
 ): RemotePlayerInstance {
     const resolvedWeapon = typeof weapon === 'number' ? (WEAPON_TYPES[weapon] ?? 'assalto') : weapon;
     let entry = remotePlayers.get(id);
@@ -510,11 +607,27 @@ export function addOrUpdateRemotePlayer(
 
         scene.add(robot);
 
+        const interpolator = new InterpolationBuffer({
+            renderDelayMs: 90,
+            maxExtrapolationMs: 150,
+            teleportThresholdMeters: 10.0,
+        });
+        interpolator.pushSnapshot({
+            timestamp: performance.now() - 90,
+            x,
+            y,
+            z,
+            yaw: yawAngle,
+            pitch: 0,
+        });
+
         entry = {
             id,
+            slot,
             color: fluoColor,
             weaponType: resolvedWeapon,
-            group: robot
+            group: robot,
+            interpolator,
         };
         remotePlayers.set(id, entry);
 
@@ -531,8 +644,18 @@ export function addOrUpdateRemotePlayer(
             }
         }).catch(() => {});
     } else {
+        if (slot !== undefined) entry.slot = slot;
         entry.group.position.set(x, y, z);
         entry.group.rotation.y = yawAngle;
+
+        entry.interpolator.pushSnapshot({
+            timestamp: performance.now() - 90,
+            x,
+            y,
+            z,
+            yaw: yawAngle,
+            pitch: 0,
+        });
 
         if (entry.color !== fluoColor) {
             entry.color = fluoColor;
@@ -777,7 +900,7 @@ function initGame() {
         metalness: 0.1
     });
 
-    player.position.set(0, get_height_at(0, 0) + player.height + player.floatHeight + 2.0, 0);
+    player.position.set(0, get_height_at(0, 0) + player.height + player.floatHeight, 0);
 
     // Attach camera to scene and viewmodel to camera
     scene.add(camera);
@@ -786,6 +909,18 @@ function initGame() {
 
     // Initialize VFX Coordinator
     vfxManager.init(scene, camera);
+
+    // Initialize Cyberpunk Health HUD
+    healthHud.init();
+
+    // Attach local player shield anchor to scene and grant 10s initial spawn immunity
+    localShieldAnchor.position.set(player.position.x, player.position.y - player.height + 0.9, player.position.z);
+    scene.add(localShieldAnchor);
+    player.isInvulnerable = true;
+    player.shieldExpiresAt = performance.now() + 10000;
+    shieldVfxController.attachShield(localShieldAnchor, 10.0, new THREE.Vector3(0, 0, 0));
+    healthHud.updateShield(10.0);
+    healthHud.updateHealth(player.hp, player.maxHp);
 
     setupInput();
     window.addEventListener('resize', () => {
@@ -926,7 +1061,7 @@ function resetInputState(): void {
 
 function setupInput() {
     document.addEventListener('mousemove', (e) => {
-        if (document.pointerLockElement !== document.body) return;
+        if (!player.isAlive || document.pointerLockElement !== document.body) return;
         const sensitivity = 0.002;
         baseYaw -= e.movementX * sensitivity;
         basePitch -= e.movementY * sensitivity;
@@ -939,6 +1074,7 @@ function setupInput() {
     // Fire weapon on left click when in pointer lock
     window.addEventListener('mousedown', (e) => {
         soundSynth.unlock().catch(() => {});
+        if (!player.isAlive) return;
         if (e.button === 0 && document.pointerLockElement === document.body && mainMenu.classList.contains('hidden') && !isMapOpen) {
             isShooting = true;
             if (shotCooldown <= 1e-4) {
@@ -987,6 +1123,9 @@ function setupInput() {
 }
 
 function handleKey(e: KeyboardEvent, isDown: boolean) {
+    if (!player.isAlive) {
+        return;
+    }
     switch (e.code) {
         case 'KeyW':
         case 'ArrowUp':
@@ -1043,6 +1182,9 @@ function handleKey(e: KeyboardEvent, isDown: boolean) {
 }
 
 function updatePhysics(delta: number) {
+    if (!player.isAlive) {
+        return;
+    }
     moveDirection.set(0, 0, 0);
     if (keys.forward) moveDirection.z -= 1;
     if (keys.backward) moveDirection.z += 1;
@@ -1159,16 +1301,91 @@ function animate(timestamp?: number) {
             if (shotCooldown < 0) shotCooldown = 0;
         }
 
-        if (isShooting && shotCooldown <= 1e-4 && document.pointerLockElement === document.body && mainMenu.classList.contains('hidden') && !isMapOpen) {
-            fireWeapon();
+        // Update 3D Shield VFX lifecycle (pulse and deterministic 10s disposal)
+        shieldVfxController.update(delta);
+
+        if (player.isAlive) {
+            // Keep local shield anchor centered on player
+            localShieldAnchor.position.set(
+                player.position.x,
+                player.position.y - player.height + 0.9,
+                player.position.z
+            );
+
+            // Update invulnerability shield countdown
+            const now = performance.now();
+            if (player.shieldExpiresAt > now) {
+                player.isInvulnerable = true;
+                const remainingSec = (player.shieldExpiresAt - now) / 1000.0;
+                healthHud.updateShield(remainingSec);
+            } else if (player.isInvulnerable) {
+                player.isInvulnerable = false;
+                healthHud.updateShield(0);
+                shieldVfxController.detachShield(localShieldAnchor);
+            }
+
+            if (isShooting && shotCooldown <= 1e-4 && document.pointerLockElement === document.body && mainMenu.classList.contains('hidden') && !isMapOpen) {
+                fireWeapon();
+            }
+
+            updatePhysics(delta);
+            updateViewmodel(delta);
+        } else {
+            // Player is dead: manage 5s death phase and static spectator camera
+            player.deathTimer = Math.max(0, player.deathTimer - delta);
+            healthHud.updateDeathCountdown(player.deathTimer);
+
+            if (camera) {
+                camera.position.copy(deathCameraPos);
+                camera.rotation.set(deathCameraPitch, deathCameraYaw, 0, 'YXZ');
+            }
+
+            if (player.deathTimer <= 0) {
+                handleLocalPlayerRespawn();
+            }
         }
 
-        // In un gioco online, la fisica e la rete non si fermano mai, 
-        // nemmeno quando sei nel menu o hai la mappa aperta!
-        updatePhysics(delta);
         updateChunks(); 
-        updateViewmodel(delta);
         vfxManager.update(delta);
+
+        // Smoothly interpolate remote player transforms using snapshot buffer
+        const renderTime = performance.now() - 90;
+        for (const remote of remotePlayers.values()) {
+            if (remote.interpolator) {
+                const state = remote.interpolator.sample(renderTime);
+                if (state) {
+                    remote.group.position.set(state.x, state.y, state.z);
+                    remote.group.rotation.y = state.yaw;
+
+                    if (state.stateFlags !== undefined) {
+                        const isAlive = (state.stateFlags & STATE_FLAGS.ALIVE) !== 0;
+                        const isShielded = (state.stateFlags & STATE_FLAGS.SHIELD_ACTIVE) !== 0;
+                        remote.group.visible = isAlive;
+
+                        if (isAlive && isShielded) {
+                            if (!shieldVfxController.hasShield(remote.group)) {
+                                const durationSec = (state.timerRemainingMs ?? 10000) / 1000.0;
+                                shieldVfxController.attachShield(remote.group, Math.max(0.1, durationSec));
+                            }
+                        } else {
+                            if (shieldVfxController.hasShield(remote.group)) {
+                                shieldVfxController.detachShield(remote.group);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Keep local host player state synchronized if host is running locally
+        if (activeP2PHost) {
+            activeP2PHost.updateHostPlayerState({
+                position: { x: player.position.x, y: player.position.y, z: player.position.z },
+                yaw: baseYaw,
+                pitch: basePitch,
+                activeWeapon: currentWeaponIndex,
+            });
+        }
     }
 
     renderer.render(scene, camera);
@@ -1230,6 +1447,152 @@ function drawMinimap() {
     }
 }
 
+export function bindP2PClientNetworking(client: P2PClient): void {
+    activeP2PClient = client;
+
+    // Connect local player state to 30 Hz binary transmission
+    client.setStateProvider(() => ({
+        position: {
+            x: player.position.x,
+            y: player.position.y,
+            z: player.position.z,
+        },
+        yaw: baseYaw,
+        pitch: basePitch,
+        activeWeapon: currentWeaponIndex,
+        flags:
+            (player.isGrounded ? 0x01 : 0) |
+            (keys.ctrl ? 0x02 : 0) |
+            (keys.shift ? 0x04 : 0) |
+            (isShooting ? 0x08 : 0),
+    }));
+    client.startStateTick(30);
+
+    // Ingest authoritative World Snapshots from Host
+    const prevOnSnapshot = client.config.onWorldSnapshot;
+    client.config.onWorldSnapshot = (snapshot: WorldSnapshotData) => {
+        prevOnSnapshot?.(snapshot);
+        const mySlot = client.playerSlot;
+
+        for (const p of snapshot.players) {
+            const isAlive = (p.flags & STATE_FLAGS.ALIVE) !== 0;
+            const isShielded = (p.flags & STATE_FLAGS.SHIELD_ACTIVE) !== 0;
+
+            if (mySlot !== null && p.slot === mySlot) {
+                // Authoritative state for local player from Host
+                if (!isAlive && player.isAlive) {
+                    handleLocalPlayerDeath();
+                } else if (isAlive && !player.isAlive) {
+                    handleLocalPlayerRespawn();
+                }
+
+                player.hp = p.hp;
+                healthHud.updateHealth(player.hp, player.maxHp);
+
+                if (isShielded) {
+                    player.isInvulnerable = true;
+                    player.shieldExpiresAt = performance.now() + p.timerRemainingMs;
+                    if (!shieldVfxController.hasShield(localShieldAnchor)) {
+                        shieldVfxController.attachShield(localShieldAnchor, Math.max(0.1, p.timerRemainingMs / 1000.0));
+                    }
+                }
+                continue;
+            }
+
+            const playerId = client.slotToPlayerId.get(p.slot) || `peer_slot_${p.slot}`;
+            let remote = remotePlayers.get(playerId);
+            if (!remote) {
+                const info = client.sessionPlayers.find((sp) => sp.id === playerId);
+                const color = info?.color || '#00F0FF';
+                remote = addOrUpdateRemotePlayer(
+                    playerId,
+                    p.x,
+                    p.y,
+                    p.z,
+                    p.yaw,
+                    color,
+                    p.activeWeapon,
+                    p.slot
+                );
+            }
+
+            remote.interpolator.pushSnapshot({
+                timestamp: snapshot.hostTimestamp,
+                localArrival: performance.now(),
+                x: p.x,
+                y: p.y,
+                z: p.z,
+                yaw: p.yaw,
+                pitch: p.pitch,
+                activeWeapon: p.activeWeapon,
+                stateFlags: p.flags,
+                health: p.hp,
+                timerRemainingMs: p.timerRemainingMs,
+            });
+
+            remote.group.visible = isAlive;
+            if (isAlive && isShielded) {
+                if (!shieldVfxController.hasShield(remote.group)) {
+                    shieldVfxController.attachShield(remote.group, Math.max(0.1, p.timerRemainingMs / 1000.0));
+                }
+            } else {
+                if (shieldVfxController.hasShield(remote.group)) {
+                    shieldVfxController.detachShield(remote.group);
+                }
+            }
+        }
+    };
+
+    const prevOnHitConfirmed = client.config.onHitConfirmed;
+    client.config.onHitConfirmed = (hit: HitConfirmedData) => {
+        prevOnHitConfirmed?.(hit);
+        const mySlot = client.playerSlot;
+        if (mySlot !== null && hit.victimSlot === mySlot) {
+            handleLocalPlayerDamage(hit.newHp);
+        }
+    };
+
+    const prevOnHitscan = client.config.onHitscanFired;
+    client.config.onHitscanFired = (msg: FireHitscanMessage) => {
+        prevOnHitscan?.(msg);
+        handleRemoteHitscan(msg);
+    };
+
+    const prevOnBinaryHitscan = client.config.onBinaryHitscanFired;
+    client.config.onBinaryHitscanFired = (shot: FireHitscanData) => {
+        prevOnBinaryHitscan?.(shot);
+        const shooterId = client.slotToPlayerId.get(shot.shooterSlot) || `peer_slot_${shot.shooterSlot}`;
+        handleRemoteHitscan({
+            type: 'FIRE_HITSCAN',
+            shooterId,
+            weaponType: shot.weaponType,
+            origin: shot.origin,
+            direction: shot.direction,
+        });
+    };
+}
+
+export function bindP2PHostNetworking(host: P2PHost): void {
+    activeP2PHost = host;
+    host.startSnapshotTick(30);
+
+    const prevHostHitConfirmed = host.options.onHitConfirmed;
+    host.options.onHitConfirmed = (hit: HitConfirmationEvent) => {
+        prevHostHitConfirmed?.(hit);
+        if (hit.victimId === host.hostPlayer.id) {
+            handleLocalPlayerDamage(hit.newHp);
+        }
+    };
+
+    const prevHostRespawn = host.options.onPlayerRespawned;
+    host.options.onPlayerRespawned = (playerId: string) => {
+        prevHostRespawn?.(playerId);
+        if (playerId === host.hostPlayer.id) {
+            handleLocalPlayerRespawn();
+        }
+    };
+}
+
 // Global API exposure for testing, UI, and networking integration
 (window as any).goneGame = {
     switchWeapon,
@@ -1242,6 +1605,12 @@ function drawMinimap() {
     viewmodelRoot,
     recoilContainer,
     player,
+    healthHud,
+    shieldVfxController,
+    localShieldAnchor,
+    handleLocalPlayerDeath,
+    handleLocalPlayerRespawn,
+    handleLocalPlayerDamage,
     getLocalPlayerColor: () => localPlayerColor,
     setLocalPlayerColor: (hex: string) => {
         localPlayerColor = hex;
@@ -1261,16 +1630,18 @@ function drawMinimap() {
     setP2PClient: (client: P2PClient | null) => {
         activeP2PClient = client;
         if (client) {
-            const existingHandler = (client as any).config?.onHitscanFired;
-            (client as any).config = {
-                ...(client as any).config,
-                onHitscanFired: (msg: FireHitscanMessage) => {
-                    if (existingHandler) existingHandler(msg);
-                    handleRemoteHitscan(msg);
-                }
-            };
+            bindP2PClientNetworking(client);
         }
     },
+    getP2PHost: () => activeP2PHost,
+    setP2PHost: (host: P2PHost | null) => {
+        activeP2PHost = host;
+        if (host) {
+            bindP2PHostNetworking(host);
+        }
+    },
+    bindP2PClientNetworking,
+    bindP2PHostNetworking,
     handleRemoteHitscan,
     vfxManager,
     soundSynth,

@@ -2,12 +2,15 @@
  * G.O.N.E. P2P WebRTC Client & Session Handler
  *
  * Connects to the authoritative P2P Host, handles color negotiation, manages
- * error rejection state with Cyberpunk UI banners, and synchronizes peer state.
+ * error rejection state with Cyberpunk UI banners, synchronizes peer state,
+ * and executes a 30 Hz binary CLIENT_STATE transmission loop.
  */
 
 import {
+  isBinaryMessage,
   parseNetMessage,
   serializeNetMessage,
+  toArrayBuffer,
   type ColorRejectedMessage,
   type FireHitscanMessage,
   type IDataChannel,
@@ -15,18 +18,40 @@ import {
   type JoinRequestMessage,
   type SessionPlayerInfo,
 } from './protocol.ts';
+import {
+  PACKET_TYPE,
+  packClientState,
+  packFireHitscan,
+  unpackWorldSnapshot,
+  unpackHitConfirmed,
+  unpackFireHitscan,
+  type WorldSnapshotData,
+  type HitConfirmedData,
+  type FireHitscanData,
+} from './binaryProtocol.ts';
 
 export type ClientConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'rejected';
+
+export interface ClientStateInput {
+  position: { x: number; y: number; z: number };
+  yaw: number;
+  pitch: number;
+  activeWeapon?: number;
+  flags?: number;
+}
 
 export interface P2PClientConfig {
   playerId: string;
   playerName: string;
-  onJoinAccepted?: (data: { assignedColor: string; sessionPlayers: SessionPlayerInfo[] }) => void;
+  onJoinAccepted?: (data: { assignedColor: string; assignedSlot?: number; sessionPlayers: SessionPlayerInfo[] }) => void;
   onColorRejected?: (data: { attemptedColor: string; reason: string; availableColors: string[] }) => void;
   onPlayerJoined?: (player: SessionPlayerInfo) => void;
   onPlayerLeft?: (data: { playerId: string; freedColor: string }) => void;
   onColorChanged?: (data: { playerId: string; newColor: string }) => void;
   onHitscanFired?: (msg: FireHitscanMessage) => void;
+  onWorldSnapshot?: (snapshot: WorldSnapshotData) => void;
+  onHitConfirmed?: (hit: HitConfirmedData) => void;
+  onBinaryHitscanFired?: (shot: FireHitscanData) => void;
   onStatusChange?: (status: ClientConnectionStatus) => void;
   onError?: (err: Error) => void;
 }
@@ -38,6 +63,7 @@ export class P2PClient {
   public status: ClientConnectionStatus = 'disconnected';
   public proposedColor: string = '';
   public assignedColor: string | null = null;
+  public playerSlot: number | null = null;
   public sessionPlayers: SessionPlayerInfo[] = [];
   public lastRejection: {
     attemptedColor: string;
@@ -45,8 +71,24 @@ export class P2PClient {
     availableColors: string[];
   } | null = null;
 
+  // Authoritative combat & health state received from Host
+  public clientHp: number = 100;
+  public isAlive: boolean = true;
+  public isShielded: boolean = true;
+  public timerRemainingMs: number = 10000;
+
+  // Slot lookup maps for instantaneous O(1) translation
+  public readonly slotToPlayerId = new Map<number, string>();
+  public readonly playerIdToSlot = new Map<string, number>();
+
   private channel: IDataChannel | null = null;
-  private config: P2PClientConfig;
+  public config: P2PClientConfig;
+
+  // 30 Hz Client State Tick Loop variables
+  private stateTickTimer: ReturnType<typeof setInterval> | null = null;
+  private stateProvider: (() => ClientStateInput) | null = null;
+  private stateSequence: number = 0;
+  private shotSequence: number = 0;
 
   constructor(config: P2PClientConfig) {
     this.config = config;
@@ -61,6 +103,15 @@ export class P2PClient {
     this.channel = channel;
     this.proposedColor = proposedColor;
     this.setStatus('connecting');
+
+    // Ensure binary delivery in WebRTC is ArrayBuffer (not Blob)
+    if ('binaryType' in channel) {
+      try {
+        channel.binaryType = 'arraybuffer';
+      } catch {
+        // Fallback for mocks
+      }
+    }
 
     channel.onmessage = (ev: { data: any }) => {
       this.handleMessage(ev.data);
@@ -86,9 +137,16 @@ export class P2PClient {
   }
 
   /**
-   * Processes incoming message from Host DataChannel.
+   * Processes incoming message from Host DataChannel. Handles binary and text packets.
    */
   public handleMessage(rawData: unknown): void {
+    // 1. Binary Packet Handling
+    if (isBinaryMessage(rawData)) {
+      this.handleBinaryMessage(toArrayBuffer(rawData));
+      return;
+    }
+
+    // 2. Text (JSON) Signaling Handling
     const msg = parseNetMessage(rawData);
     if (!msg) return;
 
@@ -109,10 +167,13 @@ export class P2PClient {
 
       case 'PLAYER_JOINED': {
         if (msg.player.id !== this.playerId) {
-          // Add player if not exists
           const exists = this.sessionPlayers.some((p) => p.id === msg.player.id);
           if (!exists) {
             this.sessionPlayers.push(msg.player);
+          }
+          if (msg.player.slot !== undefined) {
+            this.slotToPlayerId.set(msg.player.slot, msg.player.id);
+            this.playerIdToSlot.set(msg.player.id, msg.player.slot);
           }
           this.config.onPlayerJoined?.(msg.player);
         }
@@ -121,6 +182,11 @@ export class P2PClient {
 
       case 'PLAYER_LEFT': {
         this.sessionPlayers = this.sessionPlayers.filter((p) => p.id !== msg.playerId);
+        const slot = this.playerIdToSlot.get(msg.playerId);
+        if (slot !== undefined) {
+          this.slotToPlayerId.delete(slot);
+          this.playerIdToSlot.delete(msg.playerId);
+        }
         this.config.onPlayerLeft?.({
           playerId: msg.playerId,
           freedColor: msg.freedColor,
@@ -150,6 +216,101 @@ export class P2PClient {
 
       default:
         break;
+    }
+  }
+
+  private handleBinaryMessage(buffer: ArrayBuffer): void {
+    if (buffer.byteLength < 1) return;
+    const opcode = new DataView(buffer).getUint8(0);
+
+    switch (opcode) {
+      case PACKET_TYPE.WORLD_SNAPSHOT: { // 0x02
+        const snapshot = unpackWorldSnapshot(buffer);
+        if (snapshot) {
+          if (this.playerSlot !== null) {
+            const me = snapshot.players.find((p) => (p.slot ?? p.playerSlot) === this.playerSlot);
+            if (me) {
+              this.clientHp = me.hp ?? me.health ?? 100;
+              const flags = me.flags ?? me.stateFlags ?? 0;
+              this.isAlive = (flags & 0x01) !== 0;
+              this.isShielded = (flags & 0x02) !== 0;
+              this.timerRemainingMs = me.timerRemainingMs ?? 0;
+            }
+          }
+          this.config.onWorldSnapshot?.(snapshot);
+        }
+        break;
+      }
+      case PACKET_TYPE.HIT_CONFIRMED: { // 0x04
+        const hit = unpackHitConfirmed(buffer);
+        if (hit) {
+          if (this.playerSlot !== null && hit.victimSlot === this.playerSlot) {
+            this.clientHp = hit.newHp;
+            if (hit.isFatalKill || hit.isFatal || hit.newHp <= 0) {
+              this.isAlive = false;
+            }
+          }
+          this.config.onHitConfirmed?.(hit);
+        }
+        break;
+      }
+      case PACKET_TYPE.FIRE_HITSCAN: { // 0x03
+        const shot = unpackFireHitscan(buffer);
+        if (shot) {
+          this.config.onBinaryHitscanFired?.(shot);
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  // --- 30 Hz Client State Tick Loop ---
+
+  public setStateProvider(provider: () => ClientStateInput): void {
+    this.stateProvider = provider;
+  }
+
+  public startStateTick(tickRateHz: number = 30): void {
+    this.stopStateTick();
+    const intervalMs = Math.max(1, Math.round(1000 / tickRateHz));
+    this.stateTickTimer = setInterval(() => {
+      this.sendCurrentState();
+    }, intervalMs);
+  }
+
+  public stopStateTick(): void {
+    if (this.stateTickTimer !== null) {
+      clearInterval(this.stateTickTimer);
+      this.stateTickTimer = null;
+    }
+  }
+
+  public sendCurrentState(): void {
+    if (this.status !== 'connected' || !this.channel || this.playerSlot === null || !this.stateProvider) {
+      return;
+    }
+
+    const input = this.stateProvider();
+    const seq = (this.stateSequence++) & 0xffff;
+    const time = performance.now();
+
+    const buffer = packClientState(
+      this.playerSlot,
+      seq,
+      time,
+      input.position,
+      input.yaw,
+      input.pitch,
+      input.activeWeapon ?? 0,
+      input.flags ?? 0
+    );
+
+    try {
+      this.channel.send(buffer);
+    } catch (err: any) {
+      this.config.onError?.(new Error(`Send client state failed: ${err?.message || err}`));
     }
   }
 
@@ -189,6 +350,7 @@ export class P2PClient {
 
   /**
    * Send hitscan shot event to host for authoritative damage calculation.
+   * Uses binary format (0x03) when slot is known, with fallback to JSON.
    */
   public fireHitscan(
     weaponType: number,
@@ -196,19 +358,39 @@ export class P2PClient {
     direction: [number, number, number]
   ): void {
     if (this.status !== 'connected' || !this.channel) return;
-    this.send({
-      type: 'FIRE_HITSCAN',
-      shooterId: this.playerId,
-      weaponType,
-      origin,
-      direction,
-    });
+
+    if (this.playerSlot !== null) {
+      const shotSeq = (this.shotSequence++) & 0xff;
+      const clientTime = performance.now();
+      const buffer = packFireHitscan(
+        this.playerSlot,
+        weaponType,
+        shotSeq,
+        clientTime,
+        origin,
+        direction
+      );
+      try {
+        this.channel.send(buffer);
+      } catch (err: any) {
+        this.config.onError?.(new Error(`Binary fireHitscan failed: ${err?.message || err}`));
+      }
+    } else {
+      this.send({
+        type: 'FIRE_HITSCAN',
+        shooterId: this.playerId,
+        weaponType,
+        origin,
+        direction,
+      });
+    }
   }
 
   /**
-   * Disconnects the client channel.
+   * Disconnects the client channel and halts tick loop.
    */
   public disconnect(): void {
+    this.stopStateTick();
     if (this.channel) {
       try {
         this.channel.close?.();
@@ -223,11 +405,27 @@ export class P2PClient {
   private handleJoinAccepted(msg: JoinAcceptedMessage): void {
     this.assignedColor = msg.assignedColor;
     this.sessionPlayers = msg.sessionPlayers;
+    this.playerSlot = msg.assignedSlot ?? 1;
     this.lastRejection = null;
+
+    // Synchronize slot lookup tables
+    this.slotToPlayerId.clear();
+    this.playerIdToSlot.clear();
+    this.slotToPlayerId.set(this.playerSlot, this.playerId);
+    this.playerIdToSlot.set(this.playerId, this.playerSlot);
+
+    for (const p of msg.sessionPlayers) {
+      if (p.slot !== undefined) {
+        this.slotToPlayerId.set(p.slot, p.id);
+        this.playerIdToSlot.set(p.id, p.slot);
+      }
+    }
+
     this.setStatus('connected');
 
     this.config.onJoinAccepted?.({
       assignedColor: msg.assignedColor,
+      assignedSlot: this.playerSlot,
       sessionPlayers: msg.sessionPlayers,
     });
   }
@@ -244,9 +442,13 @@ export class P2PClient {
   }
 
   private handleDisconnect(): void {
+    this.stopStateTick();
     this.setStatus('disconnected');
     this.assignedColor = null;
+    this.playerSlot = null;
     this.sessionPlayers = [];
+    this.slotToPlayerId.clear();
+    this.playerIdToSlot.clear();
   }
 
   private setStatus(status: ClientConnectionStatus): void {

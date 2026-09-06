@@ -2,9 +2,11 @@ use wasm_bindgen::prelude::*;
 
 pub mod colors;
 pub mod weapons;
+pub mod lag_compensation;
 
 pub use colors::WasmColorRegistry;
 pub use weapons::WasmCombatEngine;
+pub use lag_compensation::{LagCompensationEngine, PlayerSnapshot, SnapshotRingBuffer, WasmLagCompensator};
 
 // Pseudo-random hash
 fn hash(x: f64, y: f64) -> f64 {

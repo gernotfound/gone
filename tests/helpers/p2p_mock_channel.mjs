@@ -13,6 +13,7 @@ export class MockDataChannel {
     this.onclose = null;
     this.isOpen = true;
     this.messageLog = [];
+    this.binaryType = 'arraybuffer';
   }
 
   connect(peerChannel) {
@@ -28,8 +29,16 @@ export class MockDataChannel {
     if (this.peer && this.peer.isOpen) {
       queueMicrotask(() => {
         if (this.peer && this.peer.onmessage) {
-          this.peer.messageLog.push({ direction: 'recv', data, timestamp: Date.now() });
-          this.peer.onmessage({ data });
+          let deliveryData = data;
+          if (typeof data !== 'string') {
+            if (data instanceof ArrayBuffer) {
+              deliveryData = data;
+            } else if (ArrayBuffer.isView(data)) {
+              deliveryData = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+            }
+          }
+          this.peer.messageLog.push({ direction: 'recv', data: deliveryData, timestamp: Date.now() });
+          this.peer.onmessage({ data: deliveryData });
         }
       });
     }
@@ -76,8 +85,17 @@ export class P2PHostNode {
     clientNode.setChannel(clientChannel);
 
     hostChannel.onmessage = (event) => {
-      const msg = JSON.parse(event.data);
-      this.handleMessage(msg, hostChannel);
+      if (typeof event.data === 'string') {
+        try {
+          const msg = JSON.parse(event.data);
+          this.handleMessage(msg, hostChannel);
+        } catch {}
+      } else {
+        this.events.push(event.data);
+        if (typeof this.handleBinaryMessage === 'function') {
+          this.handleBinaryMessage(event.data, hostChannel);
+        }
+      }
     };
 
     hostChannel.onclose = () => {
@@ -206,9 +224,19 @@ export class P2PClientNode {
   setChannel(channel) {
     this.channel = channel;
     this.channel.onmessage = (event) => {
-      const msg = JSON.parse(event.data);
-      this.receivedMessages.push(msg);
-      this.handleIncoming(msg);
+      if (typeof event.data === 'string') {
+        try {
+          const msg = JSON.parse(event.data);
+          this.receivedMessages.push(msg);
+          this.handleIncoming(msg);
+        } catch {}
+      } else {
+        this.receivedBinaryMessages = this.receivedBinaryMessages || [];
+        this.receivedBinaryMessages.push(event.data);
+        if (typeof this.handleIncomingBinary === 'function') {
+          this.handleIncomingBinary(event.data);
+        }
+      }
     };
   }
 
