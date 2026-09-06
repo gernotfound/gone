@@ -126,12 +126,24 @@ export class P2PClient {
       this.config.onError?.(new Error(`DataChannel error: ${err}`));
     };
 
-    // Send JOIN_REQUEST with proposed fluo color
-    const joinReqBuf = encodeLobbyJoin(this.playerId, this.playerName, this.proposedColor);
-    try {
-      this.channel.send(joinReqBuf);
-    } catch (err: any) {
-      this.config.onError?.(new Error(`Send failed: ${err?.message || err}`));
+    const sendJoinRequest = () => {
+      // Send JOIN_REQUEST with proposed fluo color
+      const joinReqBuf = encodeLobbyJoin(this.playerId, this.playerName, this.proposedColor);
+      try {
+        this.channel!.send(joinReqBuf);
+      } catch (err: any) {
+        this.config.onError?.(new Error(`Send failed: ${err?.message || err}`));
+      }
+    };
+
+    // Se il canale è già aperto (BroadcastChannel mock) invia subito,
+    // altrimenti aspetta onopen (WebRTC DataChannel)
+    if (channel.readyState === 'open') {
+      sendJoinRequest();
+    } else {
+      channel.onopen = () => {
+        sendJoinRequest();
+      };
     }
   }
 

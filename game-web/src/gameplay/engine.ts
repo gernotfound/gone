@@ -763,6 +763,8 @@ function initGame() {
                 DOM.btnEnter.textContent = "RIPRENDI";
                 DOM.btnEnter.disabled = false;
                 DOM.btnExit.classList.remove('hidden');
+                // Il tasto Multiplayer è solo nella schermata di avvio, non nel menu ESC
+                DOM.btnMultiplayer.classList.add('hidden');
             }
         },
         onPointerLockAcquired: () => {
