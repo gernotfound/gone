@@ -28,6 +28,7 @@ import {
   decodeHitConfirmedInto,
   peekPacketOpcode,
   ensureDataView,
+  encodeLobbyJoin,
 } from '../game-web/src/net/binaryProtocol.ts';
 
 import {
@@ -465,12 +466,7 @@ runTest('3.3: Host world snapshot broadcast sends pure binary ArrayBuffer', () =
 
   host.registerPeer('peer_1', hostChannel);
   // Join acceptance registers peer into host.peers
-  host.handleChannelMessage('peer_1', hostChannel, JSON.stringify({
-    type: 'JOIN_REQUEST',
-    playerId: 'peer_1',
-    playerName: 'Peer1',
-    proposedColor: '#FF0055',
-  }));
+  host.handleChannelMessage('peer_1', hostChannel, encodeLobbyJoin('peer_1', 'Peer1', '#FF0055'));
 
   host.tickSnapshot();
 
@@ -495,12 +491,7 @@ runTest('3.4: Host hit confirmation broadcast sends pure binary ArrayBuffer (16 
   });
 
   host.registerPeer('victim_client', hostChannel);
-  host.handleChannelMessage('victim_client', hostChannel, JSON.stringify({
-    type: 'JOIN_REQUEST',
-    playerId: 'victim_client',
-    playerName: 'Victim',
-    proposedColor: '#FF0055',
-  }));
+  host.handleChannelMessage('victim_client', hostChannel, encodeLobbyJoin('victim_client', 'Victim', '#FF0055'));
 
   const victimRecord = host.playerRecords.get('victim_client');
   assert(victimRecord !== undefined, 'Victim record exists');

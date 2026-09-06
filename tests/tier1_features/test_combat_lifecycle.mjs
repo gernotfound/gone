@@ -13,6 +13,7 @@ import {
   encodeWorldSnapshot,
   decodeWorldSnapshot,
   HIT_CONFIRMED_BYTES,
+  encodeLobbyJoin,
 } from '../../game-web/src/net/binaryProtocol.ts';
 import { HealthHUDController } from '../../game-web/src/ui/healthHud.ts';
 import { MockDataChannel } from '../helpers/p2p_mock_channel.mjs';
@@ -55,12 +56,7 @@ export async function run(suite) {
     hostChannel.connect(clientChannel);
 
     host.registerPeer('victim_peer', hostChannel);
-    host.handleChannelMessage('victim_peer', hostChannel, JSON.stringify({
-      type: 'JOIN_REQUEST',
-      playerId: 'victim_peer',
-      playerName: 'TargetVictim',
-      proposedColor: '#FF0055',
-    }));
+    host.handleChannelMessage('victim_peer', hostChannel, encodeLobbyJoin('victim_peer', 'TargetVictim', '#FF0055'));
 
     const victim = host.playerRecords.get('victim_peer');
     assert(victim !== undefined, 'Victim player record must exist');
@@ -94,12 +90,7 @@ export async function run(suite) {
     hostChannel.connect(clientChannel);
 
     host.registerPeer('victim_peer', hostChannel);
-    host.handleChannelMessage('victim_peer', hostChannel, JSON.stringify({
-      type: 'JOIN_REQUEST',
-      playerId: 'victim_peer',
-      playerName: 'TargetVictim',
-      proposedColor: '#FF0055',
-    }));
+    host.handleChannelMessage('victim_peer', hostChannel, encodeLobbyJoin('victim_peer', 'TargetVictim', '#FF0055'));
 
     const victim = host.playerRecords.get('victim_peer');
     victim.shieldExpiresAt = 0;
@@ -150,12 +141,7 @@ export async function run(suite) {
     hostChannel.connect(clientChannel);
 
     host.registerPeer('victim_peer', hostChannel);
-    host.handleChannelMessage('victim_peer', hostChannel, JSON.stringify({
-      type: 'JOIN_REQUEST',
-      playerId: 'victim_peer',
-      playerName: 'TargetVictim',
-      proposedColor: '#FF0055',
-    }));
+    host.handleChannelMessage('victim_peer', hostChannel, encodeLobbyJoin('victim_peer', 'TargetVictim', '#FF0055'));
 
     const victim = host.playerRecords.get('victim_peer');
     victim.shieldExpiresAt = 0;
@@ -196,12 +182,7 @@ export async function run(suite) {
     hostChannel.connect(clientChannel);
 
     host.registerPeer('victim_peer', hostChannel);
-    host.handleChannelMessage('victim_peer', hostChannel, JSON.stringify({
-      type: 'JOIN_REQUEST',
-      playerId: 'victim_peer',
-      playerName: 'TargetVictim',
-      proposedColor: '#FF0055',
-    }));
+    host.handleChannelMessage('victim_peer', hostChannel, encodeLobbyJoin('victim_peer', 'TargetVictim', '#FF0055'));
 
     const victim = host.playerRecords.get('victim_peer');
     // Kill and respawn
@@ -252,12 +233,7 @@ export async function run(suite) {
     hostChannel.connect(clientChannel);
 
     host.registerPeer('victim_peer', hostChannel);
-    host.handleChannelMessage('victim_peer', hostChannel, JSON.stringify({
-      type: 'JOIN_REQUEST',
-      playerId: 'victim_peer',
-      playerName: 'TargetVictim',
-      proposedColor: '#FF0055',
-    }));
+    host.handleChannelMessage('victim_peer', hostChannel, encodeLobbyJoin('victim_peer', 'TargetVictim', '#FF0055'));
 
     const victim = host.playerRecords.get('victim_peer');
     host.respawnPlayer('victim_peer');

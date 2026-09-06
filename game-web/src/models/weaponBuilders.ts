@@ -688,6 +688,21 @@ export async function loadWeaponGLB(
       if (gltf && gltf.scene) {
         const root = gltf.scene;
         root.name = `GLB_${resolved}`;
+        root.traverse((c) => {
+          if ((c as THREE.Mesh).isMesh) {
+            const mesh = c as THREE.Mesh;
+            if (mesh.geometry) {
+              mesh.geometry.userData.sharedAsset = true;
+            }
+            if (mesh.material) {
+              if (Array.isArray(mesh.material)) {
+                mesh.material.forEach(m => m.userData.sharedAsset = true);
+              } else {
+                mesh.material.userData.sharedAsset = true;
+              }
+            }
+          }
+        });
         cachedWeaponGLBs.set(resolved, root.clone(true));
         return root;
       }
@@ -698,6 +713,19 @@ export async function loadWeaponGLB(
 
   // Fallback to procedural builder
   const fallback = createWeaponModel(resolved);
+  fallback.traverse((c) => {
+    if ((c as THREE.Mesh).isMesh) {
+      const mesh = c as THREE.Mesh;
+      if (mesh.geometry) mesh.geometry.userData.sharedAsset = true;
+      if (mesh.material) {
+        if (Array.isArray(mesh.material)) {
+          mesh.material.forEach(m => m.userData.sharedAsset = true);
+        } else {
+          mesh.material.userData.sharedAsset = true;
+        }
+      }
+    }
+  });
   cachedWeaponGLBs.set(resolved, fallback.clone(true));
   return fallback;
 }

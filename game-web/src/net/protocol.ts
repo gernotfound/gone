@@ -98,6 +98,10 @@ export interface ColorChangedMessage {
   newColor: string;
 }
 
+export interface GameStartMessage {
+  type: 'GAME_START';
+}
+
 export interface ColorValidationResult {
   success: boolean;
   color?: string;
@@ -115,7 +119,8 @@ export type NetMessage =
   | FireHitscanMessage
   | HitConfirmedMessage
   | ColorChangeRequestMessage
-  | ColorChangedMessage;
+  | ColorChangedMessage
+  | GameStartMessage;
 
 // --- DataChannel Transport Abstraction ---
 export interface IDataChannel {

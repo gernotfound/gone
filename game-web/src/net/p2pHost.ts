@@ -7,26 +7,14 @@
  * validates lag-compensated hitscan shots, and broadcasts 30 Hz binary world snapshots.
  */
 
+import { COLOR_REJECT_REASONS, DEFAULT_NEON_HEX_LIST, isBinaryMessage, isFluorescentColor, normalizeHexColor, toArrayBuffer, type ColorValidationResult, type FireHitscanMessage, type IDataChannel, type SessionPlayerInfo } from './protocol.ts';
 import {
-  COLOR_REJECT_REASONS,
-  DEFAULT_NEON_HEX_LIST,
-  isBinaryMessage,
-  isFluorescentColor,
-  normalizeHexColor,
-  parseNetMessage,
-  serializeNetMessage,
-  toArrayBuffer,
-  type ColorRejectedMessage,
-  type ColorValidationResult,
-  type FireHitscanMessage,
-  type IDataChannel,
-  type JoinAcceptedMessage,
-  type NetMessage,
-  type PlayerJoinedMessage,
-  type PlayerLeftMessage,
-  type SessionPlayerInfo,
-} from './protocol.ts';
-import {
+  decodeLobbyMessage,
+  encodeLobbyJoinAccepted,
+  encodeLobbyColorRejected,
+  encodeLobbyPlayerJoined,
+  encodeLobbyPlayerLeft,
+  encodeLobbyColorChanged,
   PACKET_TYPE,
   STATE_FLAGS,
   HIT_FLAGS,
@@ -399,37 +387,28 @@ export class P2PHost {
   public handleChannelMessage(peerId: string, channel: IDataChannel, rawData: unknown): void {
     if (isBinaryMessage(rawData)) {
       this.handleBinaryChannelMessage(peerId, channel, toArrayBuffer(rawData));
-      return;
-    }
-
-    const msg = parseNetMessage(rawData);
-    if (!msg) return;
-
-    switch (msg.type) {
-      case 'JOIN_REQUEST': {
-        this.processJoinRequest(channel, msg);
-        break;
-      }
-
-      case 'COLOR_REQUEST': {
-        this.processColorChangeRequest(channel, msg);
-        break;
-      }
-
-      case 'FIRE_HITSCAN': {
-        this.options.onHitscanFired?.(msg);
-        this.broadcast(msg, msg.shooterId);
-        break;
-      }
-
-      default:
-        break;
     }
   }
 
-  private handleBinaryChannelMessage(peerId: string, _channel: IDataChannel, buffer: ArrayBuffer): void {
+  private handleBinaryChannelMessage(peerId: string, channel: IDataChannel, buffer: ArrayBuffer): void {
     if (buffer.byteLength < 1) return;
     const opcode = new DataView(buffer).getUint8(0);
+
+    if (opcode >= 0x10) {
+      const msg = decodeLobbyMessage(buffer);
+      if (!msg) return;
+      switch (msg.type) {
+        case 'JOIN_REQUEST': {
+          this.processJoinRequest(channel, msg as any);
+          break;
+        }
+        case 'COLOR_REQUEST': {
+          this.processColorChangeRequest(channel, msg as any);
+          break;
+        }
+      }
+      return;
+    }
 
     switch (opcode) {
       case PACKET_TYPE.CLIENT_STATE: { // 0x01
@@ -846,14 +825,13 @@ export class P2PHost {
     const validation = this.colorRegistry.requestColor(playerId, proposedColor);
 
     if (!validation.success) {
-      const rejectedMsg: ColorRejectedMessage = {
-        type: 'COLOR_REJECTED',
+      const rejectedMsg = encodeLobbyColorRejected(
         playerId,
-        attemptedColor: proposedColor,
-        reason: validation.error || COLOR_REJECT_REASONS.COLOR_ALREADY_TAKEN,
-        availableColors: validation.availableColors || this.colorRegistry.getAvailablePalette(),
-      };
-      channel.send(serializeNetMessage(rejectedMsg));
+        proposedColor,
+        validation.error || COLOR_REJECT_REASONS.COLOR_ALREADY_TAKEN,
+        validation.availableColors || this.colorRegistry.getAvailablePalette()
+      );
+      channel.send(rejectedMsg);
       return;
     }
 
@@ -894,21 +872,17 @@ export class P2PHost {
 
     // 1. Reply to joining client with full session player list
     const sessionPlayers = this.getAllSessionPlayers();
-    const acceptedMsg: JoinAcceptedMessage = {
-      type: 'JOIN_ACCEPTED',
+    const acceptedMsgBuf = encodeLobbyJoinAccepted(
       playerId,
       assignedColor,
       assignedSlot,
-      sessionPlayers,
-    };
-    channel.send(serializeNetMessage(acceptedMsg));
+      sessionPlayers
+    );
+    channel.send(acceptedMsgBuf);
 
     // 2. Broadcast PLAYER_JOINED to all other active peers
-    const joinedBroadcast: PlayerJoinedMessage = {
-      type: 'PLAYER_JOINED',
-      player: newPlayerInfo,
-    };
-    this.broadcast(joinedBroadcast, playerId);
+    const joinedBroadcastBuf = encodeLobbyPlayerJoined(newPlayerInfo);
+    this.broadcastBinary(joinedBroadcastBuf, playerId);
 
     this.options.onPlayerJoined?.(newPlayerInfo);
   }
@@ -926,14 +900,13 @@ export class P2PHost {
 
     const validation = this.colorRegistry.requestColor(playerId, requestedColor);
     if (!validation.success) {
-      const rejectedMsg: ColorRejectedMessage = {
-        type: 'COLOR_REJECTED',
+      const rejectedMsg = encodeLobbyColorRejected(
         playerId,
-        attemptedColor: requestedColor,
-        reason: validation.error || COLOR_REJECT_REASONS.COLOR_ALREADY_TAKEN,
-        availableColors: validation.availableColors || this.colorRegistry.getAvailablePalette(),
-      };
-      channel.send(serializeNetMessage(rejectedMsg));
+        requestedColor,
+        validation.error || COLOR_REJECT_REASONS.COLOR_ALREADY_TAKEN,
+        validation.availableColors || this.colorRegistry.getAvailablePalette()
+      );
+      channel.send(rejectedMsg);
       return;
     }
 
@@ -943,12 +916,8 @@ export class P2PHost {
       record.color = validation.color!;
     }
 
-    const changedMsg: NetMessage = {
-      type: 'COLOR_CHANGED',
-      playerId,
-      newColor: validation.color!,
-    };
-    this.broadcast(changedMsg);
+    const changedMsgBuf = encodeLobbyColorChanged(playerId, validation.color!);
+    this.broadcastBinary(changedMsgBuf);
   }
 
   /**
@@ -969,12 +938,8 @@ export class P2PHost {
     const freedColor = this.colorRegistry.releasePlayer(peerId) || peer.info.color;
 
     // Broadcast to remaining peers
-    const leftMsg: PlayerLeftMessage = {
-      type: 'PLAYER_LEFT',
-      playerId: peerId,
-      freedColor,
-    };
-    this.broadcast(leftMsg);
+    const leftMsgBuf = encodeLobbyPlayerLeft(peerId, freedColor);
+    this.broadcastBinary(leftMsgBuf);
 
     this.options.onPlayerLeft?.(peerId, freedColor);
   }
@@ -982,18 +947,6 @@ export class P2PHost {
   /**
    * Broadcasts a network message (JSON) to all connected peers, optionally excluding one sender.
    */
-  public broadcast(msg: NetMessage, excludePlayerId?: string): void {
-    const payload = serializeNetMessage(msg);
-    for (const [id, peer] of this.peers) {
-      if (excludePlayerId && id === excludePlayerId) continue;
-      try {
-        peer.channel.send(payload);
-      } catch (err) {
-        console.error(`Error sending message to peer ${id}:`, err);
-      }
-    }
-  }
-
   /**
    * Returns list of all players currently in the session (host + active clients).
    */

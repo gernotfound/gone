@@ -12,15 +12,27 @@
  * Zero-allocation send buffers and in-place decoders guarantee maximum framerate smoothness.
  */
 
+import type { SessionPlayerInfo, NetMessage } from './protocol.ts';
+
 // ============================================================================
 // 1. CONSTANTS & OPCODES
 // ============================================================================
+
+export const PROTOCOL_VERSION = 1;
 
 export const PACKET_OPCODES = {
   CLIENT_STATE: 0x01,
   WORLD_SNAPSHOT: 0x02,
   FIRE_HITSCAN: 0x03,
   HIT_CONFIRMED: 0x04,
+  LOBBY_JOIN: 0x10,
+  LOBBY_JOIN_ACCEPTED: 0x11,
+  LOBBY_COLOR_REJECTED: 0x12,
+  LOBBY_PLAYER_JOINED: 0x13,
+  LOBBY_PLAYER_LEFT: 0x14,
+  LOBBY_COLOR_REQUEST: 0x15,
+  LOBBY_COLOR_CHANGED: 0x16,
+  GAME_START: 0x17,
 } as const;
 
 export const PACKET_TYPE = PACKET_OPCODES;
@@ -785,3 +797,215 @@ export function decodeHitConfirmed(raw: ArrayBuffer | ArrayBufferView): HitConfi
 }
 
 export const unpackHitConfirmed = decodeHitConfirmed;
+
+// ============================================================================
+// 7. LOBBY & SIGNALING BINARY CODECS (Zero JSON)
+// ============================================================================
+
+const LOBBY_BUFFER_SIZE = 4096;
+const lobbySendBuffer = new ArrayBuffer(LOBBY_BUFFER_SIZE);
+const lobbySendView = new DataView(lobbySendBuffer);
+
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
+
+function writeString(view: DataView, offset: number, str: string): number {
+  const bytes = textEncoder.encode(str);
+  view.setUint16(offset, bytes.length, true);
+  const arr = new Uint8Array(view.buffer, view.byteOffset + offset + 2, bytes.length);
+  arr.set(bytes);
+  return offset + 2 + bytes.length;
+}
+
+function readString(view: DataView, offset: number): { str: string; newOffset: number } {
+  const len = view.getUint16(offset, true);
+  if (offset + 2 + len > view.byteLength) throw new Error("OOB");
+  const arr = new Uint8Array(view.buffer, view.byteOffset + offset + 2, len);
+  const str = textDecoder.decode(arr);
+  return { str, newOffset: offset + 2 + len };
+}
+
+export function encodeLobbyJoin(playerId: string, playerName: string, proposedColor: string): ArrayBuffer {
+  lobbySendView.setUint8(0, PACKET_OPCODES.LOBBY_JOIN);
+  lobbySendView.setUint8(1, PROTOCOL_VERSION);
+  let offset = 2;
+  offset = writeString(lobbySendView, offset, playerId);
+  offset = writeString(lobbySendView, offset, playerName);
+  offset = writeString(lobbySendView, offset, proposedColor);
+  return lobbySendBuffer.slice(0, offset);
+}
+
+function decodeLobbyJoin(view: DataView): NetMessage {
+  // const version = view.getUint8(1);
+  let offset = 2;
+  const pId = readString(view, offset); offset = pId.newOffset;
+  const pName = readString(view, offset); offset = pName.newOffset;
+  const pColor = readString(view, offset); offset = pColor.newOffset;
+  return {
+    type: 'JOIN_REQUEST',
+    playerId: pId.str,
+    playerName: pName.str,
+    proposedColor: pColor.str,
+  };
+}
+
+export function encodeLobbyJoinAccepted(playerId: string, assignedColor: string, assignedSlot: number | undefined, sessionPlayers: SessionPlayerInfo[]): ArrayBuffer {
+  lobbySendView.setUint8(0, PACKET_OPCODES.LOBBY_JOIN_ACCEPTED);
+  let offset = 1;
+  offset = writeString(lobbySendView, offset, playerId);
+  offset = writeString(lobbySendView, offset, assignedColor);
+  lobbySendView.setUint8(offset, assignedSlot ?? 255);
+  offset += 1;
+  lobbySendView.setUint8(offset, sessionPlayers.length);
+  offset += 1;
+  for (const p of sessionPlayers) {
+    offset = writeString(lobbySendView, offset, p.id);
+    offset = writeString(lobbySendView, offset, p.name);
+    offset = writeString(lobbySendView, offset, p.color);
+    lobbySendView.setUint8(offset, p.slot ?? 255);
+    offset += 1;
+  }
+  return lobbySendBuffer.slice(0, offset);
+}
+
+function decodeLobbyJoinAccepted(view: DataView): NetMessage {
+  let offset = 1;
+  const pId = readString(view, offset); offset = pId.newOffset;
+  const color = readString(view, offset); offset = color.newOffset;
+  const slotRaw = view.getUint8(offset++);
+  const assignedSlot = slotRaw === 255 ? undefined : slotRaw;
+  const numPlayers = view.getUint8(offset++);
+  const sessionPlayers: SessionPlayerInfo[] = [];
+  for (let i = 0; i < numPlayers; i++) {
+    const idStr = readString(view, offset); offset = idStr.newOffset;
+    const nameStr = readString(view, offset); offset = nameStr.newOffset;
+    const colStr = readString(view, offset); offset = colStr.newOffset;
+    const pSlotRaw = view.getUint8(offset++);
+    sessionPlayers.push({
+      id: idStr.str,
+      name: nameStr.str,
+      color: colStr.str,
+      slot: pSlotRaw === 255 ? undefined : pSlotRaw
+    });
+  }
+  return { type: 'JOIN_ACCEPTED', playerId: pId.str, assignedColor: color.str, assignedSlot, sessionPlayers };
+}
+
+export function encodeLobbyColorRejected(playerId: string, attemptedColor: string, reason: string, availableColors: string[]): ArrayBuffer {
+  lobbySendView.setUint8(0, PACKET_OPCODES.LOBBY_COLOR_REJECTED);
+  let offset = 1;
+  offset = writeString(lobbySendView, offset, playerId);
+  offset = writeString(lobbySendView, offset, attemptedColor);
+  offset = writeString(lobbySendView, offset, reason);
+  lobbySendView.setUint8(offset, availableColors.length);
+  offset += 1;
+  for (const c of availableColors) {
+    offset = writeString(lobbySendView, offset, c);
+  }
+  return lobbySendBuffer.slice(0, offset);
+}
+
+function decodeLobbyColorRejected(view: DataView): NetMessage {
+  let offset = 1;
+  const pId = readString(view, offset); offset = pId.newOffset;
+  const attCol = readString(view, offset); offset = attCol.newOffset;
+  const rsn = readString(view, offset); offset = rsn.newOffset;
+  const count = view.getUint8(offset++);
+  const availableColors = [];
+  for (let i = 0; i < count; i++) {
+    const c = readString(view, offset); offset = c.newOffset;
+    availableColors.push(c.str);
+  }
+  return { type: 'COLOR_REJECTED', playerId: pId.str, attemptedColor: attCol.str, reason: rsn.str, availableColors };
+}
+
+export function encodeLobbyPlayerJoined(player: SessionPlayerInfo): ArrayBuffer {
+  lobbySendView.setUint8(0, PACKET_OPCODES.LOBBY_PLAYER_JOINED);
+  let offset = 1;
+  offset = writeString(lobbySendView, offset, player.id);
+  offset = writeString(lobbySendView, offset, player.name);
+  offset = writeString(lobbySendView, offset, player.color);
+  lobbySendView.setUint8(offset, player.slot ?? 255);
+  offset += 1;
+  return lobbySendBuffer.slice(0, offset);
+}
+
+function decodeLobbyPlayerJoined(view: DataView): NetMessage {
+  let offset = 1;
+  const pId = readString(view, offset); offset = pId.newOffset;
+  const pName = readString(view, offset); offset = pName.newOffset;
+  const pCol = readString(view, offset); offset = pCol.newOffset;
+  const pSlotRaw = view.getUint8(offset++);
+  return { type: 'PLAYER_JOINED', player: { id: pId.str, name: pName.str, color: pCol.str, slot: pSlotRaw === 255 ? undefined : pSlotRaw } };
+}
+
+export function encodeLobbyPlayerLeft(playerId: string, freedColor: string): ArrayBuffer {
+  lobbySendView.setUint8(0, PACKET_OPCODES.LOBBY_PLAYER_LEFT);
+  let offset = 1;
+  offset = writeString(lobbySendView, offset, playerId);
+  offset = writeString(lobbySendView, offset, freedColor);
+  return lobbySendBuffer.slice(0, offset);
+}
+
+function decodeLobbyPlayerLeft(view: DataView): NetMessage {
+  let offset = 1;
+  const pId = readString(view, offset); offset = pId.newOffset;
+  const fCol = readString(view, offset); offset = fCol.newOffset;
+  return { type: 'PLAYER_LEFT', playerId: pId.str, freedColor: fCol.str };
+}
+
+export function encodeLobbyColorRequest(playerId: string, requestedColor: string): ArrayBuffer {
+  lobbySendView.setUint8(0, PACKET_OPCODES.LOBBY_COLOR_REQUEST);
+  let offset = 1;
+  offset = writeString(lobbySendView, offset, playerId);
+  offset = writeString(lobbySendView, offset, requestedColor);
+  return lobbySendBuffer.slice(0, offset);
+}
+
+function decodeLobbyColorRequest(view: DataView): NetMessage {
+  let offset = 1;
+  const pId = readString(view, offset); offset = pId.newOffset;
+  const rCol = readString(view, offset); offset = rCol.newOffset;
+  return { type: 'COLOR_REQUEST', playerId: pId.str, requestedColor: rCol.str };
+}
+
+export function encodeLobbyColorChanged(playerId: string, newColor: string): ArrayBuffer {
+  lobbySendView.setUint8(0, PACKET_OPCODES.LOBBY_COLOR_CHANGED);
+  let offset = 1;
+  offset = writeString(lobbySendView, offset, playerId);
+  offset = writeString(lobbySendView, offset, newColor);
+  return lobbySendBuffer.slice(0, offset);
+}
+
+function decodeLobbyColorChanged(view: DataView): NetMessage {
+  let offset = 1;
+  const pId = readString(view, offset); offset = pId.newOffset;
+  const nCol = readString(view, offset); offset = nCol.newOffset;
+  return { type: 'COLOR_CHANGED', playerId: pId.str, newColor: nCol.str };
+}
+
+export function encodeLobbyGameStart(): ArrayBuffer {
+  lobbySendView.setUint8(0, PACKET_OPCODES.GAME_START);
+  return lobbySendBuffer.slice(0, 1);
+}
+
+export function decodeLobbyMessage(buffer: ArrayBuffer | ArrayBufferView): NetMessage | null {
+  try {
+    const view = ensureDataView(buffer);
+    if (view.byteLength < 1) return null;
+    const opcode = view.getUint8(0);
+    switch (opcode) {
+      case PACKET_OPCODES.LOBBY_JOIN: return decodeLobbyJoin(view);
+      case PACKET_OPCODES.LOBBY_JOIN_ACCEPTED: return decodeLobbyJoinAccepted(view);
+      case PACKET_OPCODES.LOBBY_COLOR_REJECTED: return decodeLobbyColorRejected(view);
+      case PACKET_OPCODES.LOBBY_PLAYER_JOINED: return decodeLobbyPlayerJoined(view);
+      case PACKET_OPCODES.LOBBY_PLAYER_LEFT: return decodeLobbyPlayerLeft(view);
+      case PACKET_OPCODES.LOBBY_COLOR_REQUEST: return decodeLobbyColorRequest(view);
+      case PACKET_OPCODES.LOBBY_COLOR_CHANGED: return decodeLobbyColorChanged(view);
+      case PACKET_OPCODES.GAME_START: return { type: 'GAME_START' };
+      default: return null;
+    }
+  } catch {
+    return null; // Safe fallback for malformed packets
+  }
+}

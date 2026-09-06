@@ -8,17 +8,17 @@
 
 import {
   isBinaryMessage,
-  parseNetMessage,
-  serializeNetMessage,
   toArrayBuffer,
   type ColorRejectedMessage,
   type FireHitscanMessage,
   type IDataChannel,
   type JoinAcceptedMessage,
-  type JoinRequestMessage,
   type SessionPlayerInfo,
 } from './protocol.ts';
 import {
+  decodeLobbyMessage,
+  encodeLobbyJoin,
+  encodeLobbyColorRequest,
   PACKET_TYPE,
   packClientState,
   packFireHitscan,
@@ -53,6 +53,7 @@ export interface P2PClientConfig {
   onHitConfirmed?: (hit: HitConfirmedData) => void;
   onBinaryHitscanFired?: (shot: FireHitscanData) => void;
   onStatusChange?: (status: ClientConnectionStatus) => void;
+  onGameStart?: () => void;
   onError?: (err: Error) => void;
 }
 
@@ -126,97 +127,90 @@ export class P2PClient {
     };
 
     // Send JOIN_REQUEST with proposed fluo color
-    const joinReq: JoinRequestMessage = {
-      type: 'JOIN_REQUEST',
-      playerId: this.playerId,
-      playerName: this.playerName,
-      proposedColor: this.proposedColor,
-    };
-
-    this.send(joinReq);
+    const joinReqBuf = encodeLobbyJoin(this.playerId, this.playerName, this.proposedColor);
+    try {
+      this.channel.send(joinReqBuf);
+    } catch (err: any) {
+      this.config.onError?.(new Error(`Send failed: ${err?.message || err}`));
+    }
   }
 
   /**
    * Processes incoming message from Host DataChannel. Handles binary and text packets.
    */
   public handleMessage(rawData: unknown): void {
-    // 1. Binary Packet Handling
-    if (isBinaryMessage(rawData)) {
-      this.handleBinaryMessage(toArrayBuffer(rawData));
+    if (!isBinaryMessage(rawData)) return;
+    const buffer = toArrayBuffer(rawData);
+    if (buffer.byteLength < 1) return;
+    const opcode = new DataView(buffer).getUint8(0);
+
+    if (opcode >= 0x10) {
+      const msg = decodeLobbyMessage(buffer);
+      if (!msg) return;
+
+      switch (msg.type) {
+        case 'JOIN_ACCEPTED': {
+          if (msg.playerId === this.playerId) {
+            this.handleJoinAccepted(msg as any);
+          }
+          break;
+        }
+        case 'COLOR_REJECTED': {
+          if (msg.playerId === this.playerId) {
+            this.handleColorRejected(msg as any);
+          }
+          break;
+        }
+        case 'PLAYER_JOINED': {
+          if (msg.player.id !== this.playerId) {
+            const exists = this.sessionPlayers.some((p) => p.id === msg.player.id);
+            if (!exists) {
+              this.sessionPlayers.push(msg.player);
+            }
+            if (msg.player.slot !== undefined) {
+              this.slotToPlayerId.set(msg.player.slot, msg.player.id);
+              this.playerIdToSlot.set(msg.player.id, msg.player.slot);
+            }
+            this.config.onPlayerJoined?.(msg.player);
+          }
+          break;
+        }
+        case 'PLAYER_LEFT': {
+          this.sessionPlayers = this.sessionPlayers.filter((p) => p.id !== msg.playerId);
+          const slot = this.playerIdToSlot.get(msg.playerId);
+          if (slot !== undefined) {
+            this.slotToPlayerId.delete(slot);
+            this.playerIdToSlot.delete(msg.playerId);
+          }
+          this.config.onPlayerLeft?.({
+            playerId: msg.playerId,
+            freedColor: msg.freedColor,
+          });
+          break;
+        }
+        case 'COLOR_CHANGED': {
+          const p = this.sessionPlayers.find((item) => item.id === msg.playerId);
+          if (p) {
+            p.color = msg.newColor;
+          }
+          if (msg.playerId === this.playerId) {
+            this.assignedColor = msg.newColor;
+          }
+          this.config.onColorChanged?.({
+            playerId: msg.playerId,
+            newColor: msg.newColor,
+          });
+          break;
+        }
+        case 'GAME_START': {
+          this.config.onGameStart?.();
+          break;
+        }
+      }
       return;
     }
 
-    // 2. Text (JSON) Signaling Handling
-    const msg = parseNetMessage(rawData);
-    if (!msg) return;
-
-    switch (msg.type) {
-      case 'JOIN_ACCEPTED': {
-        if (msg.playerId === this.playerId) {
-          this.handleJoinAccepted(msg);
-        }
-        break;
-      }
-
-      case 'COLOR_REJECTED': {
-        if (msg.playerId === this.playerId) {
-          this.handleColorRejected(msg);
-        }
-        break;
-      }
-
-      case 'PLAYER_JOINED': {
-        if (msg.player.id !== this.playerId) {
-          const exists = this.sessionPlayers.some((p) => p.id === msg.player.id);
-          if (!exists) {
-            this.sessionPlayers.push(msg.player);
-          }
-          if (msg.player.slot !== undefined) {
-            this.slotToPlayerId.set(msg.player.slot, msg.player.id);
-            this.playerIdToSlot.set(msg.player.id, msg.player.slot);
-          }
-          this.config.onPlayerJoined?.(msg.player);
-        }
-        break;
-      }
-
-      case 'PLAYER_LEFT': {
-        this.sessionPlayers = this.sessionPlayers.filter((p) => p.id !== msg.playerId);
-        const slot = this.playerIdToSlot.get(msg.playerId);
-        if (slot !== undefined) {
-          this.slotToPlayerId.delete(slot);
-          this.playerIdToSlot.delete(msg.playerId);
-        }
-        this.config.onPlayerLeft?.({
-          playerId: msg.playerId,
-          freedColor: msg.freedColor,
-        });
-        break;
-      }
-
-      case 'COLOR_CHANGED': {
-        const p = this.sessionPlayers.find((item) => item.id === msg.playerId);
-        if (p) {
-          p.color = msg.newColor;
-        }
-        if (msg.playerId === this.playerId) {
-          this.assignedColor = msg.newColor;
-        }
-        this.config.onColorChanged?.({
-          playerId: msg.playerId,
-          newColor: msg.newColor,
-        });
-        break;
-      }
-
-      case 'FIRE_HITSCAN': {
-        this.config.onHitscanFired?.(msg);
-        break;
-      }
-
-      default:
-        break;
-    }
+    this.handleBinaryMessage(buffer);
   }
 
   private handleBinaryMessage(buffer: ArrayBuffer): void {
@@ -326,14 +320,12 @@ export class P2PClient {
     this.setStatus('connecting');
     this.lastRejection = null;
 
-    const retryReq: JoinRequestMessage = {
-      type: 'JOIN_REQUEST',
-      playerId: this.playerId,
-      playerName: this.playerName,
-      proposedColor: newColor,
-    };
-
-    this.send(retryReq);
+    const retryReqBuf = encodeLobbyJoin(this.playerId, this.playerName, newColor);
+    try {
+      this.channel.send(retryReqBuf);
+    } catch (err: any) {
+      this.config.onError?.(new Error(`Send failed: ${err?.message || err}`));
+    }
   }
 
   /**
@@ -341,11 +333,12 @@ export class P2PClient {
    */
   public requestColorChange(newColor: string): void {
     if (this.status !== 'connected' || !this.channel) return;
-    this.send({
-      type: 'COLOR_REQUEST',
-      playerId: this.playerId,
-      requestedColor: newColor,
-    });
+    const reqBuf = encodeLobbyColorRequest(this.playerId, newColor);
+    try {
+      this.channel.send(reqBuf);
+    } catch(err: any) {
+      this.config.onError?.(new Error(`Send failed: ${err?.message || err}`));
+    }
   }
 
   /**
@@ -376,13 +369,8 @@ export class P2PClient {
         this.config.onError?.(new Error(`Binary fireHitscan failed: ${err?.message || err}`));
       }
     } else {
-      this.send({
-        type: 'FIRE_HITSCAN',
-        shooterId: this.playerId,
-        weaponType,
-        origin,
-        direction,
-      });
+      // Cannot fire hitscan before joining (slot unknown in binary protocol)
+      console.warn("Attempted to fire hitscan before slot assignment.");
     }
   }
 
@@ -411,8 +399,8 @@ export class P2PClient {
     // Synchronize slot lookup tables
     this.slotToPlayerId.clear();
     this.playerIdToSlot.clear();
-    this.slotToPlayerId.set(this.playerSlot, this.playerId);
-    this.playerIdToSlot.set(this.playerId, this.playerSlot);
+    this.slotToPlayerId.set(this.playerSlot!, this.playerId);
+    this.playerIdToSlot.set(this.playerId, this.playerSlot!);
 
     for (const p of msg.sessionPlayers) {
       if (p.slot !== undefined) {
@@ -425,7 +413,7 @@ export class P2PClient {
 
     this.config.onJoinAccepted?.({
       assignedColor: msg.assignedColor,
-      assignedSlot: this.playerSlot,
+      assignedSlot: this.playerSlot ?? undefined,
       sessionPlayers: msg.sessionPlayers,
     });
   }
@@ -458,12 +446,4 @@ export class P2PClient {
     }
   }
 
-  private send(msg: any): void {
-    if (!this.channel) return;
-    try {
-      this.channel.send(serializeNetMessage(msg));
-    } catch (err: any) {
-      this.config.onError?.(new Error(`Send failed: ${err?.message || err}`));
-    }
-  }
 }

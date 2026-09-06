@@ -318,6 +318,7 @@ export function applyFluoColor(robotGroup: THREE.Group, hexColor: string | numbe
     if (mesh.material) {
       if (Array.isArray(mesh.material)) {
         mesh.material = mesh.material.map((m) => {
+          if (m.userData.sharedAsset === false) m.dispose();
           const cloned = (m as THREE.MeshStandardMaterial).clone();
           cloned.color.copy(threeColor);
           if ('emissive' in cloned) {
@@ -325,9 +326,11 @@ export function applyFluoColor(robotGroup: THREE.Group, hexColor: string | numbe
             cloned.emissiveIntensity = 2.5;
           }
           cloned.name = 'RobotFluoAccent';
+          cloned.userData.sharedAsset = false;
           return cloned;
         });
       } else {
+        if (mesh.material.userData.sharedAsset === false) mesh.material.dispose();
         const mat = (mesh.material as THREE.MeshStandardMaterial).clone();
         mat.color.copy(threeColor);
         if ('emissive' in mat) {
@@ -335,6 +338,7 @@ export function applyFluoColor(robotGroup: THREE.Group, hexColor: string | numbe
           mat.emissiveIntensity = 2.5;
         }
         mat.name = 'RobotFluoAccent';
+        mat.userData.sharedAsset = false;
         mesh.material = mat;
       }
     }
@@ -385,13 +389,23 @@ export async function loadRobotModel(
         const root = gltf.scene;
         root.name = 'CyberpunkRobot';
 
-        // Tag the 7 fluo accent meshes on the loaded GLTF
+        // Tag the 7 fluo accent meshes on the loaded GLTF and mark shared assets
         root.traverse((c) => {
           if ((c as THREE.Mesh).isMesh) {
             const mesh = c as THREE.Mesh;
             const mat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
             if (mat && (mat.name === 'RobotFluoAccent' || (mat as THREE.MeshStandardMaterial).emissive?.getHex() === 0x39ff14)) {
               mesh.userData.isFluoAccent = true;
+            }
+            if (mesh.geometry) {
+              mesh.geometry.userData.sharedAsset = true;
+            }
+            if (mesh.material) {
+              if (Array.isArray(mesh.material)) {
+                mesh.material.forEach(m => m.userData.sharedAsset = true);
+              } else {
+                mesh.material.userData.sharedAsset = true;
+              }
             }
           }
         });

@@ -3,10 +3,12 @@ use wasm_bindgen::prelude::*;
 pub mod colors;
 pub mod weapons;
 pub mod lag_compensation;
+pub mod physics;
 
 pub use colors::WasmColorRegistry;
 pub use weapons::WasmCombatEngine;
 pub use lag_compensation::{LagCompensationEngine, PlayerSnapshot, SnapshotRingBuffer, WasmLagCompensator};
+pub use physics::{step_physics, PhysicsInput, PhysicsState};
 
 // Pseudo-random hash
 fn hash(x: f64, y: f64) -> f64 {

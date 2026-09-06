@@ -44,3 +44,23 @@ export class WasmLagCompensator {
   ): string;
   clear_player(player_id: number): void;
 }
+
+export class PhysicsInput {
+  free(): void;
+  constructor(
+    x: number, y: number, z: number, vel_y: number, is_grounded: boolean,
+    forward: boolean, backward: boolean, left: boolean, right: boolean, yaw: number,
+    jump: boolean, sprint: boolean, crouch: boolean, delta: number
+  );
+}
+
+export class PhysicsState {
+  free(): void;
+  x: number;
+  y: number;
+  z: number;
+  vel_y: number;
+  is_grounded: boolean;
+}
+
+export function step_physics(input: PhysicsInput): PhysicsState;

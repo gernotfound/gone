@@ -26,6 +26,11 @@ import {
   decodeHitConfirmed,
   decodeHitConfirmedInto,
   peekPacketOpcode,
+  encodeLobbyJoin,
+  encodeLobbyJoinAccepted,
+  encodeLobbyColorChanged,
+  encodeLobbyGameStart,
+  decodeLobbyMessage,
 } from '../../game-web/src/net/binaryProtocol.ts';
 
 export async function run(suite) {
@@ -284,6 +289,62 @@ export async function run(suite) {
     assertThrows(() => {
       smSmall.allocateSlot('c3');
     }, /Exceeded maximum capacity/);
+  });
+
+
+  // --- T1-NET-07: Lobby Binary Protocol ---
+  suite.test('T1-NET-07: Lobby Binary Protocol encodes and decodes handshake and string exchanges', () => {
+    // 1. Join Request
+    const joinBuf = encodeLobbyJoin('uuid-1234', 'NeonPlayer', '#00F0FF');
+    assertEqual(peekPacketOpcode(joinBuf), PACKET_OPCODES.LOBBY_JOIN);
+    
+    const joinMsg = decodeLobbyMessage(joinBuf);
+    assert(joinMsg !== null);
+    assertEqual(joinMsg.type, 'JOIN_REQUEST');
+    assertEqual(joinMsg.playerId, 'uuid-1234');
+    assertEqual(joinMsg.playerName, 'NeonPlayer');
+    assertEqual(joinMsg.proposedColor, '#00F0FF');
+    
+    // 2. Join Accepted
+    const sessionPlayers = [
+      { id: 'host-uuid', name: 'Host', color: '#FF007F', slot: 0 },
+      { id: 'uuid-1234', name: 'NeonPlayer', color: '#00F0FF', slot: 1 }
+    ];
+    const acceptBuf = encodeLobbyJoinAccepted('uuid-1234', '#00F0FF', 1, sessionPlayers);
+    assertEqual(peekPacketOpcode(acceptBuf), PACKET_OPCODES.LOBBY_JOIN_ACCEPTED);
+    
+    const acceptMsg = decodeLobbyMessage(acceptBuf);
+    assert(acceptMsg !== null);
+    assertEqual(acceptMsg.type, 'JOIN_ACCEPTED');
+    assertEqual(acceptMsg.playerId, 'uuid-1234');
+    assertEqual(acceptMsg.assignedColor, '#00F0FF');
+    assertEqual(acceptMsg.assignedSlot, 1);
+    assertEqual(acceptMsg.sessionPlayers.length, 2);
+    assertEqual(acceptMsg.sessionPlayers[0].name, 'Host');
+    assertEqual(acceptMsg.sessionPlayers[1].slot, 1);
+    
+    // 3. Color Changed
+    const colBuf = encodeLobbyColorChanged('uuid-1234', '#FFAA00');
+    assertEqual(peekPacketOpcode(colBuf), PACKET_OPCODES.LOBBY_COLOR_CHANGED);
+    const colMsg = decodeLobbyMessage(colBuf);
+    assert(colMsg !== null);
+    assertEqual(colMsg.type, 'COLOR_CHANGED');
+    assertEqual(colMsg.playerId, 'uuid-1234');
+    assertEqual(colMsg.newColor, '#FFAA00');
+
+    // 4. Game Start
+    const gsBuf = encodeLobbyGameStart();
+    assertEqual(peekPacketOpcode(gsBuf), PACKET_OPCODES.GAME_START);
+    const gsMsg = decodeLobbyMessage(gsBuf);
+    assert(gsMsg !== null);
+    assertEqual(gsMsg.type, 'GAME_START');
+    
+    // 5. Fallback resilience
+    assertEqual(decodeLobbyMessage(new ArrayBuffer(0)), null);
+    
+    // Truncated packet
+    const truncBuf = joinBuf.slice(0, 5);
+    assertEqual(decodeLobbyMessage(truncBuf), null);
   });
 
   // --- T1-NET-06: Corrupted Payload & Truncation Resilience ---

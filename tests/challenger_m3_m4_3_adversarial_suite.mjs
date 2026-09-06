@@ -29,6 +29,7 @@ import {
   decodeWorldSnapshot,
   encodeHitConfirmed,
   decodeHitConfirmed,
+  encodeLobbyJoin,
 } from '../game-web/src/net/binaryProtocol.ts';
 import { HealthHUDController } from '../game-web/src/ui/healthHud.ts';
 import { ShieldVFXController } from '../game-web/src/vfx/shieldVfx.ts';
@@ -90,12 +91,7 @@ async function runEmpiricalChallengerSuite() {
     const clientChan = new MockDataChannel('client');
     hostChan.connect(clientChan);
     host.registerPeer('peer_victim', hostChan);
-    host.handleChannelMessage('peer_victim', hostChan, JSON.stringify({
-      type: 'JOIN_REQUEST',
-      playerId: 'peer_victim',
-      playerName: 'VictimPlayer',
-      proposedColor: '#FF0055',
-    }));
+    host.handleChannelMessage('peer_victim', hostChan, encodeLobbyJoin('peer_victim', 'VictimPlayer', '#FF0055'));
 
     const victim = host.playerRecords.get('peer_victim');
     victim.shieldExpiresAt = 0; // strip initial shield
@@ -145,12 +141,7 @@ async function runEmpiricalChallengerSuite() {
     const clientChan = new MockDataChannel('client');
     hostChan.connect(clientChan);
     host.registerPeer('peer_dead', hostChan);
-    host.handleChannelMessage('peer_dead', hostChan, JSON.stringify({
-      type: 'JOIN_REQUEST',
-      playerId: 'peer_dead',
-      playerName: 'DeadPlayer',
-      proposedColor: '#FF0055',
-    }));
+    host.handleChannelMessage('peer_dead', hostChan, encodeLobbyJoin('peer_dead', 'DeadPlayer', '#FF0055'));
 
     const deadRecord = host.playerRecords.get('peer_dead');
     deadRecord.shieldExpiresAt = 0;
@@ -230,12 +221,7 @@ async function runEmpiricalChallengerSuite() {
     const clientChan = new MockDataChannel('client');
     hostChan.connect(clientChan);
     host.registerPeer('peer_respawn', hostChan);
-    host.handleChannelMessage('peer_respawn', hostChan, JSON.stringify({
-      type: 'JOIN_REQUEST',
-      playerId: 'peer_respawn',
-      playerName: 'RespawnSubject',
-      proposedColor: '#FF0055',
-    }));
+    host.handleChannelMessage('peer_respawn', hostChan, encodeLobbyJoin('peer_respawn', 'RespawnSubject', '#FF0055'));
 
     const subject = host.playerRecords.get('peer_respawn');
     subject.shieldExpiresAt = 0;
@@ -285,12 +271,7 @@ async function runEmpiricalChallengerSuite() {
     const clientChan = new MockDataChannel('client');
     hostChan.connect(clientChan);
     host.registerPeer('peer_shielded', hostChan);
-    host.handleChannelMessage('peer_shielded', hostChan, JSON.stringify({
-      type: 'JOIN_REQUEST',
-      playerId: 'peer_shielded',
-      playerName: 'ShieldedTarget',
-      proposedColor: '#FF0055',
-    }));
+    host.handleChannelMessage('peer_shielded', hostChan, encodeLobbyJoin('peer_shielded', 'ShieldedTarget', '#FF0055'));
 
     const victim = host.playerRecords.get('peer_shielded');
     host.respawnPlayer('peer_shielded');
@@ -366,12 +347,7 @@ async function runEmpiricalChallengerSuite() {
     const clientChan = new MockDataChannel('client');
     hostChan.connect(clientChan);
     host.registerPeer('peer_target', hostChan);
-    host.handleChannelMessage('peer_target', hostChan, JSON.stringify({
-      type: 'JOIN_REQUEST',
-      playerId: 'peer_target',
-      playerName: 'BunkerTarget',
-      proposedColor: '#FF0055',
-    }));
+    host.handleChannelMessage('peer_target', hostChan, encodeLobbyJoin('peer_target', 'BunkerTarget', '#FF0055'));
 
     const target = host.playerRecords.get('peer_target');
     host.respawnPlayer('peer_target');
@@ -407,12 +383,7 @@ async function runEmpiricalChallengerSuite() {
     const clientChan = new MockDataChannel('client');
     hostChan.connect(clientChan);
     host.registerPeer('peer_expiring', hostChan);
-    host.handleChannelMessage('peer_expiring', hostChan, JSON.stringify({
-      type: 'JOIN_REQUEST',
-      playerId: 'peer_expiring',
-      playerName: 'ExpiringTarget',
-      proposedColor: '#FF0055',
-    }));
+    host.handleChannelMessage('peer_expiring', hostChan, encodeLobbyJoin('peer_expiring', 'ExpiringTarget', '#FF0055'));
 
     const subject = host.playerRecords.get('peer_expiring');
     host.respawnPlayer('peer_expiring');
@@ -466,17 +437,13 @@ async function runEmpiricalChallengerSuite() {
     const chanB = new MockDataChannel('chanB');
     chanA.connect(chanB);
     host.registerPeer('player_A', chanA);
-    host.handleChannelMessage('player_A', chanA, JSON.stringify({
-      type: 'JOIN_REQUEST', playerId: 'player_A', playerName: 'PlayerA', proposedColor: '#FF0055',
-    }));
+    host.handleChannelMessage('player_A', chanA, encodeLobbyJoin('player_A', 'PlayerA', '#FF0055'));
 
     const chanC = new MockDataChannel('chanC');
     const chanD = new MockDataChannel('chanD');
     chanC.connect(chanD);
     host.registerPeer('player_B', chanC);
-    host.handleChannelMessage('player_B', chanC, JSON.stringify({
-      type: 'JOIN_REQUEST', playerId: 'player_B', playerName: 'PlayerB', proposedColor: '#00FF66',
-    }));
+    host.handleChannelMessage('player_B', chanC, encodeLobbyJoin('player_B', 'PlayerB', '#00FF66'));
 
     const playerA = host.playerRecords.get('player_A');
     const playerB = host.playerRecords.get('player_B');
@@ -530,9 +497,7 @@ async function runEmpiricalChallengerSuite() {
     const clientChan = new MockDataChannel('client');
     hostChan.connect(clientChan);
     host.registerPeer('cycle_player', hostChan);
-    host.handleChannelMessage('cycle_player', hostChan, JSON.stringify({
-      type: 'JOIN_REQUEST', playerId: 'cycle_player', playerName: 'Cycler', proposedColor: '#FF0055',
-    }));
+    host.handleChannelMessage('cycle_player', hostChan, encodeLobbyJoin('cycle_player', 'Cycler', '#FF0055'));
 
     const p = host.playerRecords.get('cycle_player');
     let simTime = 1000.0;

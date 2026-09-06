@@ -32,3 +32,25 @@ export class WasmLagCompensator {
   }
   clear_player(player_id) {}
 }
+
+export class PhysicsInput {
+  constructor(x, y, z, vel_y, is_grounded, forward, backward, left, right, yaw, jump, sprint, crouch, delta) {
+    this.x = x;
+    this.y = y;
+    this.z = z;
+    this.vel_y = vel_y;
+    this.is_grounded = is_grounded;
+  }
+  free() {}
+}
+
+export function step_physics(input) {
+  return {
+    x: input.x,
+    y: input.y,
+    z: input.z,
+    vel_y: input.vel_y,
+    is_grounded: input.is_grounded,
+    free: () => {}
+  };
+}

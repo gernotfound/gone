@@ -30,6 +30,7 @@ import {
   decodeWorldSnapshot,
   encodeHitConfirmed,
   decodeHitConfirmed,
+  encodeLobbyJoin,
 } from '../game-web/src/net/binaryProtocol.ts';
 import { HealthHUDController } from '../game-web/src/ui/healthHud.ts';
 import { ShieldVFXController } from '../game-web/src/vfx/shieldVfx.ts';
@@ -93,12 +94,7 @@ async function runAdversarialSuite() {
     hostChan.connect(clientChan);
 
     host.registerPeer('victim_1', hostChan);
-    host.handleChannelMessage('victim_1', hostChan, JSON.stringify({
-      type: 'JOIN_REQUEST',
-      playerId: 'victim_1',
-      playerName: 'VictimOne',
-      proposedColor: '#FF0055',
-    }));
+    host.handleChannelMessage('victim_1', hostChan, encodeLobbyJoin('victim_1', 'VictimOne', '#FF0055'));
 
     const victim = host.playerRecords.get('victim_1');
     assert(victim !== undefined, 'Victim 1 registered successfully');
@@ -124,12 +120,7 @@ async function runAdversarialSuite() {
 
     // Overkill test on a fresh player: deal 10,000 damage
     host.registerPeer('victim_overkill', hostChan);
-    host.handleChannelMessage('victim_overkill', hostChan, JSON.stringify({
-      type: 'JOIN_REQUEST',
-      playerId: 'victim_overkill',
-      playerName: 'OverkillVictim',
-      proposedColor: '#39FF14',
-    }));
+    host.handleChannelMessage('victim_overkill', hostChan, encodeLobbyJoin('victim_overkill', 'OverkillVictim', '#39FF14'));
     const overkillVic = host.playerRecords.get('victim_overkill');
     overkillVic.shieldExpiresAt = 0;
 
@@ -164,12 +155,7 @@ async function runAdversarialSuite() {
     hostChan.connect(clientChan);
 
     host.registerPeer('victim_death_timing', hostChan);
-    host.handleChannelMessage('victim_death_timing', hostChan, JSON.stringify({
-      type: 'JOIN_REQUEST',
-      playerId: 'victim_death_timing',
-      playerName: 'TimingVictim',
-      proposedColor: '#FFFF00',
-    }));
+    host.handleChannelMessage('victim_death_timing', hostChan, encodeLobbyJoin('victim_death_timing', 'TimingVictim', '#FFFF00'));
 
     const vic = host.playerRecords.get('victim_death_timing');
     vic.shieldExpiresAt = 0;
@@ -229,12 +215,7 @@ async function runAdversarialSuite() {
     hostChan.connect(clientChan);
 
     host.registerPeer('victim_respawn', hostChan);
-    host.handleChannelMessage('victim_respawn', hostChan, JSON.stringify({
-      type: 'JOIN_REQUEST',
-      playerId: 'victim_respawn',
-      playerName: 'RespawnVictim',
-      proposedColor: '#FF00FF',
-    }));
+    host.handleChannelMessage('victim_respawn', hostChan, encodeLobbyJoin('victim_respawn', 'RespawnVictim', '#FF00FF'));
 
     const vic = host.playerRecords.get('victim_respawn');
     vic.shieldExpiresAt = 0;
@@ -290,12 +271,7 @@ async function runAdversarialSuite() {
     hostChan.connect(clientChan);
 
     host.registerPeer('victim_shield_weapons', hostChan);
-    host.handleChannelMessage('victim_shield_weapons', hostChan, JSON.stringify({
-      type: 'JOIN_REQUEST',
-      playerId: 'victim_shield_weapons',
-      playerName: 'ShieldVictim',
-      proposedColor: '#FF0077',
-    }));
+    host.handleChannelMessage('victim_shield_weapons', hostChan, encodeLobbyJoin('victim_shield_weapons', 'ShieldVictim', '#FF0077'));
 
     const vic = host.playerRecords.get('victim_shield_weapons');
     host.respawnPlayer('victim_shield_weapons'); // Respawn at [0, 17.5, 0] with 10s shield
@@ -377,12 +353,7 @@ async function runAdversarialSuite() {
     hostChan.connect(clientChan);
 
     host.registerPeer('victim_barrage', hostChan);
-    host.handleChannelMessage('victim_barrage', hostChan, JSON.stringify({
-      type: 'JOIN_REQUEST',
-      playerId: 'victim_barrage',
-      playerName: 'BarrageVictim',
-      proposedColor: '#FF3366',
-    }));
+    host.handleChannelMessage('victim_barrage', hostChan, encodeLobbyJoin('victim_barrage', 'BarrageVictim', '#FF3366'));
 
     const vic = host.playerRecords.get('victim_barrage');
     host.respawnPlayer('victim_barrage');
@@ -418,12 +389,7 @@ async function runAdversarialSuite() {
     hostChan2.connect(clientChan2);
 
     host.registerPeer('victim_unshielded', hostChan2);
-    host.handleChannelMessage('victim_unshielded', hostChan2, JSON.stringify({
-      type: 'JOIN_REQUEST',
-      playerId: 'victim_unshielded',
-      playerName: 'UnshieldedVictim',
-      proposedColor: '#FF6600',
-    }));
+    host.handleChannelMessage('victim_unshielded', hostChan2, encodeLobbyJoin('victim_unshielded', 'UnshieldedVictim', '#FF6600'));
 
     const shooter = host.playerRecords.get('host_leader');
     const victim = host.playerRecords.get('victim_unshielded');
@@ -471,12 +437,7 @@ async function runAdversarialSuite() {
     hostChan.connect(clientChan);
 
     host.registerPeer('victim_recycle', hostChan);
-    host.handleChannelMessage('victim_recycle', hostChan, JSON.stringify({
-      type: 'JOIN_REQUEST',
-      playerId: 'victim_recycle',
-      playerName: 'RecycleVictim',
-      proposedColor: '#CC00FF',
-    }));
+    host.handleChannelMessage('victim_recycle', hostChan, encodeLobbyJoin('victim_recycle', 'RecycleVictim', '#CC00FF'));
 
     const vic = host.playerRecords.get('victim_recycle');
     host.respawnPlayer('victim_recycle');
