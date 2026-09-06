@@ -1,68 +1,55 @@
 import type { IDataChannel } from './protocol.ts';
 import { P2PHost } from './p2pHost.ts';
+import { Peer, type DataConnection } from 'peerjs';
 
 // ---------------------------------------------------------------------------
-// URL dell'endpoint di signaling Vercel (relativo: funziona su qualsiasi dominio)
+// PeerJsDataChannel: wrapper intorno a DataConnection di PeerJS
 // ---------------------------------------------------------------------------
-const SIGNAL_BASE = '/api/signal';
-
-// ICE servers STUN pubblici gratuiti
-const ICE_SERVERS: RTCIceServer[] = [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-    { urls: 'stun:stun.cloudflare.com:3478' },
-];
-
-// ---------------------------------------------------------------------------
-// WebRtcDataChannel: wrapper intorno a RTCDataChannel che implementa IDataChannel
-// ---------------------------------------------------------------------------
-export class WebRtcDataChannel implements IDataChannel {
+export class PeerJsDataChannel implements IDataChannel {
     public binaryType?: 'blob' | 'arraybuffer' = 'arraybuffer';
     public onmessage?: ((ev: { data: any }) => void) | null;
     public onopen?: (() => void) | null;
     public onclose?: (() => void) | null;
     public onerror?: ((err: any) => void) | null;
     public readyState: string = 'connecting';
+    
+    private conn: DataConnection;
 
-    private channel: RTCDataChannel;
-    private pc: RTCPeerConnection;
+    constructor(conn: DataConnection) {
+        this.conn = conn;
 
-    constructor(pc: RTCPeerConnection, channel: RTCDataChannel) {
-        this.pc = pc;
-        this.channel = channel;
-        this.channel.binaryType = 'arraybuffer';
-
-        this.channel.onopen = () => {
+        this.conn.on('open', () => {
             this.readyState = 'open';
             if (this.onopen) this.onopen();
-        };
-        this.channel.onclose = () => {
+        });
+
+        this.conn.on('close', () => {
             this.readyState = 'closed';
             if (this.onclose) this.onclose();
-        };
-        this.channel.onerror = (err) => {
-            if (this.onerror) this.onerror(err);
-        };
-        this.channel.onmessage = (ev) => {
-            if (this.onmessage) this.onmessage(ev);
-        };
+        });
 
-        // Se già aperto (caso raro)
-        if (this.channel.readyState === 'open') {
+        this.conn.on('error', (err: any) => {
+            if (this.onerror) this.onerror(err);
+        });
+
+        this.conn.on('data', (data: any) => {
+            if (this.onmessage) this.onmessage({ data });
+        });
+
+        if (this.conn.open) {
             this.readyState = 'open';
             setTimeout(() => { if (this.onopen) this.onopen(); }, 0);
         }
     }
 
     send(data: string | ArrayBuffer | ArrayBufferView): void {
-        if (this.channel.readyState === 'open') {
-            this.channel.send(data as any);
+        if (this.readyState === 'open') {
+            this.conn.send(data);
         }
     }
 
     close(): void {
-        this.channel.close();
-        this.pc.close();
+        this.conn.close();
         this.readyState = 'closed';
     }
 }
@@ -129,11 +116,6 @@ async function isLocalHost(hostId: string): Promise<boolean> {
 // HOST SIGNALING
 // ---------------------------------------------------------------------------
 export function startHostSignaling(hostId: string, p2pHost: P2PHost): void {
-    // Registra l'host sul server HTTP
-    fetch(`${SIGNAL_BASE}?action=host_register&hostId=${encodeURIComponent(hostId)}`, {
-        method: 'POST',
-    }).catch(err => console.warn('[Signaling] host_register error:', err));
-
     // ---- Fallback locale: BroadcastChannel (stesso browser) ----
     const localSig = new BroadcastChannel(`gone-sig-${hostId}`);
     const localProbe = new BroadcastChannel(`gone-probe-${hostId}`);
@@ -160,98 +142,28 @@ export function startHostSignaling(hostId: string, p2pHost: P2PHost): void {
         }
     };
 
-    // ---- Polling HTTP: WebRTC per cross-device ----
-    const handledPeers = new Set<string>();
-    let pollingActive = true;
+    // ---- PeerJS WebRTC per cross-device ----
+    const peer = new Peer(hostId);
+    
+    peer.on('open', (id) => {
+        console.log(`[Host] PeerJS host registered with ID: ${id}`);
+    });
 
-    const pollOffers = async () => {
-        if (!pollingActive) return;
-        try {
-            const res = await fetch(`${SIGNAL_BASE}?action=poll_offers&hostId=${encodeURIComponent(hostId)}`);
-            if (res.ok) {
-                const data = await res.json() as { offers: Array<{ peerId: string; sdp: string }> };
-                for (const { peerId, sdp } of data.offers) {
-                    if (handledPeers.has(peerId)) continue;
-                    handledPeers.add(peerId);
-                    handleIncomingOffer(hostId, peerId, sdp, p2pHost);
-                }
-            }
-        } catch (_) { /* ignora errori transienti */ }
-        if (pollingActive) setTimeout(pollOffers, 600);
-    };
+    peer.on('connection', (conn) => {
+        const peerId = conn.peer;
+        const channel = new PeerJsDataChannel(conn);
+        p2pHost.registerPeer(peerId, channel);
+    });
 
-    pollOffers();
+    peer.on('error', (err) => {
+        console.error('[Host] PeerJS Error:', err);
+    });
 
     (p2pHost as any).__stopHostSignaling = () => {
-        pollingActive = false;
         localSig.close();
         localProbe.close();
+        peer.destroy();
     };
-}
-
-async function handleIncomingOffer(hostId: string, peerId: string, offerSdp: string, p2pHost: P2PHost) {
-    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
-
-    // Manda ICE candidates via HTTP
-    pc.onicecandidate = async (ev) => {
-        if (ev.candidate) {
-            try {
-                await fetch(
-                    `${SIGNAL_BASE}?action=host_ice&hostId=${encodeURIComponent(hostId)}&peerId=${encodeURIComponent(peerId)}`,
-                    {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ candidate: ev.candidate }),
-                    }
-                );
-            } catch (_) {}
-        }
-    };
-
-    // Gestisci il DataChannel in arrivo
-    pc.ondatachannel = (ev) => {
-        const dc = ev.channel;
-        const channel = new WebRtcDataChannel(pc, dc);
-        p2pHost.registerPeer(peerId, channel);
-    };
-
-    // Applica offer e crea answer
-    await pc.setRemoteDescription({ type: 'offer', sdp: offerSdp });
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
-
-    // Invia answer
-    await fetch(
-        `${SIGNAL_BASE}?action=host_answer&hostId=${encodeURIComponent(hostId)}&peerId=${encodeURIComponent(peerId)}`,
-        {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sdp: answer.sdp }),
-        }
-    );
-
-    // Polling ICE candidates del client
-    let icePollActive = true;
-    const pollClientIce = async () => {
-        if (!icePollActive) return;
-        try {
-            const res = await fetch(
-                `${SIGNAL_BASE}?action=poll_client_ice&hostId=${encodeURIComponent(hostId)}&peerId=${encodeURIComponent(peerId)}`
-            );
-            if (res.ok) {
-                const data = await res.json() as { candidates: RTCIceCandidateInit[] };
-                for (const candidate of data.candidates) {
-                    try { await pc.addIceCandidate(candidate); } catch (_) {}
-                }
-            }
-        } catch (_) {}
-        if (icePollActive && pc.connectionState !== 'connected') {
-            setTimeout(pollClientIce, 600);
-        } else {
-            icePollActive = false;
-        }
-    };
-    pollClientIce();
 }
 
 // ---------------------------------------------------------------------------
@@ -280,102 +192,36 @@ export function connectClientSignaling(hostId: string, peerId: string): Promise<
             setTimeout(() => {
                 if (!resolvedLocal) {
                     localSig.close();
-                    connectViaWebRTC(hostId, peerId).then(resolve).catch(reject);
+                    connectViaPeerJS(hostId, peerId).then(resolve).catch(reject);
                 }
             }, 300);
         } else {
-            // Connessione cross-device: usa WebRTC
-            connectViaWebRTC(hostId, peerId).then(resolve).catch(reject);
+            // Connessione cross-device: usa PeerJS
+            connectViaPeerJS(hostId, peerId).then(resolve).catch(reject);
         }
     });
 }
 
-async function connectViaWebRTC(hostId: string, peerId: string): Promise<IDataChannel> {
-    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
-    const dc = pc.createDataChannel('gone', { ordered: false, maxRetransmits: 0 });
-    const channel = new WebRtcDataChannel(pc, dc);
+function connectViaPeerJS(hostId: string, peerId: string): Promise<IDataChannel> {
+    return new Promise((resolve, reject) => {
+        const peer = new Peer(peerId);
+        
+        peer.on('open', () => {
+            // Connessi al signaling server, ora mi connetto all'host
+            const conn = peer.connect(hostId, {
+                reliable: false, 
+                serialization: 'none'
+            });
+            
+            const channel = new PeerJsDataChannel(conn);
+            
+            // Risolviamo subito, il channel poi lancerà onopen
+            resolve(channel);
+        });
 
-    // Manda ICE candidates via HTTP
-    pc.onicecandidate = async (ev) => {
-        if (ev.candidate) {
-            try {
-                await fetch(
-                    `${SIGNAL_BASE}?action=client_ice&hostId=${encodeURIComponent(hostId)}&peerId=${encodeURIComponent(peerId)}`,
-                    {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ candidate: ev.candidate }),
-                    }
-                );
-            } catch (_) {}
-        }
-    };
-
-    // Crea offer
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-
-    // Invia offer al server
-    await fetch(
-        `${SIGNAL_BASE}?action=client_offer&hostId=${encodeURIComponent(hostId)}&peerId=${encodeURIComponent(peerId)}`,
-        {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sdp: offer.sdp }),
-        }
-    );
-
-    // Polling per la answer dell'host
-    const maxPolls = 60;
-    let pollCount = 0;
-
-    await new Promise<void>((resolveAnswer, rejectAnswer) => {
-        const pollAnswer = async () => {
-            if (pollCount >= maxPolls) {
-                rejectAnswer(new Error('Timeout: host non risponde'));
-                return;
-            }
-            pollCount++;
-            try {
-                const res = await fetch(
-                    `${SIGNAL_BASE}?action=poll_answer&hostId=${encodeURIComponent(hostId)}&peerId=${encodeURIComponent(peerId)}`
-                );
-                if (res.ok) {
-                    const data = await res.json() as { answer: string | null };
-                    if (data.answer) {
-                        await pc.setRemoteDescription({ type: 'answer', sdp: data.answer });
-                        resolveAnswer();
-                        return;
-                    }
-                }
-            } catch (_) {}
-            setTimeout(pollAnswer, 500);
-        };
-        pollAnswer();
+        peer.on('error', (err) => {
+            console.error('[Client] PeerJS Error:', err);
+            reject(err);
+        });
     });
-
-    // Polling ICE candidates dell'host
-    let icePollActive = true;
-    const pollHostIce = async () => {
-        if (!icePollActive) return;
-        try {
-            const res = await fetch(
-                `${SIGNAL_BASE}?action=poll_host_ice&hostId=${encodeURIComponent(hostId)}&peerId=${encodeURIComponent(peerId)}`
-            );
-            if (res.ok) {
-                const data = await res.json() as { candidates: RTCIceCandidateInit[] };
-                for (const candidate of data.candidates) {
-                    try { await pc.addIceCandidate(candidate); } catch (_) {}
-                }
-            }
-        } catch (_) {}
-        if (icePollActive && pc.connectionState !== 'connected') {
-            setTimeout(pollHostIce, 600);
-        } else {
-            icePollActive = false;
-        }
-    };
-    pollHostIce();
-
-    return channel;
 }

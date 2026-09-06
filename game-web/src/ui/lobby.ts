@@ -144,13 +144,10 @@ export function setupLobby(isHost: boolean, hostIdParam?: string, onPlayMultipla
                 if (onGameStartCb) onGameStartCb();
             }
         });
-        (window as any).goneGame = (window as any).goneGame || {};
-        (window as any).goneGame.setP2PClient = (client: any) => {
-            (window as any).goneGame.activeP2PClient = client;
-        };
-        (window as any).goneGame.setP2PClient(activeP2PClient);
+        (window as any).goneGame?.setP2PClient?.(activeP2PClient);
 
         connectClientSignaling(hostIdParam, localId).then(channel => {
+            activeP2PClient!.playerName = DOM.playerUsernameInput.value || 'Giocatore';
             activeP2PClient!.connect(channel, localPlayerColor);
         });
     }
@@ -214,10 +211,21 @@ function renderLobbyPlayers() {
 export function initLobbyEvents() {
     DOM.playerUsernameInput.addEventListener('input', () => {
         const localId = isHostMode ? 'host' : (activeP2PClient?.playerId || 'guest');
+        const newName = DOM.playerUsernameInput.value || 'Giocatore';
         const local = lobbyPlayers.find(p => p.id === localId);
         if (local) {
-            local.name = DOM.playerUsernameInput.value || 'Giocatore';
+            local.name = newName;
             renderLobbyPlayers();
+        }
+        
+        if (isHostMode && activeP2PHost) {
+            activeP2PHost.hostPlayer.name = newName;
+            const record = (activeP2PHost as any).playerRecords.get(localId);
+            if (record) record.name = newName;
+        }
+        
+        if (!isHostMode && activeP2PClient) {
+            activeP2PClient.playerName = newName;
         }
     });
 

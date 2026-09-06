@@ -59,7 +59,7 @@ export interface P2PClientConfig {
 
 export class P2PClient {
   public readonly playerId: string;
-  public readonly playerName: string;
+  public playerName: string;
 
   public status: ClientConnectionStatus = 'disconnected';
   public proposedColor: string = '';
