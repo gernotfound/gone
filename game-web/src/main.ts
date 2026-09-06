@@ -17,13 +17,14 @@ import {
 import { P2PClient } from './net/p2pClient.ts';
 import { P2PHost } from './net/p2pHost.ts';
 import { InterpolationBuffer } from './net/interpolationBuffer.ts';
-import { type FireHitscanMessage } from './net/protocol.ts';
+import { type FireHitscanMessage, NEON_PALETTE } from './net/protocol.ts';
 import { STATE_FLAGS, type WorldSnapshotData, type FireHitscanData, type HitConfirmedData } from './net/binaryProtocol.ts';
 import { soundSynth } from './audio/index.ts';
 import { vfxManager } from './vfx/index.ts';
 import { healthHud } from './ui/healthHud.ts';
 import { shieldVfxController } from './vfx/shieldVfx.ts';
 import type { HitConfirmationEvent } from './net/p2pHost.ts';
+import { startHostSignaling, connectClientSignaling } from './net/mockChannel.ts';
 
 // --- MENU LOGIC ---
 const bgMusic = document.getElementById('bg-music') as HTMLAudioElement;
@@ -37,6 +38,17 @@ const musicStatus = document.getElementById('music-status') as HTMLElement;
 const btnSettings = document.getElementById('btn-settings') as HTMLButtonElement;
 const btnExit = document.getElementById('btn-exit') as HTMLButtonElement;
 const btnBack = document.getElementById('btn-back') as HTMLButtonElement;
+const btnMultiplayer = document.getElementById('btn-multiplayer') as HTMLButtonElement;
+const multiplayerLobby = document.getElementById('multiplayer-lobby') as HTMLElement;
+const playerUsernameInput = document.getElementById('player-username') as HTMLInputElement;
+const colorPickerContainer = document.getElementById('color-picker-container') as HTMLElement;
+const inviteLinkContainer = document.getElementById('invite-link-container') as HTMLElement;
+const inviteLinkInput = document.getElementById('invite-link-input') as HTMLInputElement;
+const btnCopyLink = document.getElementById('btn-copy-link') as HTMLButtonElement;
+const lobbyPlayerList = document.getElementById('lobby-player-list') as HTMLUListElement;
+const btnBackLobby = document.getElementById('btn-back-lobby') as HTMLButtonElement;
+const btnPlayMultiplayer = document.getElementById('btn-play-multiplayer') as HTMLButtonElement;
+
 const volMaster = document.getElementById('vol-master') as HTMLInputElement;
 const volMusic = document.getElementById('vol-music') as HTMLInputElement;
 const volSfx = document.getElementById('vol-sfx') as HTMLInputElement;
@@ -137,6 +149,280 @@ let localPlayerColor = '#00F0FF';
 let localRobotPreview: THREE.Group | null = null;
 let activeP2PClient: P2PClient | null = null;
 let activeP2PHost: P2PHost | null = null;
+
+// Lobby State
+let isHostMode = false;
+let lobbyPlayers: {id: string, name: string, color: string, isHost: boolean}[] = [];
+
+function initLobby(isHost: boolean, hostIdParam?: string) {
+    isHostMode = isHost;
+    
+    // Setup color picker
+    colorPickerContainer.innerHTML = '';
+    NEON_PALETTE.forEach(color => {
+        const btn = document.createElement('button');
+        btn.className = 'w-10 h-10 rounded-full border-2 transition-all hover:scale-110 focus:outline-none';
+        btn.style.backgroundColor = color.hex;
+        btn.style.borderColor = color.hex === localPlayerColor ? 'white' : 'transparent';
+        if (color.hex === localPlayerColor) {
+            btn.classList.add('shadow-[0_0_15px_currentColor]');
+            btn.style.color = color.hex;
+        }
+        btn.addEventListener('click', () => {
+            localPlayerColor = color.hex;
+            (window as any).goneGame?.setLocalPlayerColor?.(color.hex);
+            if (activeP2PClient) {
+                activeP2PClient.requestColorChange(color.hex);
+            }
+            initLobby(isHostMode, hostIdParam); // refresh
+        });
+        colorPickerContainer.appendChild(btn);
+    });
+
+    const playerName = playerUsernameInput.value || 'Giocatore';
+    const localId = isHost ? 'host' : 'guest-' + Math.random().toString(36).substring(2, 9);
+
+    if (isHost && !activeP2PHost) {
+        const hostId = "host-" + Math.random().toString(36).substring(2, 9);
+        const url = new URL(window.location.href);
+        url.searchParams.set('join', hostId);
+        inviteLinkInput.value = url.toString();
+        
+        activeP2PHost = new P2PHost({
+            hostPlayer: { id: localId, name: playerName, color: localPlayerColor },
+            onPlayerJoined: (p) => {
+                lobbyPlayers.push({ id: p.id, name: p.name, color: p.color, isHost: false });
+                renderLobbyPlayers();
+            },
+            onPlayerLeft: (pid) => {
+                lobbyPlayers = lobbyPlayers.filter(p => p.id !== pid);
+                renderLobbyPlayers();
+            }
+        });
+        (window as any).goneGame?.setP2PHost?.(activeP2PHost);
+        
+        // Listen to host-local color changes internally since host is authoritative
+        const originalSetLocalPlayerColor = (window as any).goneGame?.setLocalPlayerColor;
+        (window as any).goneGame.setLocalPlayerColor = (hex: string) => {
+            if (originalSetLocalPlayerColor) originalSetLocalPlayerColor(hex);
+            if (activeP2PHost) {
+                const claim = activeP2PHost.colorRegistry.requestColor(localId, hex);
+                if (claim.success && claim.color) {
+                    activeP2PHost.hostPlayer.color = claim.color;
+                    const lp = lobbyPlayers.find(p => p.id === localId);
+                    if (lp) { lp.color = claim.color; renderLobbyPlayers(); }
+                    
+                    // Broadcast color change to everyone
+                    for (const peer of (activeP2PHost as any).peers.values()) {
+                        peer.channel.send(JSON.stringify({ type: 'COLOR_CHANGED', playerId: localId, newColor: claim.color }));
+                    }
+                }
+            }
+        };
+
+        // Override processColorChangeRequest to notify lobby
+        const originalColorReq = (activeP2PHost as any).processColorChangeRequest;
+        (activeP2PHost as any).processColorChangeRequest = function(channel: any, msg: any) {
+            originalColorReq.call(activeP2PHost, channel, msg);
+            const lp = lobbyPlayers.find(p => p.id === msg.playerId);
+            if (lp) {
+                const assigned = activeP2PHost?.colorRegistry.getAssignedColor(msg.playerId);
+                if (assigned) {
+                    lp.color = assigned;
+                    renderLobbyPlayers();
+                }
+            }
+        };
+
+        startHostSignaling(hostId, activeP2PHost);
+    } else if (!isHost && !activeP2PClient && hostIdParam) {
+        activeP2PClient = new P2PClient({
+            playerId: localId,
+            playerName: playerName,
+            onJoinAccepted: (data) => {
+                localPlayerColor = data.assignedColor;
+                lobbyPlayers = data.sessionPlayers.map(p => ({
+                    id: p.id,
+                    name: p.name,
+                    color: p.color,
+                    isHost: p.id === data.sessionPlayers[0].id // Assumption: first is host
+                }));
+                const lp = lobbyPlayers.find(p => p.id === localId);
+                if (lp) lp.color = data.assignedColor;
+                renderLobbyPlayers();
+                
+                // Now guest is connected
+                btnPlayMultiplayer.textContent = 'IN ATTESA DELL\'HOST...';
+            },
+            onPlayerJoined: (p) => {
+                lobbyPlayers.push({ id: p.id, name: p.name, color: p.color, isHost: false });
+                renderLobbyPlayers();
+            },
+            onPlayerLeft: (data) => {
+                lobbyPlayers = lobbyPlayers.filter(p => p.id !== data.playerId);
+                renderLobbyPlayers();
+            },
+            onColorChanged: (data) => {
+                const lp = lobbyPlayers.find(p => p.id === data.playerId);
+                if (lp) { lp.color = data.newColor; renderLobbyPlayers(); }
+            }
+        });
+        (window as any).goneGame?.setP2PClient?.(activeP2PClient);
+
+        // Intercept raw messages for GAME_START
+        const origHandle = activeP2PClient.handleMessage.bind(activeP2PClient);
+        activeP2PClient.handleMessage = (raw: any) => {
+            origHandle(raw);
+            try {
+                const msg = typeof raw === 'string' ? JSON.parse(raw) : raw;
+                if (msg?.type === 'GAME_START') {
+                    multiplayerLobby.classList.remove('flex');
+                    multiplayerLobby.classList.add('hidden');
+                    if (!hasInitializedWasm) preLoadGame();
+                    else startGameplay();
+                }
+            } catch(e) {}
+        };
+
+        connectClientSignaling(hostIdParam, localId).then(channel => {
+            activeP2PClient!.connect(channel, localPlayerColor);
+        });
+    }
+
+    if (isHost) {
+        inviteLinkContainer.classList.remove('hidden');
+        btnPlayMultiplayer.classList.remove('hidden');
+        btnPlayMultiplayer.textContent = 'GIOCA';
+        btnPlayMultiplayer.disabled = false;
+        btnPlayMultiplayer.className = 'w-2/3 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-black text-xl py-3 rounded-xl transition-all active:scale-95 shadow-lg shadow-emerald-500/20 uppercase tracking-widest border border-emerald-400/30';
+    } else {
+        inviteLinkContainer.classList.add('hidden');
+        btnPlayMultiplayer.textContent = 'CONNESSIONE...';
+        btnPlayMultiplayer.disabled = true;
+        btnPlayMultiplayer.className = 'w-2/3 bg-slate-700 cursor-not-allowed text-white font-black text-xl py-3 rounded-xl shadow-md uppercase tracking-widest border border-slate-600';
+    }
+
+    if (lobbyPlayers.length === 0) {
+        lobbyPlayers = [{
+            id: localId,
+            name: playerName,
+            color: localPlayerColor,
+            isHost: isHost
+        }];
+    }
+    renderLobbyPlayers();
+}
+
+playerUsernameInput.addEventListener('input', () => {
+    const localId = isHostMode ? 'host' : (activeP2PClient?.playerId || 'guest');
+    const local = lobbyPlayers.find(p => p.id === localId);
+    if (local) {
+        local.name = playerUsernameInput.value || 'Giocatore';
+        renderLobbyPlayers();
+        // Since we are mocking, real player name changes would need a protocol message, 
+        // but for now we focus on color and joining.
+    }
+});
+
+btnCopyLink.addEventListener('click', () => {
+    navigator.clipboard.writeText(inviteLinkInput.value).then(() => {
+        const orig = btnCopyLink.textContent;
+        btnCopyLink.textContent = 'COPIATO!';
+        btnCopyLink.classList.remove('bg-slate-800');
+        btnCopyLink.classList.add('bg-emerald-600', 'border-emerald-500');
+        setTimeout(() => {
+            btnCopyLink.textContent = orig;
+            btnCopyLink.classList.add('bg-slate-800');
+            btnCopyLink.classList.remove('bg-emerald-600', 'border-emerald-500');
+        }, 2000);
+    });
+});
+
+function renderLobbyPlayers() {
+    lobbyPlayerList.innerHTML = '';
+    lobbyPlayers.forEach(p => {
+        const li = document.createElement('li');
+        li.className = 'flex items-center justify-between bg-slate-900/50 p-3 rounded-lg border border-slate-700/50';
+        
+        const leftDiv = document.createElement('div');
+        leftDiv.className = 'flex items-center gap-3';
+        
+        const colorDot = document.createElement('div');
+        colorDot.className = 'w-4 h-4 rounded-full';
+        colorDot.style.backgroundColor = p.color;
+        colorDot.style.boxShadow = `0 0 8px ${p.color}`;
+        
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'text-white font-bold tracking-wider';
+        nameSpan.textContent = p.name;
+        
+        leftDiv.appendChild(colorDot);
+        leftDiv.appendChild(nameSpan);
+        li.appendChild(leftDiv);
+        
+        if (p.isHost) {
+            const hostBadge = document.createElement('span');
+            hostBadge.className = 'text-xs font-black text-purple-400 bg-purple-900/30 px-2 py-1 rounded border border-purple-500/30';
+            hostBadge.textContent = 'HOST';
+            li.appendChild(hostBadge);
+        }
+        lobbyPlayerList.appendChild(li);
+    });
+}
+
+btnMultiplayer.addEventListener('click', () => {
+    mainMenu.classList.add('hidden');
+    multiplayerLobby.classList.remove('hidden');
+    multiplayerLobby.classList.add('flex');
+    initLobby(true);
+});
+
+btnBackLobby.addEventListener('click', () => {
+    multiplayerLobby.classList.remove('flex');
+    multiplayerLobby.classList.add('hidden');
+    
+    // Rimuovi parametri dall'URL in modo pulito
+    const url = new URL(window.location.href);
+    if (url.searchParams.has('join')) {
+        url.searchParams.delete('join');
+        window.history.replaceState({}, document.title, url.toString());
+    }
+    
+    mainMenu.classList.remove('hidden');
+});
+
+btnPlayMultiplayer.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    soundSynth.unlock().catch(() => {});
+    
+    if (activeP2PHost) {
+        // Broadcast GAME_START to all peers
+        for (const peer of (activeP2PHost as any).peers.values()) {
+            peer.channel.send(JSON.stringify({ type: 'GAME_START' }));
+        }
+    }
+    
+    multiplayerLobby.classList.remove('flex');
+    multiplayerLobby.classList.add('hidden');
+    
+    if (!hasInitializedWasm) {
+        preLoadGame();
+    } else {
+        startGameplay();
+    }
+});
+
+// Auto-join handling via URL params
+window.addEventListener('DOMContentLoaded', () => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const joinId = urlParams.get('join');
+    if (joinId) {
+        mainMenu.classList.add('hidden');
+        multiplayerLobby.classList.remove('hidden');
+        multiplayerLobby.classList.add('flex');
+        initLobby(false, joinId);
+    }
+});
 
 // --- GAME LOGIC ---
 let isGameRunning = false;

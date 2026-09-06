@@ -40,6 +40,10 @@
             ENTRA
           </button>
           
+          <button id="btn-multiplayer" class="w-full bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-400 hover:to-pink-500 text-white font-black text-xl py-4 rounded-2xl transition-all active:scale-95 shadow-lg shadow-purple-500/20 uppercase tracking-widest border border-purple-400/30">
+            MULTIPLAYER
+          </button>
+          
           <button id="btn-music-toggle" class="w-full bg-slate-800 border border-slate-600/50 hover:bg-slate-700 hover:border-slate-500 text-white font-bold text-lg py-3 rounded-xl transition-all active:scale-95 shadow-md flex items-center justify-center gap-2">
             VOLUME <span id="music-status" class="text-emerald-400">ON</span>
           </button>
@@ -84,6 +88,50 @@
         <button id="btn-back" class="w-full bg-slate-800 border border-slate-600/50 hover:bg-slate-700 text-white font-bold text-lg py-3 rounded-xl transition-all active:scale-95 shadow-md uppercase tracking-wider">
           INDIETRO
         </button>
+      </div>
+      
+      <!-- MULTIPLAYER LOBBY -->
+      <div id="multiplayer-lobby" class="hidden flex-col items-center bg-slate-900/90 p-10 rounded-[2rem] border border-purple-500/30 shadow-[0_0_30px_rgba(168,85,247,0.15)] backdrop-blur-md relative z-20 w-full max-w-xl max-h-[90vh] overflow-y-auto transition-all duration-300">
+        <h2 class="text-3xl font-black mb-6 text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-600 uppercase">LOBBY MULTIPLAYER</h2>
+        
+        <div class="w-full flex flex-col gap-6 mb-8">
+            <div class="flex flex-col gap-2">
+                <label class="text-sm font-bold text-slate-400 uppercase tracking-wider">Nome Utente</label>
+                <input type="text" id="player-username" placeholder="Inserisci il tuo nome..." class="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-purple-500 transition-colors">
+            </div>
+
+            <div class="flex flex-col gap-2">
+                <label class="text-sm font-bold text-slate-400 uppercase tracking-wider">Colore Neon</label>
+                <div id="color-picker-container" class="flex flex-wrap gap-3">
+                    <!-- Color swatches will be injected here via JS -->
+                </div>
+            </div>
+
+            <!-- Host only: Invite link -->
+            <div id="invite-link-container" class="flex flex-col gap-2 hidden">
+                <label class="text-sm font-bold text-slate-400 uppercase tracking-wider">Link Invito (Host)</label>
+                <div class="flex gap-2">
+                    <input type="text" id="invite-link-input" readonly class="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-slate-300 font-mono text-sm">
+                    <button id="btn-copy-link" class="bg-slate-800 hover:bg-slate-700 border border-slate-600 px-4 rounded-xl text-white font-bold transition-colors">COPIA</button>
+                </div>
+            </div>
+
+            <div class="flex flex-col gap-2">
+                <label class="text-sm font-bold text-slate-400 uppercase tracking-wider">Giocatori nella Lobby</label>
+                <ul id="lobby-player-list" class="w-full bg-slate-950 border border-slate-700 rounded-xl p-2 min-h-[100px] flex flex-col gap-2">
+                    <!-- Li elements injected here via JS -->
+                </ul>
+            </div>
+        </div>
+
+        <div class="flex w-full gap-4">
+            <button id="btn-back-lobby" class="w-1/3 bg-slate-800 border border-slate-600/50 hover:bg-slate-700 text-white font-bold text-lg py-3 rounded-xl transition-all active:scale-95 shadow-md uppercase tracking-wider">
+              INDIETRO
+            </button>
+            <button id="btn-play-multiplayer" class="w-2/3 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-black text-xl py-3 rounded-xl transition-all active:scale-95 shadow-lg shadow-emerald-500/20 uppercase tracking-widest border border-emerald-400/30">
+              GIOCA
+            </button>
+        </div>
       </div>
       
       <!-- GAME OVERLAY (Hidden by default) -->
