@@ -4,7 +4,7 @@ import { P2PHost } from '../net/p2pHost.ts';
 import { NEON_PALETTE } from '../net/protocol.ts';
 import { startHostSignaling, connectClientSignaling } from '../net/mockChannel.ts';
 import { encodeLobbyColorChanged } from '../net/binaryProtocol.ts';
-import { DOM } from './menu.ts';
+import { DOM } from './dom.ts';
 
 export let localPlayerColor = '#00F0FF';
 export function setLocalPlayerColor(c: string) { localPlayerColor = c; }
@@ -236,6 +236,4 @@ export function initLobbyEvents() {
     });
 }
 
-// Inizializza gli eventi della lobby
-initLobbyEvents();
-
+// Inizializza gli eventi della lobby (called from menu.ts to avoid circular dependencies)
