@@ -4,6 +4,7 @@ import init, { generate_chunk, get_height_at } from '../pkg/game_core.js';
 import {
     type WeaponModelType,
     WEAPON_TYPES,
+    WEAPON_MUZZLE_POSITIONS,
     createWeaponViewModel,
     loadWeaponViewModel,
     createThirdPersonWeapon,
@@ -14,6 +15,9 @@ import {
     ROBOT_SCALE,
 } from './models/index.ts';
 import { P2PClient } from './net/p2pClient.ts';
+import { type FireHitscanMessage } from './net/protocol.ts';
+import { soundSynth } from './audio/index.ts';
+import { vfxManager } from './vfx/index.ts';
 
 // --- MENU LOGIC ---
 const bgMusic = document.getElementById('bg-music') as HTMLAudioElement;
@@ -127,8 +131,113 @@ const CHUNK_SIZE = 400;
 const CHUNK_RESOLUTION = 64;
 const CHUNK_RADIUS = 2;
 
+// Shared math constants to eliminate garbage collection allocations per-frame
+const UP_VECTOR = new THREE.Vector3(0, 1, 0);
+const RIGHT_VECTOR = new THREE.Vector3(1, 0, 0);
+const FORWARD_VECTOR = new THREE.Vector3(0, 0, 1);
+const ZERO_VECTOR = new THREE.Vector3(0, 0, 0);
+
+// Authoritative Weapon Configs & Combat Dynamics (synchronized with game-core/src/weapons.rs)
+export interface WeaponStats {
+    id: number;
+    name: string;
+    fireRateRps: number;
+    recoilPitchDeg: number;
+    recoilYawDeg: number;
+    recoilRecoveryRate: number;
+    kickZ: number;
+    kickPitch: number;
+}
+
+export const WEAPON_COMBAT_STATS: Record<WeaponModelType, WeaponStats> = {
+    assalto: {
+        id: 0,
+        name: 'AR-42 Viper',
+        fireRateRps: 6.25,
+        recoilPitchDeg: 1.10,
+        recoilYawDeg: 0.35,
+        recoilRecoveryRate: 8.0,
+        kickZ: 0.05,
+        kickPitch: 0.04,
+    },
+    cecchino: {
+        id: 1,
+        name: 'SR-99 Railphantom',
+        fireRateRps: 1.00,
+        recoilPitchDeg: 5.50,
+        recoilYawDeg: 0.80,
+        recoilRecoveryRate: 3.5,
+        kickZ: 0.12,
+        kickPitch: 0.08,
+    },
+    pompa: {
+        id: 2,
+        name: 'SG-12 Havoc',
+        fireRateRps: 1.25,
+        recoilPitchDeg: 4.00,
+        recoilYawDeg: 1.20,
+        recoilRecoveryRate: 4.0,
+        kickZ: 0.10,
+        kickPitch: 0.07,
+    },
+    mitraglietta: {
+        id: 3,
+        name: 'SMG-7 Neon Hornet',
+        fireRateRps: 10.00,
+        recoilPitchDeg: 0.55,
+        recoilYawDeg: 0.65,
+        recoilRecoveryRate: 10.0,
+        kickZ: 0.03,
+        kickPitch: 0.025,
+    },
+    coltello: {
+        id: 4,
+        name: 'CB-01 Shadowfang',
+        fireRateRps: 1.25,
+        recoilPitchDeg: 0.0,
+        recoilYawDeg: 0.0,
+        recoilRecoveryRate: 0.0,
+        kickZ: 0.08,
+        kickPitch: -0.05,
+    },
+};
+
+export interface RecoilShakeState {
+    baseYaw: number;
+    basePitch: number;
+    recoilCamPitch: number;
+    recoilCamYaw: number;
+    shakeTrauma: number;
+    isShooting: boolean;
+    shotCooldown: number;
+}
+
+// Aim, Recoil & Screen Shake State
+let baseYaw = 0;
+let basePitch = 0;
+let recoilCamPitch = 0;
+let recoilCamYaw = 0;
+let shakeTrauma = 0;
+let shakeTime = 0;
+let isShooting = false;
+let shotCooldown = 0;
+
+// Effective composed camera angles (for backward compatibility & inspection)
 let yaw = 0;
 let pitch = 0;
+
+export function getRecoilShakeState(): RecoilShakeState {
+    return {
+        baseYaw,
+        basePitch,
+        recoilCamPitch,
+        recoilCamYaw,
+        shakeTrauma,
+        isShooting,
+        shotCooldown,
+    };
+}
+
 const keys = { forward: false, backward: false, left: false, right: false, shift: false, ctrl: false };
 const moveDirection = new THREE.Vector3();
 
@@ -198,6 +307,11 @@ async function switchWeapon(index: number): Promise<void> {
 
     // Switch animation kick
     switchAnimationTimer = 0.15;
+    shotCooldown = Math.max(shotCooldown, 0.15);
+    if (currentWeaponType === 'coltello') {
+        recoilCamPitch = 0;
+        recoilCamYaw = 0;
+    }
     recoilContainer.position.y = -0.12;
 
     if (!viewmodelCache.has(currentWeaponType)) {
@@ -218,53 +332,115 @@ async function switchWeapon(index: number): Promise<void> {
     const activeVm = viewmodelCache.get(currentWeaponType)!;
     recoilContainer.add(activeVm);
 
-    updateWeaponHud(currentWeaponType, currentWeaponIndex);
+    updateWeaponHud(WEAPON_COMBAT_STATS[currentWeaponType]?.name ?? currentWeaponType, currentWeaponIndex);
 }
 
 function fireWeapon(): void {
     if (!isGameRunning || document.pointerLockElement !== document.body || !mainMenu.classList.contains('hidden') || isMapOpen) {
         return;
     }
-
-    let kickZ = 0.05;
-    let kickPitch = 0.04;
-    let kickYaw = (Math.random() - 0.5) * 0.01;
-
-    switch (currentWeaponType) {
-        case 'cecchino':
-            kickZ = 0.12;
-            kickPitch = 0.08;
-            break;
-        case 'pompa':
-            kickZ = 0.10;
-            kickPitch = 0.07;
-            break;
-        case 'mitraglietta':
-            kickZ = 0.03;
-            kickPitch = 0.025;
-            break;
-        case 'coltello':
-            kickZ = 0.08;
-            kickPitch = -0.05;
-            break;
-        case 'assalto':
-        default:
-            kickZ = 0.05;
-            kickPitch = 0.04;
-            break;
+    if (shotCooldown > 1e-4) {
+        return;
     }
 
-    recoilOffset.z += kickZ;
-    recoilRotation.x += kickPitch;
-    recoilRotation.y += kickYaw;
+    const stats = WEAPON_COMBAT_STATS[currentWeaponType] || WEAPON_COMBAT_STATS.assalto;
+    shotCooldown = 1.0 / stats.fireRateRps;
 
-    // Bump camera pitch slightly for gun kick feel
-    pitch = Math.max(-Math.PI / 2 + 0.1, Math.min(Math.PI / 2 - 0.1, pitch + kickPitch * 0.2));
+    // Viewmodel punch
+    recoilOffset.z += stats.kickZ;
+    recoilRotation.x += stats.kickPitch;
+    recoilRotation.y += (Math.random() - 0.5) * 0.01;
+
+    // Recoil kick in radians (authoritative conversion from degrees)
+    const kickPitchRad = (stats.recoilPitchDeg * Math.PI) / 180;
+    const kickYawRad = (stats.recoilYawDeg * Math.PI) / 180;
+
+    recoilCamPitch += kickPitchRad;
+    recoilCamYaw += (Math.random() - 0.5) * 2.0 * kickYawRad;
+
+    // Trauma screen shake (proportional to recoil kick, capped at 1.0)
+    const traumaAdd = (stats.recoilPitchDeg / 5.50) * 0.35;
+    shakeTrauma = Math.min(1.0, shakeTrauma + traumaAdd);
+
+    // Audio Playback
+    soundSynth.playWeaponSound(currentWeaponType, volumes.sfx * volumes.master);
+
+    // World Muzzle Position Calculation
+    const muzzleWorldPos = new THREE.Vector3();
+    const activeVm = recoilContainer.children[0] as THREE.Group | undefined;
+    const innerVm = activeVm && activeVm.children.length > 0 ? (activeVm.children[0] as THREE.Object3D) : activeVm;
+    if (innerVm) {
+        camera.updateMatrixWorld(true);
+        viewmodelRoot.updateMatrixWorld(true);
+        innerVm.updateMatrixWorld(true);
+        const localMuzzle = WEAPON_MUZZLE_POSITIONS[currentWeaponType] ?? new THREE.Vector3(3.2, 0.1, 0);
+        muzzleWorldPos.copy(localMuzzle).applyMatrix4(innerVm.matrixWorld);
+    } else {
+        muzzleWorldPos.copy(camera.position).add(new THREE.Vector3(0.3, -0.25, -0.8).applyQuaternion(camera.quaternion));
+    }
+
+    // Dynamic Muzzle Flash
+    vfxManager.spawnMuzzleFlash(muzzleWorldPos, currentWeaponType);
+
+    // Hitscan Raycasting from Camera Center
+    const raycaster = new THREE.Raycaster();
+    const rayOrigin = camera.position.clone();
+    const rayDir = new THREE.Vector3();
+    camera.getWorldDirection(rayDir);
+    raycaster.set(rayOrigin, rayDir);
+
+    const maxDist = currentWeaponType === 'coltello' ? 2.5 : 1000.0;
+    raycaster.far = maxDist;
+
+    const targetObjects: THREE.Object3D[] = [];
+    for (const chunkObj of activeChunks.values()) {
+        if (chunkObj.mesh) {
+            targetObjects.push(chunkObj.mesh);
+        }
+    }
+    for (const remotePlayer of remotePlayers.values()) {
+        if (remotePlayer.group) {
+            targetObjects.push(remotePlayer.group);
+        }
+    }
+
+    const intersects = raycaster.intersectObjects(targetObjects, true);
+    const hitPoint = new THREE.Vector3();
+    let hitNormal: THREE.Vector3 | null = null;
+
+    if (intersects.length > 0) {
+        const hit = intersects[0];
+        hitPoint.copy(hit.point);
+        if (hit.face) {
+            hitNormal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld);
+        } else {
+            hitNormal = rayDir.clone().negate();
+        }
+    } else {
+        hitPoint.copy(rayOrigin).addScaledVector(rayDir, currentWeaponType === 'coltello' ? 2.5 : 300.0);
+    }
+
+    // Visual Tracers (Pompa auto-spreads 8 pellets; single beam for others)
+    vfxManager.spawnTracer(muzzleWorldPos, hitPoint, currentWeaponType);
+
+    // Impact Particles
+    if (hitNormal) {
+        vfxManager.spawnImpact(hitPoint, hitNormal, currentWeaponType);
+    }
+
+    // P2P Network Synchronization
+    if (activeP2PClient && activeP2PClient.status === 'connected') {
+        activeP2PClient.fireHitscan(
+            stats.id,
+            [muzzleWorldPos.x, muzzleWorldPos.y, muzzleWorldPos.z],
+            [rayDir.x, rayDir.y, rayDir.z]
+        );
+    }
 }
 
 function updateViewmodel(delta: number): void {
     // Smooth recoil recovery spring
-    recoilOffset.lerp(new THREE.Vector3(0, 0, 0), Math.min(1.0, 18.0 * delta));
+    recoilOffset.lerp(ZERO_VECTOR, Math.min(1.0, 18.0 * delta));
     recoilRotation.x = THREE.MathUtils.lerp(recoilRotation.x, 0, Math.min(1.0, 15.0 * delta));
     recoilRotation.y = THREE.MathUtils.lerp(recoilRotation.y, 0, Math.min(1.0, 15.0 * delta));
     recoilRotation.z = THREE.MathUtils.lerp(recoilRotation.z, 0, Math.min(1.0, 15.0 * delta));
@@ -287,7 +463,7 @@ function updateViewmodel(delta: number): void {
         const bobY = Math.sin(walkBobTimer * 2) * 0.005;
         viewmodelRoot.position.set(bobX, bobY, 0);
     } else {
-        viewmodelRoot.position.lerp(new THREE.Vector3(0, 0, 0), Math.min(1.0, 8.0 * delta));
+        viewmodelRoot.position.lerp(ZERO_VECTOR, Math.min(1.0, 8.0 * delta));
     }
 }
 
@@ -370,6 +546,55 @@ export function removeRemotePlayer(id: string): void {
     }
 }
 
+export function handleRemoteHitscan(msg: FireHitscanMessage): void {
+    if (!scene) return;
+    const weaponKey = typeof msg.weaponType === 'number'
+        ? (WEAPON_TYPES[msg.weaponType] ?? 'assalto')
+        : (msg.weaponType || 'assalto');
+    const origin = new THREE.Vector3(msg.origin[0], msg.origin[1], msg.origin[2]);
+    const dir = new THREE.Vector3(msg.direction[0], msg.direction[1], msg.direction[2]).normalize();
+
+    // If origin is zero/unset and shooter exists, use shooter position
+    const shooter = remotePlayers.get(msg.shooterId);
+    let startPos = origin;
+    if (origin.lengthSq() < 0.001 && shooter) {
+        startPos = shooter.group.position.clone().add(new THREE.Vector3(0, player.eyeHeight, 0));
+    }
+
+    const maxRange = weaponKey === 'coltello' ? 2.5 : 1000.0;
+    const remoteRaycaster = new THREE.Raycaster(startPos, dir, 0.01, maxRange);
+    const targetObjects: THREE.Object3D[] = [];
+    for (const chunkObj of activeChunks.values()) {
+        if (chunkObj.mesh) targetObjects.push(chunkObj.mesh);
+    }
+    for (const [pid, rp] of remotePlayers.entries()) {
+        if (pid !== msg.shooterId && rp.group) {
+            targetObjects.push(rp.group);
+        }
+    }
+
+    const intersects = remoteRaycaster.intersectObjects(targetObjects, true);
+    const hitPoint = new THREE.Vector3();
+    let hitNormal: THREE.Vector3 | null = null;
+    if (intersects.length > 0) {
+        hitPoint.copy(intersects[0].point);
+        if (intersects[0].face) {
+            hitNormal = intersects[0].face.normal.clone().transformDirection(intersects[0].object.matrixWorld);
+        } else {
+            hitNormal = dir.clone().negate();
+        }
+    } else {
+        hitPoint.copy(startPos).addScaledVector(dir, weaponKey === 'coltello' ? 2.5 : 300.0);
+    }
+
+    vfxManager.spawnMuzzleFlash(startPos, weaponKey);
+    vfxManager.spawnTracer(startPos, hitPoint, weaponKey);
+    if (hitNormal) {
+        vfxManager.spawnImpact(hitPoint, hitNormal, weaponKey);
+    }
+    soundSynth.playWeaponSound(weaponKey, volumes.sfx * volumes.master);
+}
+
 let hasInitializedWasm = false;
 
 const loadingScreen = document.getElementById('loading-screen') as HTMLDivElement;
@@ -419,6 +644,7 @@ async function preLoadGame() {
 }
 
 function startGameplay() {
+    soundSynth.unlock().catch(() => {});
     mainMenu.classList.add('hidden');
     gameUi.classList.remove('hidden');
     gameCanvas.classList.remove('hidden');
@@ -438,6 +664,7 @@ function startGameplay() {
 
 btnEnter.addEventListener('click', async (e) => {
     e.stopPropagation(); // Evita il bubbling al document, che causerebbe un doppio requestPointerLock
+    soundSynth.unlock().catch(() => {});
     
     if (!hasInitializedWasm) {
         // Primo avvio: mostra caricamento, carica, poi entra
@@ -452,6 +679,7 @@ let rayGeo: THREE.CylinderGeometry;
 let rayMat: THREE.MeshBasicMaterial;
 
 function initGame() {
+    clock.connect(document);
     scene = new THREE.Scene();
     
     // Cielo e nebbia perfettamente raccordati alla distanza di rendering.
@@ -528,6 +756,9 @@ function initGame() {
     scene.add(camera);
     camera.add(viewmodelRoot);
     switchWeapon(0);
+
+    // Initialize VFX Coordinator
+    vfxManager.init(scene, camera);
 
     setupInput();
     window.addEventListener('resize', () => {
@@ -656,13 +887,23 @@ const minimapCanvas = document.getElementById('minimap-canvas') as HTMLCanvasEle
 const minimapCtx = minimapCanvas.getContext('2d')!;
 let isMapOpen = false;
 
+function resetInputState(): void {
+    keys.forward = false;
+    keys.backward = false;
+    keys.left = false;
+    keys.right = false;
+    keys.shift = false;
+    keys.ctrl = false;
+    isShooting = false;
+}
+
 function setupInput() {
     document.addEventListener('mousemove', (e) => {
         if (document.pointerLockElement !== document.body) return;
         const sensitivity = 0.002;
-        yaw -= e.movementX * sensitivity;
-        pitch -= e.movementY * sensitivity;
-        pitch = Math.max(-Math.PI / 2 + 0.1, Math.min(Math.PI / 2 - 0.1, pitch));
+        baseYaw -= e.movementX * sensitivity;
+        basePitch -= e.movementY * sensitivity;
+        basePitch = Math.max(-Math.PI / 2 + 0.05, Math.min(Math.PI / 2 - 0.05, basePitch));
     });
 
     window.addEventListener('keydown', (e) => handleKey(e, true));
@@ -670,13 +911,27 @@ function setupInput() {
     
     // Fire weapon on left click when in pointer lock
     window.addEventListener('mousedown', (e) => {
-        if (e.button === 0 && document.pointerLockElement === document.body) {
-            fireWeapon();
+        soundSynth.unlock().catch(() => {});
+        if (e.button === 0 && document.pointerLockElement === document.body && mainMenu.classList.contains('hidden') && !isMapOpen) {
+            isShooting = true;
+            if (shotCooldown <= 1e-4) {
+                fireWeapon();
+            }
         }
     });
 
+    window.addEventListener('mouseup', (e) => {
+        if (e.button === 0) {
+            isShooting = false;
+        }
+    });
+
+    // Reset input state when window loses focus to prevent stuck keys
+    window.addEventListener('blur', resetInputState);
+
     // Unpause on click
     document.addEventListener('click', () => {
+        soundSynth.unlock().catch(() => {});
         if(isGameRunning && document.pointerLockElement !== document.body && mainMenu.classList.contains('hidden') && settingsMenu.classList.contains('hidden') && !isMapOpen) {
             document.body.requestPointerLock();
         }
@@ -684,12 +939,18 @@ function setupInput() {
 
     // Ritorna al menu quando si preme ESC (esce dal pointer lock), ma non se la mappa è aperta
     document.addEventListener('pointerlockchange', () => {
-        if (document.pointerLockElement === null && isGameRunning && !isMapOpen) {
-            mainMenu.classList.remove('hidden');
-            gameUi.classList.add('hidden');
-            btnEnter.textContent = "RIPRENDI";
-            btnEnter.disabled = false;
-            btnExit.classList.remove('hidden');
+        if (document.pointerLockElement === document.body) {
+            soundSynth.unlock().catch(() => {});
+        }
+        if (document.pointerLockElement === null) {
+            resetInputState();
+            if (isGameRunning && !isMapOpen) {
+                mainMenu.classList.remove('hidden');
+                gameUi.classList.add('hidden');
+                btnEnter.textContent = "RIPRENDI";
+                btnEnter.disabled = false;
+                btnExit.classList.remove('hidden');
+            }
         }
     });
 
@@ -700,13 +961,31 @@ function setupInput() {
 
 function handleKey(e: KeyboardEvent, isDown: boolean) {
     switch (e.code) {
-        case 'KeyW': keys.forward = isDown; break;
-        case 'KeyS': keys.backward = isDown; break;
-        case 'KeyA': keys.left = isDown; break;
-        case 'KeyD': keys.right = isDown; break;
-        case 'ShiftLeft': keys.shift = isDown; break; // Ripristinato Corsa su MAIUSC
+        case 'KeyW':
+        case 'ArrowUp':
+            keys.forward = isDown;
+            break;
+        case 'KeyS':
+        case 'ArrowDown':
+            keys.backward = isDown;
+            break;
+        case 'KeyA':
+        case 'ArrowLeft':
+            keys.left = isDown;
+            break;
+        case 'KeyD':
+        case 'ArrowRight':
+            keys.right = isDown;
+            break;
+        case 'ShiftLeft':
+        case 'ShiftRight':
+            keys.shift = isDown;
+            break;
         case 'ControlLeft':
-        case 'KeyC': keys.ctrl = isDown; break; // Ripristinato Crouch su C
+        case 'ControlRight':
+        case 'KeyC':
+            keys.ctrl = isDown;
+            break;
         case 'KeyM':
             if (isDown && isGameRunning && mainMenu.classList.contains('hidden')) {
                 isMapOpen = !isMapOpen;
@@ -723,7 +1002,7 @@ function handleKey(e: KeyboardEvent, isDown: boolean) {
             }
             break;
         case 'Space':
-            if (isDown && player.isGrounded) {
+            if (isDown && player.isGrounded && mainMenu.classList.contains('hidden') && !isMapOpen) {
                 player.velocity.y = player.jumpForce;
                 player.isGrounded = false;
             }
@@ -742,8 +1021,10 @@ function updatePhysics(delta: number) {
     if (keys.backward) moveDirection.z += 1;
     if (keys.left) moveDirection.x -= 1;
     if (keys.right) moveDirection.x += 1;
-    moveDirection.normalize();
-    moveDirection.applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+    if (moveDirection.lengthSq() > 0) {
+        moveDirection.normalize();
+        moveDirection.applyAxisAngle(UP_VECTOR, baseYaw);
+    }
 
     let currentSpeed = player.speed;
     if (keys.shift && !keys.ctrl) {
@@ -800,24 +1081,67 @@ function updatePhysics(delta: number) {
 
     camera.position.set(player.position.x, camera.userData.currentY, player.position.z);
 
-    const qYaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
-    const qPitch = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), pitch);
+    // Recoil recovery: authoritative exponential decay back to zero
+    const stats = WEAPON_COMBAT_STATS[currentWeaponType] || WEAPON_COMBAT_STATS.assalto;
+    if (stats.recoilRecoveryRate > 0) {
+        const decay = Math.exp(-stats.recoilRecoveryRate * delta);
+        recoilCamPitch *= decay;
+        recoilCamYaw *= decay;
+        if (Math.abs(recoilCamPitch) < 1e-6) recoilCamPitch = 0;
+        if (Math.abs(recoilCamYaw) < 1e-6) recoilCamYaw = 0;
+    } else {
+        recoilCamPitch = 0;
+        recoilCamYaw = 0;
+    }
+
+    // Screen shake decay and sinusoidal perturbation
+    shakeTrauma = Math.max(0, shakeTrauma - 3.0 * delta);
+    shakeTime += delta;
+
+    const shakeIntensity = shakeTrauma * shakeTrauma;
+    const shakePitch = shakeIntensity * 0.018 * Math.sin(45.0 * shakeTime + 1.2);
+    const shakeYaw = shakeIntensity * 0.014 * Math.sin(52.0 * shakeTime + 3.7);
+    const shakeRoll = shakeIntensity * 0.020 * Math.sin(38.0 * shakeTime + 5.1);
+
+    // Compose camera orientation
+    yaw = baseYaw + recoilCamYaw + shakeYaw;
+    pitch = basePitch + recoilCamPitch + shakePitch;
+
+    const clampedPitch = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, pitch));
+    const qYaw = new THREE.Quaternion().setFromAxisAngle(UP_VECTOR, yaw);
+    const qPitch = new THREE.Quaternion().setFromAxisAngle(RIGHT_VECTOR, clampedPitch);
     camera.quaternion.multiplyQuaternions(qYaw, qPitch);
+    if (shakeIntensity > 1e-5) {
+        const qRoll = new THREE.Quaternion().setFromAxisAngle(FORWARD_VECTOR, shakeRoll);
+        camera.quaternion.multiply(qRoll);
+    }
 }
 
 let frames = 0;
 let lastFpsTime = performance.now();
 
-function animate() {
+function animate(timestamp?: number) {
     requestAnimationFrame(animate);
+    clock.update(timestamp);
     const delta = Math.min(clock.getDelta(), 0.1);
 
     if (isGameRunning) {
+        // Continuous firing cadence limiter
+        if (shotCooldown > 0) {
+            shotCooldown -= delta;
+            if (shotCooldown < 0) shotCooldown = 0;
+        }
+
+        if (isShooting && shotCooldown <= 1e-4 && document.pointerLockElement === document.body && mainMenu.classList.contains('hidden') && !isMapOpen) {
+            fireWeapon();
+        }
+
         // In un gioco online, la fisica e la rete non si fermano mai, 
         // nemmeno quando sei nel menu o hai la mappa aperta!
         updatePhysics(delta);
         updateChunks(); 
         updateViewmodel(delta);
+        vfxManager.update(delta);
     }
 
     renderer.render(scene, camera);
@@ -875,7 +1199,7 @@ function drawMinimap() {
     // Aggiorniamo la rotazione del giocatore (YAW in Three.js è invertito/sfalsato rispetto CSS)
     const playerDot = document.getElementById('player-dot');
     if (playerDot) {
-        playerDot.style.transform = `rotate(${-yaw}rad)`;
+        playerDot.style.transform = `rotate(${-baseYaw}rad)`;
     }
 }
 
@@ -909,6 +1233,28 @@ function drawMinimap() {
     getP2PClient: () => activeP2PClient,
     setP2PClient: (client: P2PClient | null) => {
         activeP2PClient = client;
-    }
+        if (client) {
+            const existingHandler = (client as any).config?.onHitscanFired;
+            (client as any).config = {
+                ...(client as any).config,
+                onHitscanFired: (msg: FireHitscanMessage) => {
+                    if (existingHandler) existingHandler(msg);
+                    handleRemoteHitscan(msg);
+                }
+            };
+        }
+    },
+    handleRemoteHitscan,
+    vfxManager,
+    soundSynth,
+    getBaseAim: () => ({ yaw: baseYaw, pitch: basePitch }),
+    setBaseAim: (y: number, p: number) => { baseYaw = y; basePitch = p; },
+    getRecoilCam: () => ({ pitch: recoilCamPitch, yaw: recoilCamYaw }),
+    getShakeTrauma: () => shakeTrauma,
+    getShotCooldown: () => shotCooldown,
+    isShooting: () => isShooting,
+    getRecoilShakeState,
+    keys,
+    clock,
 };
 
