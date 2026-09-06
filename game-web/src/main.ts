@@ -75,19 +75,23 @@ updateNetworkStatus();
 
 let isMusicPlaying = false;
 let volumes = { master: 1.0, music: 1.0, sfx: 1.0 };
-bgMusic.volume = volumes.master * volumes.music;
+bgMusic.volume = (volumes.master * volumes.music) * 0.5;
+soundSynth.setMasterVolume(volumes.master);
+soundSynth.setSfxVolume(volumes.sfx);
 
 btnMusicToggle.addEventListener('click', () => {
-    if (isMusicPlaying) {
+    if (musicStatus.textContent === 'ON') {
         bgMusic.pause();
         isMusicPlaying = false;
         musicStatus.textContent = 'OFF';
         musicStatus.className = 'text-red-400';
+        soundSynth.setMasterVolume(0);
     } else {
         bgMusic.play().catch(e => console.error(e));
         isMusicPlaying = true;
         musicStatus.textContent = 'ON';
         musicStatus.className = 'text-emerald-400';
+        soundSynth.setMasterVolume(volumes.master);
     }
 });
 
@@ -110,7 +114,13 @@ function updateVolumes() {
     volumes.master = parseInt(volMaster.value) / 100;
     volumes.music = parseInt(volMusic.value) / 100;
     volumes.sfx = parseInt(volSfx.value) / 100;
-    bgMusic.volume = volumes.master * volumes.music;
+    bgMusic.volume = (volumes.master * volumes.music) * 0.5;
+    if (musicStatus.textContent === 'OFF') {
+        soundSynth.setMasterVolume(0);
+    } else {
+        soundSynth.setMasterVolume(volumes.master);
+    }
+    soundSynth.setSfxVolume(volumes.sfx);
 }
 volMaster.addEventListener('input', updateVolumes);
 volMusic.addEventListener('input', updateVolumes);
@@ -363,7 +373,7 @@ function fireWeapon(): void {
     shakeTrauma = Math.min(1.0, shakeTrauma + traumaAdd);
 
     // Audio Playback
-    soundSynth.playWeaponSound(currentWeaponType, volumes.sfx * volumes.master);
+    soundSynth.playWeaponSound(currentWeaponType, 1.0);
 
     // World Muzzle Position Calculation
     const muzzleWorldPos = new THREE.Vector3();
@@ -592,7 +602,7 @@ export function handleRemoteHitscan(msg: FireHitscanMessage): void {
     if (hitNormal) {
         vfxManager.spawnImpact(hitPoint, hitNormal, weaponKey);
     }
-    soundSynth.playWeaponSound(weaponKey, volumes.sfx * volumes.master);
+    soundSynth.playWeaponSound(weaponKey, 1.0);
 }
 
 let hasInitializedWasm = false;
@@ -723,7 +733,7 @@ function initGame() {
         );
     };
     
-    bgMusic.volume = 0.5;
+    bgMusic.volume = (volumes.master * volumes.music) * 0.5;
 
     camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.01, 3000);
     camera.userData.currentY = get_height_at(0, 0) + player.eyeHeight + player.floatHeight;
