@@ -137,14 +137,18 @@ export class NativeRtcDataChannel implements IDataChannel {
             throw new Error('WebRTC DataChannel non aperto.');
         }
 
-        if (typeof data === 'string' || data instanceof ArrayBuffer) {
+        if (typeof data === 'string') {
+            this.channel.send(data);
+            return;
+        }
+        if (data instanceof ArrayBuffer) {
             this.channel.send(data);
             return;
         }
 
         const copied = new Uint8Array(data.byteLength);
         copied.set(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
-        this.channel.send(copied.buffer);
+        this.channel.send(copied);
     }
 
     close(): void {
