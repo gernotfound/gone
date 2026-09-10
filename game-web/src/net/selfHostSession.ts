@@ -17,9 +17,11 @@ interface SelfHostLocation {
 
 interface HostStatus {
   port: number;
+  externalPort?: number;
   mapped: boolean;
   cgnat: boolean;
   publicInviteUrl?: string | null;
+  ipv6InviteUrl?: string | null;
   lanInviteUrl?: string | null;
 }
 
@@ -28,9 +30,10 @@ let relayGuestChannel: { close?: () => void } | null = null;
 let inviteGuardTimer: number | null = null;
 
 function parseLocation(): SelfHostLocation | null {
-  const params = new URLSearchParams(window.location.search);
-  const role = params.get('goneHost');
-  const token = params.get('token')?.trim() || '';
+  const query = new URLSearchParams(window.location.search);
+  const fragment = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+  const role = query.get('goneHost');
+  const token = fragment.get('token')?.trim() || '';
   if ((role !== 'host' && role !== 'guest') || token.length < 16) return null;
   return { role, token };
 }
@@ -124,8 +127,8 @@ async function setupHost(token: string, onPlayMultiplayer: () => void): Promise<
   fallback.search = '';
   fallback.hash = '';
   fallback.searchParams.set('goneHost', 'guest');
-  fallback.searchParams.set('token', token);
-  const invite = status?.publicInviteUrl || status?.lanInviteUrl || fallback.toString();
+  fallback.hash = `token=${encodeURIComponent(token)}`;
+  const invite = status?.publicInviteUrl || status?.ipv6InviteUrl || status?.lanInviteUrl || fallback.toString();
 
   const setInvite = () => {
     DOM.inviteLinkContainer.classList.remove('hidden');
@@ -140,11 +143,15 @@ async function setupHost(token: string, onPlayMultiplayer: () => void): Promise<
   const info = document.createElement('div');
   info.id = 'self-host-status';
   info.className = 'mt-3 rounded-xl border border-emerald-500/30 bg-emerald-950/20 p-3 text-xs leading-relaxed text-emerald-200';
-  info.textContent = status?.mapped
-    ? `G.O.N.E. HOST ATTIVO SULLA PORTA ${status.port}. IL PC DELL’HOST È IL SERVER.`
-    : status?.cgnat
-      ? 'G.O.N.E. HOST ATTIVO IN LAN. IL ROUTER/ISP SEMBRA USARE CGNAT: PER INTERNET SERVE UN IP PUBBLICO O IPv6 RAGGIUNGIBILE.'
-      : 'G.O.N.E. HOST ATTIVO. UPnP NON HA APERTO LA PORTA: USA L’INVITO LAN O INOLTRA MANUALMENTE LA PORTA TCP DEL SERVER.';
+  if (status?.publicInviteUrl) {
+    info.textContent = `G.O.N.E. HOST INTERNET ATTIVO SULLA PORTA ${status.externalPort || status.port}. IL PC DELL’HOST È IL SERVER.`;
+  } else if (status?.ipv6InviteUrl) {
+    info.textContent = 'G.O.N.E. HOST ATTIVO CON IPv6 DIRETTO. IL PC DELL’HOST È IL SERVER; NON SERVE UN RELAY ESTERNO.';
+  } else if (status?.cgnat) {
+    info.textContent = 'G.O.N.E. HOST ATTIVO IN LAN. IL ROUTER/ISP USA UN IPv4 NON PUBBLICO/CGNAT E NON È DISPONIBILE UN IPv6 GLOBALE: PER INTERNET SERVE UN IP PUBBLICO DAL TUO ISP.';
+  } else {
+    info.textContent = 'G.O.N.E. HOST ATTIVO. UPnP NON HA APERTO LA PORTA: USA L’INVITO LAN O INOLTRA MANUALMENTE LA PORTA TCP DEL SERVER.';
+  }
   DOM.inviteLinkContainer.appendChild(info);
 
   relayHostBridge = createRelayHostBridge({
@@ -152,7 +159,7 @@ async function setupHost(token: string, onPlayMultiplayer: () => void): Promise<
     onPeer: (peerId, channel) => {
       if (!activeP2PHost) {
         channel.close?.();
-        return;
+        throw new Error('Host autorevole non più attivo.');
       }
       activeP2PHost.registerPeer(peerId, channel);
     },
