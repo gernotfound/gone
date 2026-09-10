@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - rescue-playable-v0-1
+      - rescue-playable-v0-2
   pull_request:
     branches:
       - main
@@ -88,6 +89,7 @@ jobs:
           node scripts/rescue_browser_smoke.mjs 2>&1 | tee ../rescue-browser-smoke.log
           node scripts/rescue_webrtc_scale_smoke.mjs 2>&1 | tee ../rescue-webrtc-scale.log
           node scripts/rescue_combat_network_smoke.mjs 2>&1 | tee ../rescue-combat-network.log
+          node scripts/rescue_session_resilience_smoke.mjs 2>&1 | tee ../rescue-session-resilience.log
 
       - name: Upload browser smoke diagnostics
         if: always()
@@ -98,6 +100,7 @@ jobs:
             rescue-browser-smoke.log
             rescue-webrtc-scale.log
             rescue-combat-network.log
+            rescue-session-resilience.log
             rescue-preview.log
           if-no-files-found: warn
           retention-days: 3
