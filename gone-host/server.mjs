@@ -489,17 +489,33 @@ function openBrowser(url) {
   }
 }
 
+let shuttingDown = false;
 async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
   console.log(`\n[G.O.N.E. Host] ${signal}: chiusura stanza...`);
   clearInterval(heartbeat);
+
+  // Upgraded WebSocket connections are not guaranteed to be closed by
+  // http.Server.close(). Terminate them explicitly so Ctrl+C cannot leave the
+  // process waiting on stale peers.
   for (const ws of wss.clients) {
-    try { ws.close(1001, 'server-shutdown'); } catch { /* no-op */ }
+    try { sendJson(ws, { type: 'host-close' }); } catch { /* no-op */ }
+    try { ws.terminate(); } catch { /* no-op */ }
   }
+
+  await new Promise((resolveClose) => {
+    try { wss.close(() => resolveClose()); } catch { resolveClose(); }
+  });
+
   if (natGateway) {
     try { await natGateway.unmap(port); } catch { /* no-op */ }
     try { await natGateway.stop(); } catch { /* no-op */ }
   }
-  await new Promise((resolveClose) => server.close(resolveClose));
+
+  if (server.listening) {
+    await new Promise((resolveClose) => server.close(() => resolveClose()));
+  }
   process.exit(0);
 }
 
@@ -507,10 +523,15 @@ process.once('SIGINT', () => { shutdown('SIGINT').catch(() => process.exit(1)); 
 process.once('SIGTERM', () => { shutdown('SIGTERM').catch(() => process.exit(1)); });
 
 await ensureDist();
-await new Promise((resolveListen, reject) => {
-  server.once('error', reject);
-  server.listen(port, bindHost, resolveListen);
-});
+try {
+  await new Promise((resolveListen, reject) => {
+    server.once('error', reject);
+    server.listen(port, bindHost, resolveListen);
+  });
+} catch (error) {
+  console.error(`[G.O.N.E. Host] Impossibile ascoltare su ${bindHost}:${port}:`, error?.message || error);
+  process.exit(4);
+}
 
 console.log(`[G.O.N.E. Host] Server locale attivo su ${bindHost}:${port}`);
 await tryMapPort();
