@@ -1,6 +1,7 @@
 import { soundSynth } from '../audio/index.ts';
 import { setupLobby, initLobbyEvents, resetMultiplayerSession } from './lobby.ts';
 import { readDirectOfferFromLocation } from '../net/directWebRtc.ts';
+import { setupSelfHostedSessionFromLocation } from '../net/selfHostSession.ts';
 
 import { DOM } from './dom.ts';
 export { DOM };
@@ -141,6 +142,8 @@ export function setupMenu(callbacks: {
     });
 
     const handleInvite = () => {
+        if (setupSelfHostedSessionFromLocation(callbacks.onPlayMultiplayer)) return;
+
         const directOffer = readDirectOfferFromLocation();
         if (!directOffer) return;
         resetMultiplayerSession();
