@@ -1,0 +1,264 @@
+import type { IDataChannel } from './protocol.ts';
+
+const SIGNAL_VERSION = 1;
+const ICE_GATHER_TIMEOUT_MS = 4500;
+
+interface SignalPayload {
+    v: number;
+    type: 'offer' | 'answer';
+    connectionId: string;
+    sdp: string;
+}
+
+export interface DirectHostOffer {
+    connectionId: string;
+    offerCode: string;
+    channel: IDataChannel;
+    applyAnswer(answerCode: string): Promise<void>;
+    close(): void;
+}
+
+export interface DirectGuestAnswer {
+    connectionId: string;
+    answerCode: string;
+    channel: IDataChannel;
+    close(): void;
+}
+
+function randomId(): string {
+    const raw = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID().replace(/-/g, '').slice(0, 16)
+        : Math.random().toString(36).slice(2, 18);
+    return `direct-${raw}`;
+}
+
+function encodeBase64Url(text: string): string {
+    const bytes = new TextEncoder().encode(text);
+    let binary = '';
+    for (const byte of bytes) binary += String.fromCharCode(byte);
+    return btoa(binary)
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/g, '');
+}
+
+function decodeBase64Url(value: string): string {
+    const normalized = value.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4);
+    const binary = atob(padded);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    return new TextDecoder().decode(bytes);
+}
+
+function encodeSignal(payload: SignalPayload): string {
+    return encodeBase64Url(JSON.stringify(payload));
+}
+
+function decodeSignal(code: string, expectedType: SignalPayload['type']): SignalPayload {
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(decodeBase64Url(code.trim()));
+    } catch {
+        throw new Error('Codice di connessione non valido.');
+    }
+
+    if (!parsed || typeof parsed !== 'object') {
+        throw new Error('Codice di connessione non valido.');
+    }
+
+    const payload = parsed as Partial<SignalPayload>;
+    if (
+        payload.v !== SIGNAL_VERSION ||
+        payload.type !== expectedType ||
+        typeof payload.connectionId !== 'string' ||
+        typeof payload.sdp !== 'string' ||
+        payload.sdp.length < 20
+    ) {
+        throw new Error(`Codice ${expectedType} non valido o incompatibile.`);
+    }
+
+    return payload as SignalPayload;
+}
+
+async function waitForIceGatheringComplete(pc: RTCPeerConnection): Promise<void> {
+    if (pc.iceGatheringState === 'complete') return;
+
+    await new Promise<void>((resolve) => {
+        let done = false;
+        const finish = () => {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            pc.removeEventListener('icegatheringstatechange', onState);
+            resolve();
+        };
+        const onState = () => {
+            if (pc.iceGatheringState === 'complete') finish();
+        };
+        const timer = window.setTimeout(finish, ICE_GATHER_TIMEOUT_MS);
+        pc.addEventListener('icegatheringstatechange', onState);
+    });
+}
+
+function createPeerConnection(): RTCPeerConnection {
+    // Deliberately no STUN/TURN servers. The host browser is the only game
+    // authority and no third-party signaling/relay service is contacted.
+    return new RTCPeerConnection({
+        iceServers: [],
+        bundlePolicy: 'max-bundle',
+    });
+}
+
+export class NativeRtcDataChannel implements IDataChannel {
+    public binaryType: 'arraybuffer' = 'arraybuffer';
+    public onmessage?: ((ev: { data: any }) => void) | null;
+    public onopen?: (() => void) | null;
+    public onclose?: (() => void) | null;
+    public onerror?: ((err: any) => void) | null;
+
+    private readonly channel: RTCDataChannel;
+
+    constructor(channel: RTCDataChannel) {
+        this.channel = channel;
+        this.channel.binaryType = 'arraybuffer';
+        this.channel.addEventListener('open', () => this.onopen?.());
+        this.channel.addEventListener('close', () => this.onclose?.());
+        this.channel.addEventListener('error', (event) => this.onerror?.(event));
+        this.channel.addEventListener('message', (event) => this.onmessage?.({ data: event.data }));
+    }
+
+    get readyState(): string {
+        return this.channel.readyState;
+    }
+
+    send(data: string | ArrayBuffer | ArrayBufferView): void {
+        if (this.channel.readyState !== 'open') {
+            throw new Error('WebRTC DataChannel non aperto.');
+        }
+
+        if (typeof data === 'string' || data instanceof ArrayBuffer) {
+            this.channel.send(data);
+            return;
+        }
+
+        const copied = new Uint8Array(data.byteLength);
+        copied.set(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
+        this.channel.send(copied.buffer);
+    }
+
+    close(): void {
+        if (this.channel.readyState !== 'closed') this.channel.close();
+    }
+}
+
+export async function createDirectHostOffer(): Promise<DirectHostOffer> {
+    const pc = createPeerConnection();
+    const connectionId = randomId();
+    const rawChannel = pc.createDataChannel('gone-game', {
+        ordered: true,
+    });
+    const channel = new NativeRtcDataChannel(rawChannel);
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    await waitForIceGatheringComplete(pc);
+
+    if (!pc.localDescription?.sdp) {
+        pc.close();
+        throw new Error('Impossibile creare l\'invito WebRTC.');
+    }
+
+    const offerCode = encodeSignal({
+        v: SIGNAL_VERSION,
+        type: 'offer',
+        connectionId,
+        sdp: pc.localDescription.sdp,
+    });
+
+    let answerApplied = false;
+
+    return {
+        connectionId,
+        offerCode,
+        channel,
+        async applyAnswer(answerCode: string) {
+            if (answerApplied) throw new Error('Questa risposta è già stata applicata.');
+            const answer = decodeSignal(answerCode, 'answer');
+            if (answer.connectionId !== connectionId) {
+                throw new Error('La risposta appartiene a un altro invito.');
+            }
+            await pc.setRemoteDescription({ type: 'answer', sdp: answer.sdp });
+            answerApplied = true;
+        },
+        close() {
+            try { channel.close?.(); } finally { pc.close(); }
+        },
+    };
+}
+
+export async function createDirectGuestAnswer(offerCode: string): Promise<DirectGuestAnswer> {
+    const offer = decodeSignal(offerCode, 'offer');
+    const pc = createPeerConnection();
+
+    let resolveChannel!: (channel: IDataChannel) => void;
+    let rejectChannel!: (error: Error) => void;
+    const channelPromise = new Promise<IDataChannel>((resolve, reject) => {
+        resolveChannel = resolve;
+        rejectChannel = reject;
+    });
+
+    const channelTimeout = window.setTimeout(() => {
+        rejectChannel(new Error('L\'host non ha creato il DataChannel WebRTC.'));
+    }, 5000);
+
+    pc.addEventListener('datachannel', (event) => {
+        clearTimeout(channelTimeout);
+        resolveChannel(new NativeRtcDataChannel(event.channel));
+    }, { once: true });
+
+    try {
+        await pc.setRemoteDescription({ type: 'offer', sdp: offer.sdp });
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        await waitForIceGatheringComplete(pc);
+
+        if (!pc.localDescription?.sdp) {
+            throw new Error('Impossibile creare la risposta WebRTC.');
+        }
+
+        const channel = await channelPromise;
+        const answerCode = encodeSignal({
+            v: SIGNAL_VERSION,
+            type: 'answer',
+            connectionId: offer.connectionId,
+            sdp: pc.localDescription.sdp,
+        });
+
+        return {
+            connectionId: offer.connectionId,
+            answerCode,
+            channel,
+            close() {
+                try { channel.close?.(); } finally { pc.close(); }
+            },
+        };
+    } catch (error) {
+        clearTimeout(channelTimeout);
+        pc.close();
+        throw error;
+    }
+}
+
+export function buildDirectInviteUrl(offerCode: string): string {
+    const url = new URL(window.location.href);
+    url.search = '';
+    url.hash = `direct=${encodeURIComponent(offerCode)}`;
+    return url.toString();
+}
+
+export function readDirectOfferFromLocation(): string | null {
+    const hash = window.location.hash.replace(/^#/, '');
+    const params = new URLSearchParams(hash);
+    return params.get('direct');
+}
