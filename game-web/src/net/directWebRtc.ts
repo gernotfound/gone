@@ -3,6 +3,10 @@ import type { IDataChannel } from './protocol.ts';
 const SIGNAL_VERSION = 1;
 const ICE_GATHER_TIMEOUT_MS = 4500;
 const DATA_CHANNEL_ID = 0;
+const DISCONNECTED_GRACE_MS = 6000;
+const REALTIME_BACKPRESSURE_BYTES = 128 * 1024;
+const CLIENT_STATE_OPCODE = 0x01;
+const WORLD_SNAPSHOT_OPCODE = 0x02;
 
 interface SignalPayload {
     v: number;
@@ -12,10 +16,20 @@ interface SignalPayload {
     peerId?: string;
 }
 
+export interface DirectConnectionDiagnostics {
+    candidateCount: number;
+    ipv4Candidates: number;
+    ipv6Candidates: number;
+    mdnsCandidates: number;
+    hasGlobalIpv6: boolean;
+    scope: 'none' | 'local' | 'internet-ipv6-capable';
+}
+
 export interface DirectHostOffer {
     connectionId: string;
     offerCode: string;
     channel: IDataChannel;
+    diagnostics: DirectConnectionDiagnostics;
     applyAnswer(answerCode: string, onPeerIdentified?: (peerId: string) => void): Promise<string>;
     close(): void;
 }
@@ -24,6 +38,7 @@ export interface DirectGuestAnswer {
     connectionId: string;
     answerCode: string;
     channel: IDataChannel;
+    diagnostics: DirectConnectionDiagnostics;
     close(): void;
 }
 
@@ -104,13 +119,68 @@ async function waitForIceGatheringComplete(pc: RTCPeerConnection): Promise<void>
     });
 }
 
+function isGlobalIpv6(address: string): boolean {
+    const value = address.toLowerCase();
+    if (!value.includes(':')) return false;
+    if (value === '::1' || value.startsWith('fe8') || value.startsWith('fe9') || value.startsWith('fea') || value.startsWith('feb')) return false;
+    if (value.startsWith('fc') || value.startsWith('fd')) return false;
+    return true;
+}
+
+function inspectSdp(sdp: string): DirectConnectionDiagnostics {
+    const candidateLines = sdp
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith('a=candidate:'));
+
+    let ipv4Candidates = 0;
+    let ipv6Candidates = 0;
+    let mdnsCandidates = 0;
+    let hasGlobalIpv6 = false;
+
+    for (const line of candidateLines) {
+        const parts = line.slice(2).split(/\s+/);
+        const address = parts[4] || '';
+        if (!address) continue;
+        if (address.endsWith('.local')) {
+            mdnsCandidates += 1;
+        } else if (address.includes(':')) {
+            ipv6Candidates += 1;
+            if (isGlobalIpv6(address)) hasGlobalIpv6 = true;
+        } else if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(address)) {
+            ipv4Candidates += 1;
+        }
+    }
+
+    return {
+        candidateCount: candidateLines.length,
+        ipv4Candidates,
+        ipv6Candidates,
+        mdnsCandidates,
+        hasGlobalIpv6,
+        scope: candidateLines.length === 0
+            ? 'none'
+            : hasGlobalIpv6
+                ? 'internet-ipv6-capable'
+                : 'local',
+    };
+}
+
 function createPeerConnection(): RTCPeerConnection {
     // Intentionally no STUN/TURN: no third-party multiplayer/signaling/relay
     // infrastructure is contacted. The room creator remains the game server.
     return new RTCPeerConnection({
         iceServers: [],
         bundlePolicy: 'max-bundle',
+        iceCandidatePoolSize: 0,
     });
+}
+
+function getOpcode(data: ArrayBuffer | ArrayBufferView): number | null {
+    if (data instanceof ArrayBuffer) {
+        return data.byteLength > 0 ? new Uint8Array(data, 0, 1)[0] : null;
+    }
+    if (data.byteLength < 1) return null;
+    return new Uint8Array(data.buffer, data.byteOffset, 1)[0];
 }
 
 function createNegotiatedChannel(pc: RTCPeerConnection): NativeRtcDataChannel {
@@ -119,7 +189,7 @@ function createNegotiatedChannel(pc: RTCPeerConnection): NativeRtcDataChannel {
         negotiated: true,
         id: DATA_CHANNEL_ID,
     });
-    return new NativeRtcDataChannel(rawChannel);
+    return new NativeRtcDataChannel(rawChannel, pc);
 }
 
 export class NativeRtcDataChannel implements IDataChannel {
@@ -130,14 +200,56 @@ export class NativeRtcDataChannel implements IDataChannel {
     public onerror?: ((err: any) => void) | null;
 
     private readonly channel: RTCDataChannel;
+    private readonly pc: RTCPeerConnection;
+    private disconnectTimer: number | null = null;
 
-    constructor(channel: RTCDataChannel) {
+    constructor(channel: RTCDataChannel, pc: RTCPeerConnection) {
         this.channel = channel;
+        this.pc = pc;
         this.channel.binaryType = 'arraybuffer';
         this.channel.addEventListener('open', () => this.onopen?.());
         this.channel.addEventListener('close', () => this.onclose?.());
         this.channel.addEventListener('error', (event) => this.onerror?.(event));
         this.channel.addEventListener('message', (event) => this.onmessage?.({ data: event.data }));
+
+        this.pc.addEventListener('connectionstatechange', () => this.handlePeerConnectionState());
+        this.pc.addEventListener('iceconnectionstatechange', () => this.handlePeerConnectionState());
+    }
+
+    private clearDisconnectTimer(): void {
+        if (this.disconnectTimer !== null) {
+            window.clearTimeout(this.disconnectTimer);
+            this.disconnectTimer = null;
+        }
+    }
+
+    private handlePeerConnectionState(): void {
+        const state = this.pc.connectionState;
+        const iceState = this.pc.iceConnectionState;
+
+        if (state === 'connected' || iceState === 'connected' || iceState === 'completed') {
+            this.clearDisconnectTimer();
+            return;
+        }
+
+        if (state === 'failed' || iceState === 'failed') {
+            this.clearDisconnectTimer();
+            this.onerror?.(new Error('Connessione WebRTC diretta fallita: rete/NAT non raggiungibile.'));
+            this.close();
+            return;
+        }
+
+        if (state === 'disconnected' || iceState === 'disconnected') {
+            if (this.disconnectTimer === null) {
+                this.disconnectTimer = window.setTimeout(() => {
+                    this.disconnectTimer = null;
+                    if (this.pc.connectionState === 'disconnected' || this.pc.iceConnectionState === 'disconnected') {
+                        this.onerror?.(new Error('Connessione WebRTC diretta interrotta.'));
+                        this.close();
+                    }
+                }, DISCONNECTED_GRACE_MS);
+            }
+        }
     }
 
     get readyState(): string {
@@ -147,6 +259,19 @@ export class NativeRtcDataChannel implements IDataChannel {
     send(data: string | ArrayBuffer | ArrayBufferView): void {
         if (this.channel.readyState !== 'open') {
             throw new Error('WebRTC DataChannel non aperto.');
+        }
+
+        // State and snapshots are disposable realtime packets. If a connection
+        // stalls, dropping old movement data is preferable to building a large
+        // reliable-channel queue that would freeze gameplay after recovery.
+        if (typeof data !== 'string') {
+            const opcode = getOpcode(data);
+            if (
+                (opcode === CLIENT_STATE_OPCODE || opcode === WORLD_SNAPSHOT_OPCODE) &&
+                this.channel.bufferedAmount > REALTIME_BACKPRESSURE_BYTES
+            ) {
+                return;
+            }
         }
 
         if (typeof data === 'string') {
@@ -164,6 +289,7 @@ export class NativeRtcDataChannel implements IDataChannel {
     }
 
     close(): void {
+        this.clearDisconnectTimer();
         if (this.channel.readyState !== 'closed') this.channel.close();
     }
 }
@@ -182,11 +308,12 @@ export async function createDirectHostOffer(): Promise<DirectHostOffer> {
         throw new Error('Impossibile creare l\'invito WebRTC.');
     }
 
+    const localSdp = pc.localDescription.sdp;
     const offerCode = encodeSignal({
         v: SIGNAL_VERSION,
         type: 'offer',
         connectionId,
-        sdp: pc.localDescription.sdp,
+        sdp: localSdp,
     });
 
     let answerApplied = false;
@@ -195,6 +322,7 @@ export async function createDirectHostOffer(): Promise<DirectHostOffer> {
         connectionId,
         offerCode,
         channel,
+        diagnostics: inspectSdp(localSdp),
         async applyAnswer(answerCode: string, onPeerIdentified?: (peerId: string) => void) {
             if (answerApplied) throw new Error('Questa risposta è già stata applicata.');
             const answer = decodeSignal(answerCode, 'answer');
@@ -231,18 +359,20 @@ export async function createDirectGuestAnswer(offerCode: string, peerId: string)
             throw new Error('Impossibile creare la risposta WebRTC.');
         }
 
+        const localSdp = pc.localDescription.sdp;
         const answerCode = encodeSignal({
             v: SIGNAL_VERSION,
             type: 'answer',
             connectionId: offer.connectionId,
             peerId,
-            sdp: pc.localDescription.sdp,
+            sdp: localSdp,
         });
 
         return {
             connectionId: offer.connectionId,
             answerCode,
             channel,
+            diagnostics: inspectSdp(localSdp),
             close() {
                 try { channel.close?.(); } finally { pc.close(); }
             },
