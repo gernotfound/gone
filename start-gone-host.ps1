@@ -60,8 +60,13 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "build game-web fallita ($LASTEXITCODE)" }
 
     Write-Host '[G.O.N.E.] Preparazione host locale...'
-    & $npm install --prefix gone-host --ignore-scripts
-    if ($LASTEXITCODE -ne 0) { throw "install gone-host fallita ($LASTEXITCODE)" }
+    Push-Location (Join-Path $PSScriptRoot 'gone-host')
+    try {
+        & $npm install --ignore-scripts
+        if ($LASTEXITCODE -ne 0) { throw "install gone-host fallita ($LASTEXITCODE)" }
+    } finally {
+        Pop-Location
+    }
 
     if ($BootstrapOnly) {
         Write-Host '[G.O.N.E.] Bootstrap completato.'
