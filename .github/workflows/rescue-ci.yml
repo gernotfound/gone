@@ -6,6 +6,7 @@ on:
       - rescue-playable-v0-1
       - rescue-playable-v0-2
       - selfhost-v0-3
+      - playable-final-v0-5
   pull_request:
     branches:
       - main
@@ -16,7 +17,7 @@ permissions:
 jobs:
   web-and-core:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -96,6 +97,7 @@ jobs:
           node scripts/rescue_session_resilience_smoke.mjs 2>&1 | tee ../rescue-session-resilience.log
           node scripts/rescue_selfhost_relay_smoke.mjs 2>&1 | tee ../rescue-selfhost-relay.log
           node scripts/rescue_selfhost_scale_smoke.mjs 2>&1 | tee ../rescue-selfhost-scale.log
+          node scripts/rescue_full_match_smoke.mjs 2>&1 | tee ../rescue-full-match.log
 
       - name: Upload browser smoke diagnostics
         if: always()
@@ -109,6 +111,7 @@ jobs:
             rescue-session-resilience.log
             rescue-selfhost-relay.log
             rescue-selfhost-scale.log
+            rescue-full-match.log
             rescue-preview.log
           if-no-files-found: warn
           retention-days: 3
