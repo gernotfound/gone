@@ -1,0 +1,18 @@
+{
+  "name": "gone-host",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "description": "Local self-hosted HTTP/WebSocket bridge for G.O.N.E. multiplayer",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "start:no-upnp": "node server.mjs --no-upnp"
+  },
+  "dependencies": {
+    "@achingbrain/nat-port-mapper": "4.0.5",
+    "ws": "8.21.3"
+  }
+}
