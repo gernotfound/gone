@@ -77,17 +77,23 @@ async function main() {
     attachDiagnostics(guestB, 'guest-b', errors);
 
     console.log('[selfhost] Opening local authoritative host browser');
-    await host.goto(`${BASE}/?goneHost=host&token=${TOKEN}`, { waitUntil: 'domcontentloaded', timeout: TIMEOUT });
+    await host.goto(`${BASE}/?goneHost=host#token=${TOKEN}`, { waitUntil: 'domcontentloaded', timeout: TIMEOUT });
     await host.locator('#multiplayer-lobby').waitFor({ state: 'visible', timeout: TIMEOUT });
     await waitFor(
       async () => host.evaluate(() => Boolean(window.goneGame?.getP2PHost?.())),
       'authoritative host object',
     );
 
+    const invite = await waitFor(async () => {
+      const value = await host.locator('#invite-link-input').inputValue().catch(() => '');
+      return value.includes('?goneHost=guest') && value.includes('#token=') ? value : null;
+    }, 'fragment-secret guest invite');
+    invariant(!invite.includes('token=' + TOKEN + '&'), 'Session token must not be serialized as an HTTP query parameter.');
+
     console.log('[selfhost] Connecting two independent guest browsers through the local relay');
     await Promise.all([
-      guestA.goto(`${BASE}/?goneHost=guest&token=${TOKEN}`, { waitUntil: 'domcontentloaded', timeout: TIMEOUT }),
-      guestB.goto(`${BASE}/?goneHost=guest&token=${TOKEN}`, { waitUntil: 'domcontentloaded', timeout: TIMEOUT }),
+      guestA.goto(`${BASE}/?goneHost=guest#token=${TOKEN}`, { waitUntil: 'domcontentloaded', timeout: TIMEOUT }),
+      guestB.goto(`${BASE}/?goneHost=guest#token=${TOKEN}`, { waitUntil: 'domcontentloaded', timeout: TIMEOUT }),
     ]);
 
     await waitFor(
@@ -154,6 +160,7 @@ async function main() {
     console.log('[selfhost] PASS', JSON.stringify({
       clients: 2,
       slots,
+      fragmentSecret: true,
       binaryStateForwarded: true,
       guestCleanup: true,
       hostLossDetected: true,
