@@ -88,7 +88,9 @@ async function main() {
       const value = await host.locator('#invite-link-input').inputValue().catch(() => '');
       return value.includes('?goneHost=guest') && value.includes('#token=') ? value : null;
     }, 'fragment-secret guest invite');
-    invariant(!invite.includes('token=' + TOKEN + '&'), 'Session token must not be serialized as an HTTP query parameter.');
+    const parsedInvite = new URL(invite);
+    invariant(!parsedInvite.searchParams.has('token'), 'Session token must not be serialized as an HTTP query parameter.');
+    invariant(parsedInvite.hash.includes(`token=${TOKEN}`), 'Session token missing from URL fragment.');
 
     console.log('[selfhost] Connecting two independent guest browsers through the local relay');
     await Promise.all([
@@ -120,24 +122,59 @@ async function main() {
     const slots = state.records.filter((record) => record.slot !== 0).map((record) => record.slot).sort((a, b) => a - b);
     invariant(JSON.stringify(slots) === JSON.stringify([1, 2]), `Unexpected guest slots: ${JSON.stringify(slots)}`);
 
+    const guestAId = await guestA.evaluate(() => window.goneGame.getP2PClient().playerId);
+
     console.log('[selfhost] Verifying binary state traffic reaches the authoritative host');
     await guestA.evaluate(() => {
       const client = window.goneGame.getP2PClient();
       client.setStateProvider(() => ({
-        position: { x: 12.5, y: 17.5, z: -7.25 },
-        yaw: 0.75,
-        pitch: -0.15,
-        activeWeapon: 3,
+        position: { x: 0, y: 17.5, z: 0 },
+        yaw: 0,
+        pitch: 0,
+        activeWeapon: 0,
         flags: 1,
       }));
       client.sendCurrentState();
     });
 
-    const guestAId = await guestA.evaluate(() => window.goneGame.getP2PClient().playerId);
     await waitFor(async () => host.evaluate((id) => {
       const record = window.goneGame.getP2PHost().playerRecords.get(id);
-      return record && Math.abs(record.position.x - 12.5) < 0.01 && Math.abs(record.position.z + 7.25) < 0.01;
+      return record && Math.abs(record.position.x) < 0.01 && Math.abs(record.position.z) < 0.01 && record.lastClientSeq > 0;
     }, guestAId), 'authoritative relay state update');
+
+    console.log('[selfhost] Verifying authoritative guest-to-host combat through the relay');
+    await host.evaluate(() => {
+      const session = window.goneGame.getP2PHost();
+      session.updateHostPlayerState({
+        position: { x: 0, y: 17.5, z: 10 },
+        yaw: Math.PI,
+        pitch: 0,
+        activeWeapon: 0,
+      });
+      const hostRecord = session.playerRecords.get(session.hostPlayer.id);
+      if (!hostRecord) throw new Error('Host combat record missing');
+      hostRecord.shieldExpiresAt = 0;
+    });
+
+    const beforeHp = await host.evaluate(() => window.goneGame.getP2PHost().playerRecords.get('host')?.hp);
+    invariant(beforeHp === 100, `Host HP should start at 100, got ${beforeHp}`);
+
+    await guestA.evaluate(() => {
+      window.goneGame.getP2PClient().fireHitscan(0, [3, 17.3, 0], [0, 0, 1]);
+    });
+
+    const hitHp = await waitFor(async () => host.evaluate(() => {
+      const hp = window.goneGame.getP2PHost().playerRecords.get('host')?.hp;
+      return typeof hp === 'number' && hp < 100 ? hp : null;
+    }), 'authoritative relay hitscan damage', 5_000);
+    invariant(hitHp > 0 && hitHp < 100, `Expected non-fatal relay damage, got ${hitHp}`);
+
+    await guestA.evaluate(() => {
+      window.goneGame.getP2PClient().fireHitscan(0, [3, 17.3, 0], [0, 0, -1]);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const afterMissHp = await host.evaluate(() => window.goneGame.getP2PHost().playerRecords.get('host')?.hp);
+    invariant(afterMissHp === hitHp, `Relay miss changed authoritative HP from ${hitHp} to ${afterMissHp}`);
 
     console.log('[selfhost] Closing one guest and checking slot/session cleanup');
     await guestA.close();
@@ -162,6 +199,8 @@ async function main() {
       slots,
       fragmentSecret: true,
       binaryStateForwarded: true,
+      authoritativeCombat: true,
+      hostHpAfterHit: hitHp,
       guestCleanup: true,
       hostLossDetected: true,
     }));
