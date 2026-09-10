@@ -20,7 +20,6 @@ let isHostMode = false;
 let lobbyPlayers: {id: string, name: string, color: string, isHost: boolean}[] = [];
 let onGameStartCb: (() => void) | null = null;
 let localSessionId: string | null = null;
-let currentJoinHostId: string | undefined;
 
 function makePeerId(prefix: string): string {
     const raw = typeof crypto !== 'undefined' && 'randomUUID' in crypto
@@ -42,6 +41,36 @@ function broadcastHostColor(playerId: string, color: string) {
     const buf = encodeLobbyColorChanged(playerId, color);
     for (const peer of (activeP2PHost as any).peers.values()) {
         try { peer.channel.send(buf); } catch { /* disconnected peer; host cleanup handles it */ }
+    }
+}
+
+function guardClientRenderingUntilGameplay(client: P2PClient) {
+    const originalSnapshot = client.config.onWorldSnapshot;
+    const originalHit = client.config.onHitConfirmed;
+    const originalLegacyShot = client.config.onHitscanFired;
+    const originalBinaryShot = client.config.onBinaryHitscanFired;
+
+    const gameplayReady = () => !DOM.gameCanvas.classList.contains('hidden');
+
+    if (originalSnapshot) {
+        client.config.onWorldSnapshot = (snapshot) => {
+            if (gameplayReady()) originalSnapshot(snapshot);
+        };
+    }
+    if (originalHit) {
+        client.config.onHitConfirmed = (hit) => {
+            if (gameplayReady()) originalHit(hit);
+        };
+    }
+    if (originalLegacyShot) {
+        client.config.onHitscanFired = (shot) => {
+            if (gameplayReady()) originalLegacyShot(shot);
+        };
+    }
+    if (originalBinaryShot) {
+        client.config.onBinaryHitscanFired = (shot) => {
+            if (gameplayReady()) originalBinaryShot(shot);
+        };
     }
 }
 
@@ -115,13 +144,11 @@ export function resetMultiplayerSession() {
     activeP2PHost = null;
     lobbyPlayers = [];
     localSessionId = null;
-    currentJoinHostId = undefined;
     isHostMode = false;
 }
 
 export function setupLobby(isHost: boolean, hostIdParam?: string, onPlayMultiplayer?: () => void) {
     isHostMode = isHost;
-    currentJoinHostId = hostIdParam;
     if (onPlayMultiplayer) onGameStartCb = onPlayMultiplayer;
 
     renderColorPicker();
@@ -154,6 +181,7 @@ export function setupLobby(isHost: boolean, hostIdParam?: string, onPlayMultipla
             },
             onPlayerLeft: (pid) => {
                 lobbyPlayers = lobbyPlayers.filter(p => p.id !== pid);
+                (window as any).goneGame?.removeRemotePlayer?.(pid);
                 renderLobbyPlayers();
             },
             onError: (err) => console.error('[G.O.N.E. host]', err),
@@ -202,6 +230,7 @@ export function setupLobby(isHost: boolean, hostIdParam?: string, onPlayMultipla
             },
             onPlayerLeft: (data) => {
                 lobbyPlayers = lobbyPlayers.filter(p => p.id !== data.playerId);
+                (window as any).goneGame?.removeRemotePlayer?.(data.playerId);
                 renderLobbyPlayers();
             },
             onColorChanged: (data) => {
@@ -228,7 +257,12 @@ export function setupLobby(isHost: boolean, hostIdParam?: string, onPlayMultipla
             },
         });
         activeP2PClient = client;
+
+        // Bind the game networking now so state transmission is ready, but
+        // prevent any Three.js callback from running before initGame() has
+        // made the canvas/scene active.
         (window as any).goneGame?.setP2PClient?.(client);
+        guardClientRenderingUntilGameplay(client);
         setGuestStatus('CONNESSIONE...');
 
         connectClientSignaling(hostIdParam, localId)
