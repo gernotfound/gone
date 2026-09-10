@@ -152,10 +152,10 @@ class RelayHostPeerChannel extends RelayChannelBase {
     super();
     this.bridge = bridge;
     this.peerId = peerId;
-    // P2PHost installs its handlers synchronously through onPeer. The channel
-    // is marked open on the next microtask so any consumer that does observe
-    // onopen gets DataChannel-like ordering.
-    queueMicrotask(() => this.notifyOpen());
+  }
+
+  activate(): void {
+    this.notifyOpen();
   }
 
   deliver(payload: ArrayBuffer): void {
@@ -252,10 +252,11 @@ export class RelayHostBridge {
       this.peers.set(message.peerId, channel);
 
       try {
-        // Register the pseudo-DataChannel in the authoritative P2PHost first.
-        // Only then tell the local relay process it may release the guest and
-        // let P2PClient send JOIN_REQUEST.
+        // Ordering is deliberate: first P2PHost installs its callbacks, then
+        // the pseudo-channel becomes open, then the relay releases the guest.
+        // Therefore the guest's first JOIN_REQUEST cannot outrun registration.
         this.options.onPeer(message.peerId, channel);
+        channel.activate();
         this.sendControl({ type: 'peer-ready', peerId: message.peerId });
       } catch (error) {
         this.peers.delete(message.peerId);
