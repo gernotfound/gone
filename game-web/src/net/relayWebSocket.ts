@@ -152,6 +152,9 @@ class RelayHostPeerChannel extends RelayChannelBase {
     super();
     this.bridge = bridge;
     this.peerId = peerId;
+    // P2PHost installs its handlers synchronously through onPeer. The channel
+    // is marked open on the next microtask so any consumer that does observe
+    // onopen gets DataChannel-like ordering.
     queueMicrotask(() => this.notifyOpen());
   }
 
@@ -224,6 +227,13 @@ export class RelayHostBridge {
     });
   }
 
+  private sendControl(value: Record<string, unknown>): void {
+    if (this.socket.readyState !== WebSocket.OPEN) {
+      throw new Error('Bridge host non aperto.');
+    }
+    this.socket.send(JSON.stringify(value));
+  }
+
   private handleControl(raw: string): void {
     let message: any;
     try { message = JSON.parse(raw); } catch { return; }
@@ -240,7 +250,19 @@ export class RelayHostBridge {
       if (this.peers.has(message.peerId)) return;
       const channel = new RelayHostPeerChannel(this, message.peerId);
       this.peers.set(message.peerId, channel);
-      this.options.onPeer(message.peerId, channel);
+
+      try {
+        // Register the pseudo-DataChannel in the authoritative P2PHost first.
+        // Only then tell the local relay process it may release the guest and
+        // let P2PClient send JOIN_REQUEST.
+        this.options.onPeer(message.peerId, channel);
+        this.sendControl({ type: 'peer-ready', peerId: message.peerId });
+      } catch (error) {
+        this.peers.delete(message.peerId);
+        channel.remoteClosed();
+        try { this.sendControl({ type: 'peer-kick', peerId: message.peerId }); } catch { /* socket closing */ }
+        this.options.onError?.(error instanceof Error ? error : new Error(String(error)));
+      }
       return;
     }
 
