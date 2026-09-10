@@ -1,7 +1,7 @@
 import { chromium } from 'playwright';
 
 const BASE_URL = process.env.GONE_SMOKE_URL || 'http://127.0.0.1:4173';
-const TIMEOUT = 20_000;
+const TIMEOUT = 25_000;
 
 function invariant(condition, message) {
   if (!condition) throw new Error(message);
@@ -24,16 +24,9 @@ async function waitFor(fn, description, timeout = TIMEOUT, interval = 100) {
 }
 
 function attachDiagnostics(page, label, errors) {
-  page.on('pageerror', (err) => {
-    errors.push(`[${label}] pageerror: ${err.message}`);
-  });
+  page.on('pageerror', (err) => errors.push(`[${label}] pageerror: ${err.message}`));
   page.on('console', (msg) => {
-    if (msg.type() === 'error') {
-      // PeerJS cloud may be unavailable in CI while the same-device
-      // BroadcastChannel transport remains fully functional. Keep these for
-      // diagnostics but only browser exceptions fail this smoke test.
-      console.warn(`[${label}] console.error: ${msg.text()}`);
-    }
+    if (msg.type() === 'error') console.warn(`[${label}] console.error: ${msg.text()}`);
   });
 }
 
@@ -52,10 +45,7 @@ async function main() {
     ],
   });
 
-  const context = await browser.newContext({
-    viewport: { width: 1280, height: 800 },
-  });
-
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const browserErrors = [];
   const host = await context.newPage();
   const guest = await context.newPage();
@@ -63,30 +53,36 @@ async function main() {
   attachDiagnostics(guest, 'guest', browserErrors);
 
   try {
-    console.log('[smoke] Opening host');
+    console.log('[smoke] Opening host-owned room');
     await host.goto(BASE_URL, { waitUntil: 'domcontentloaded', timeout: TIMEOUT });
     await host.locator('#player-username').fill('SmokeHost');
     await host.locator('#btn-multiplayer').click();
     await host.locator('#multiplayer-lobby').waitFor({ state: 'visible', timeout: TIMEOUT });
 
-    const invite = await host.locator('#invite-link-input').inputValue();
-    invariant(invite.includes('?join='), `Host invite link is invalid: ${invite}`);
+    const invite = await waitFor(async () => {
+      const value = await host.locator('#invite-link-input').inputValue();
+      return value.includes('#direct=') ? value : null;
+    }, 'native WebRTC invite link');
     invariant(await lobbyPlayerCount(host) === 1, 'Host lobby should begin with one player');
 
-    console.log('[smoke] Opening guest from invite link');
+    console.log('[smoke] Guest opens direct invite and creates answer');
     await guest.goto(invite, { waitUntil: 'domcontentloaded', timeout: TIMEOUT });
     await guest.locator('#multiplayer-lobby').waitFor({ state: 'visible', timeout: TIMEOUT });
-    await guest.locator('#player-username').fill('SmokeGuest');
 
-    // Host starts with cyan. Choose another color immediately so the ordinary
-    // invite flow never depends on a duplicate-color rejection race.
-    const guestColors = guest.locator('#color-picker-container button');
-    await waitFor(async () => (await guestColors.count()) >= 2, 'guest color palette');
-    await guestColors.nth(1).click();
+    const answer = await waitFor(async () => {
+      const label = await guest.locator('#invite-link-container label').textContent().catch(() => '');
+      const value = await guest.locator('#invite-link-input').inputValue().catch(() => '');
+      return label?.includes('RISPOSTA') && value.length > 100 ? value : null;
+    }, 'guest WebRTC answer');
+
+    console.log('[smoke] Host applies guest answer');
+    await host.locator('#direct-host-answer-input').fill(answer);
+    await host.locator('#btn-direct-apply-answer').click();
 
     await waitFor(
       async () => (await lobbyPlayerCount(host)) === 2 && (await lobbyPlayerCount(guest)) === 2,
-      'both pages to show a two-player lobby',
+      'both pages to show a two-player direct lobby',
+      15_000,
     );
 
     const hostNetwork = await host.evaluate(() => ({
@@ -142,7 +138,7 @@ async function main() {
       return Number.isFinite(x) && Math.abs(x - beforeX) > 3;
     }, 'guest movement to propagate to host', 10_000);
 
-    console.log('[smoke] Verifying authoritative health snapshot propagation');
+    console.log('[smoke] Verifying authoritative health propagation');
     await host.evaluate((id) => {
       const hostSession = window.goneGame.getP2PHost();
       const record = hostSession.playerRecords.get(id);
