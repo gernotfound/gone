@@ -55,9 +55,9 @@ async function main() {
   try {
     console.log('[smoke] Opening host-owned room');
     await host.goto(BASE_URL, { waitUntil: 'domcontentloaded', timeout: TIMEOUT });
-    await host.locator('#player-username').fill('SmokeHost');
     await host.locator('#btn-multiplayer').click();
     await host.locator('#multiplayer-lobby').waitFor({ state: 'visible', timeout: TIMEOUT });
+    await host.locator('#player-username').fill('SmokeHost');
 
     const invite = await waitFor(async () => {
       const value = await host.locator('#invite-link-input').inputValue();
