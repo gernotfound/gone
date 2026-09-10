@@ -3,7 +3,7 @@ name: GONE Rescue CI
 on:
   push:
     branches:
-      - rescue/playable-v0.1
+      - rescue-playable-v0-1
   pull_request:
     branches:
       - main
