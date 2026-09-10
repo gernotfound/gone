@@ -56,7 +56,7 @@ export const SCALE_FACTORS = {
 export function inspectHtmlModelSource(assetKey) {
   const filePath = ASSET_SOURCES[assetKey];
   if (!filePath || !fs.existsSync(filePath)) {
-    throw new Error(`Asset source not found for key ${assetKey}: ${filePath}`);
+    throw new Error(`Asset file not found for key ${assetKey}: ${filePath}`);
   }
 
   const content = fs.readFileSync(filePath, 'utf-8');
