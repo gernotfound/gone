@@ -124,10 +124,30 @@ export class SimpleLagCompensator {
       }
     }
 
+    // The client renders/aims from camera center, while the old network path
+    // supplied a viewmodel muzzle origin. Their X/Z can differ enough to turn
+    // a visually perfect shot into an authoritative miss. Anchor horizontal
+    // origin to the latest host-known shooter position. Preserve the supplied
+    // vertical origin only when it is physically plausible for that player.
+    let validatedOriginX = originX;
+    let validatedOriginY = originY;
+    let validatedOriginZ = originZ;
+    const shooterHistory = this.histories.get(shooterId);
+    const shooterSnapshot = shooterHistory?.[shooterHistory.length - 1];
+    if (shooterSnapshot) {
+      validatedOriginX = shooterSnapshot.x;
+      validatedOriginZ = shooterSnapshot.z;
+      const minEyeY = shooterSnapshot.y - shooterSnapshot.height + 0.65;
+      const maxEyeY = shooterSnapshot.y + 0.25;
+      if (!Number.isFinite(validatedOriginY) || validatedOriginY < minEyeY || validatedOriginY > maxEyeY) {
+        validatedOriginY = shooterSnapshot.y - 0.2;
+      }
+    }
+
     const weapon = WEAPON[weaponType as keyof typeof WEAPON] ?? WEAPON[0];
     const effectiveRange = Math.max(0.1, Math.min(maxRange || weapon.range, weapon.range));
     const hit = this.intersectCylinder(
-      [originX, originY, originZ],
+      [validatedOriginX, validatedOriginY, validatedOriginZ],
       [dirX, dirY, dirZ],
       snapshot,
       effectiveRange,
