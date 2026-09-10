@@ -5,6 +5,7 @@ on:
     branches:
       - rescue-playable-v0-1
       - rescue-playable-v0-2
+      - selfhost-v0-3
   pull_request:
     branches:
       - main
@@ -29,6 +30,9 @@ jobs:
 
       - name: Install web dependencies
         run: npm ci --prefix game-web
+
+      - name: Install local host dependencies
+        run: npm install --prefix gone-host --ignore-scripts
 
       - name: TypeScript and Vite build
         shell: bash
@@ -90,6 +94,7 @@ jobs:
           node scripts/rescue_webrtc_scale_smoke.mjs 2>&1 | tee ../rescue-webrtc-scale.log
           node scripts/rescue_combat_network_smoke.mjs 2>&1 | tee ../rescue-combat-network.log
           node scripts/rescue_session_resilience_smoke.mjs 2>&1 | tee ../rescue-session-resilience.log
+          node scripts/rescue_selfhost_relay_smoke.mjs 2>&1 | tee ../rescue-selfhost-relay.log
 
       - name: Upload browser smoke diagnostics
         if: always()
@@ -101,6 +106,7 @@ jobs:
             rescue-webrtc-scale.log
             rescue-combat-network.log
             rescue-session-resilience.log
+            rescue-selfhost-relay.log
             rescue-preview.log
           if-no-files-found: warn
           retention-days: 3
