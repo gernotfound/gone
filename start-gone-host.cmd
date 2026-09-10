@@ -6,6 +6,6 @@ set ERR=%ERRORLEVEL%
 if not "%ERR%"=="0" (
   echo.
   echo [G.O.N.E.] Il launcher si e' chiuso con errore %ERR%.
-  pause
+  if not "%GONE_NO_PAUSE%"=="1" pause
 )
 exit /b %ERR%
