@@ -223,7 +223,10 @@ export class NativeRtcDataChannel implements IDataChannel {
             this.onopen?.();
         });
         this.channel.addEventListener('close', () => this.notifyClose());
-        this.channel.addEventListener('error', (event) => this.onerror?.(event));
+        // Browsers may emit RTCErrorEvent immediately before a normal remote
+        // close. Treat that transport event as disconnect semantics; hard ICE
+        // failures and heartbeat expiry still surface through onerror below.
+        this.channel.addEventListener('error', () => this.terminate());
         this.channel.addEventListener('message', (event) => this.handleRawMessage(event.data));
 
         this.pc.addEventListener('connectionstatechange', () => this.handlePeerConnectionState());
