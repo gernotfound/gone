@@ -2,9 +2,9 @@
 
 Browser FPS sperimentale con Three.js, core Rust/WASM e multiplayer host-authoritative.
 
-## Avvio locale
+## Avvio locale per sviluppo
 
-Richiede Node.js 22 o superiore.
+Per modificare il progetto servono Node.js 22 o superiore e i normali comandi Vite:
 
 ```sh
 npm ci --prefix game-web
@@ -27,23 +27,17 @@ Apri il gioco e scegli **MULTIPLAYER**. L'host genera un invito WebRTC e ogni am
 
 È la modalità con trasporto WebRTC cifrato, ma senza un relay non può attraversare tutte le combinazioni di NAT/CGNAT.
 
-### 2. G.O.N.E. Host
+### 2. G.O.N.E. Host — consigliato per giocare con amici
 
 Questa modalità usa il PC dell'host come server HTTP/WebSocket della partita. Gli amici devono aprire soltanto il link ricevuto nel browser.
 
-Windows:
+**Windows:** fai doppio clic su `start-gone-host.cmd`.
 
-```text
-start-gone-host.cmd
-```
+**macOS / Linux:** esegui `sh start-gone-host.sh`.
 
-macOS / Linux:
+Non è necessario installare Node.js manualmente: se sul computer non è già presente una versione compatibile, il launcher scarica automaticamente un runtime Node 22.23.2 dentro la cartella locale `.gone-runtime`. Non richiede privilegi amministratore e non installa nulla globalmente nel sistema.
 
-```sh
-sh start-gone-host.sh
-```
-
-Il launcher costruisce il client e avvia il server sulla porta TCP `7777`. Il server prova UPnP per il port mapping e stampa gli inviti LAN, IPv6 e Internet IPv4 disponibili. Le istruzioni complete e i limiti CGNAT sono in [`SELF_HOSTING.md`](SELF_HOSTING.md).
+Il launcher costruisce il client, prepara le dipendenze del piccolo host locale e avvia il server sulla porta TCP `7777`. Il server prova UPnP per il port mapping e stampa gli inviti LAN, IPv6 e Internet IPv4 disponibili. Le istruzioni complete e i limiti CGNAT sono in [`SELF_HOSTING.md`](SELF_HOSTING.md).
 
 ## Capacità e modello di rete
 
@@ -62,6 +56,8 @@ La stanza è limitata a **8 giocatori totali: 1 host + 7 guest**. L'host gestisc
 - `G.O.N.E. Host` reale con processo Node e browser separati;
 - scala self-host 1+7 e cleanup;
 - test del core Rust.
+
+`.github/workflows/easy-launch-ci.yml` forza inoltre il bootstrap da zero su Ubuntu e Windows, verificando che il runtime locale venga scaricato e che il launcher completi build e preparazione dell'host senza una precedente installazione di Node.js.
 
 Le modifiche multiplayer non vanno considerate pronte per `main` se uno di questi gate è rosso.
 
