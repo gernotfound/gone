@@ -17,7 +17,7 @@ Il processo locale:
 
 ### Windows
 
-Esegui `start-gone-host.cmd` dalla root del repository.
+Fai doppio clic su `start-gone-host.cmd` nella cartella del gioco.
 
 ### macOS / Linux
 
@@ -25,7 +25,9 @@ Esegui `start-gone-host.cmd` dalla root del repository.
 sh start-gone-host.sh
 ```
 
-Serve Node.js 22 o superiore. Il launcher installa le dipendenze, costruisce `game-web/dist` e avvia il server. Quando possibile viene aperto automaticamente il browser dell'host.
+Non devi installare Node.js manualmente. Se non è già disponibile Node 22 o superiore, il launcher scarica automaticamente il runtime Node 22.23.2 dentro `.gone-runtime` nella cartella del progetto. È un runtime locale: non richiede privilegi amministratore e non viene installato globalmente nel sistema.
+
+Il launcher prepara le dipendenze, costruisce `game-web/dist` e avvia il server. Quando possibile viene aperto automaticamente il browser dell'host.
 
 Il terminale stampa:
 
@@ -38,17 +40,7 @@ Il token casuale della stanza è contenuto nel fragment `#token=...` dell'invito
 
 ## Se UPnP non funziona
 
-Se il router non supporta UPnP, ma la connessione dispone di un IPv4 pubblico, inoltra manualmente la porta TCP `7777` verso il PC host. Puoi scegliere un'altra porta con:
-
-```sh
-node gone-host/server.mjs --port 9000
-```
-
-Per disabilitare esplicitamente il tentativo UPnP:
-
-```sh
-node gone-host/server.mjs --no-upnp
-```
+Se il router non supporta UPnP, ma la connessione dispone di un IPv4 pubblico, inoltra manualmente la porta TCP `7777` verso il PC host. L'avvio standard usa la porta `7777`; gli utenti tecnici possono eseguire direttamente `gone-host/server.mjs` con una porta differente.
 
 ## CGNAT e IPv6
 
@@ -64,4 +56,6 @@ Quando finisci di giocare, chiudi il processo con `Ctrl+C`: i guest vengono scol
 
 ## Test
 
-La CI avvia veri processi `G.O.N.E. Host` e browser Chromium isolati. I gate self-host verificano join, handshake host/guest, token nel fragment, assegnazione slot, traffico binario autorevole, combat guest→host, disconnessioni, perdita dell'host e una stanza completa da 1 host + 7 guest.
+La CI principale avvia veri processi `G.O.N.E. Host` e browser Chromium isolati. I gate self-host verificano join, handshake host/guest, token nel fragment, assegnazione slot, traffico binario autorevole, combat guest→host, disconnessioni, perdita dell'host e una stanza completa da 1 host + 7 guest.
+
+La CI `GONE Easy Launch CI` verifica inoltre su Ubuntu e Windows il percorso zero-setup forzando il download del runtime Node locale, la build del gioco e la preparazione del server senza una precedente installazione Node.

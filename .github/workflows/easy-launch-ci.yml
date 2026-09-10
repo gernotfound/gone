@@ -1,0 +1,57 @@
+name: GONE Easy Launch CI
+
+on:
+  push:
+    branches:
+      - easy-launch-v0-4
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'start-gone-host.cmd'
+      - 'start-gone-host.ps1'
+      - 'start-gone-host.sh'
+      - 'gone-host/**'
+      - 'game-web/package.json'
+      - 'game-web/package-lock.json'
+
+permissions:
+  contents: read
+
+jobs:
+  linux-zero-setup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Force local Node runtime bootstrap
+        shell: bash
+        env:
+          GONE_FORCE_LOCAL_NODE: '1'
+          GONE_BOOTSTRAP_ONLY: '1'
+        run: sh ./start-gone-host.sh
+      - name: Verify local runtime and build
+        shell: bash
+        run: |
+          test -x .gone-runtime/node-v22.23.2-linux-x64/bin/node
+          test -f game-web/dist/index.html
+          test -d gone-host/node_modules
+
+  windows-zero-setup:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Force local Node runtime bootstrap through click launcher
+        shell: cmd
+        env:
+          GONE_FORCE_LOCAL_NODE: '1'
+          GONE_BOOTSTRAP_ONLY: '1'
+          GONE_NO_PAUSE: '1'
+        run: call start-gone-host.cmd
+      - name: Verify local runtime and build
+        shell: powershell
+        run: |
+          if (-not (Test-Path '.gone-runtime\node-v22.23.2-win-x64\node.exe')) { throw 'Local Node runtime missing' }
+          if (-not (Test-Path 'game-web\dist\index.html')) { throw 'Game build missing' }
+          if (-not (Test-Path 'gone-host\node_modules')) { throw 'Host dependencies missing' }
