@@ -124,6 +124,8 @@ async function main() {
     const runtimeState = await Promise.all([host, guest].map((page) => page.evaluate(() => ({
       canvasVisible: !document.querySelector('#game-canvas')?.classList.contains('hidden'),
       gameUiVisible: !document.querySelector('#game-ui')?.classList.contains('hidden'),
+      mainMenuHidden: document.querySelector('#main-menu')?.classList.contains('hidden') === true,
+      alive: window.goneGame.player.isAlive,
       x: window.goneGame.player.position.x,
       y: window.goneGame.player.position.y,
       z: window.goneGame.player.position.z,
@@ -131,13 +133,11 @@ async function main() {
     }))));
     for (const [index, state] of runtimeState.entries()) {
       invariant(state.canvasVisible && state.gameUiVisible, `Player ${index} did not enter gameplay: ${JSON.stringify(state)}`);
+      invariant(state.alive, `Player ${index} is not alive after game start: ${JSON.stringify(state)}`);
       invariant([state.x, state.y, state.z].every(Number.isFinite), `Player ${index} has invalid physics state: ${JSON.stringify(state)}`);
       invariant(state.remotes >= 1, `Player ${index} has no remote avatar: ${JSON.stringify(state)}`);
     }
 
-    // Take the movement baseline only after both 3D scenes, physics loops and
-    // networking are fully active. Pre-load terrain/respawn settling must not be
-    // mistaken for player input movement.
     const localBaseline = await guest.evaluate(() => ({
       x: window.goneGame.player.position.x,
       z: window.goneGame.player.position.z,
@@ -148,20 +148,40 @@ async function main() {
       return { x: record.position.x, z: record.position.z, seq: record.lastClientSeq };
     }, guestId);
 
-    console.log('[full-match] Driving real W-key movement through input, physics and networking');
-    await guest.bringToFront();
-    try {
-      await guest.keyboard.down('KeyW');
-      await new Promise((resolve) => setTimeout(resolve, 1200));
-    } finally {
-      await guest.keyboard.up('KeyW').catch(() => {});
-    }
+    console.log('[full-match] Driving W through the actual keyboard event handler, physics and networking');
+    const inputAccepted = await guest.evaluate(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', {
+        code: 'KeyW',
+        key: 'w',
+        bubbles: true,
+        cancelable: true,
+      }));
+      return {
+        forward: window.goneGame.keys.forward,
+        alive: window.goneGame.player.isAlive,
+        mainMenuHidden: document.querySelector('#main-menu')?.classList.contains('hidden') === true,
+      };
+    });
+    invariant(inputAccepted.forward === true, `Game input handler did not accept W key: ${JSON.stringify(inputAccepted)}`);
+    invariant(inputAccepted.alive === true, `Guest unexpectedly dead before movement: ${JSON.stringify(inputAccepted)}`);
 
-    const localMoved = await waitFor(async () => guest.evaluate((start) => {
-      const position = window.goneGame.player.position;
-      const distance = Math.hypot(position.x - start.x, position.z - start.z);
-      return distance > 2 ? { distance, x: position.x, z: position.z } : null;
-    }, localBaseline), 'guest local physics movement from real W key', 8_000);
+    let localMoved;
+    try {
+      localMoved = await waitFor(async () => guest.evaluate((start) => {
+        const position = window.goneGame.player.position;
+        const distance = Math.hypot(position.x - start.x, position.z - start.z);
+        return distance > 2 ? { distance, x: position.x, z: position.z } : null;
+      }, localBaseline), 'guest local physics movement after W keydown', 8_000);
+    } finally {
+      await guest.evaluate(() => {
+        window.dispatchEvent(new KeyboardEvent('keyup', {
+          code: 'KeyW',
+          key: 'w',
+          bubbles: true,
+          cancelable: true,
+        }));
+      }).catch(() => {});
+    }
 
     const replicated = await waitFor(async () => host.evaluate(([id, start]) => {
       const record = window.goneGame.getP2PHost().playerRecords.get(id);
@@ -180,6 +200,7 @@ async function main() {
       guestId,
       bothScenesRunning: true,
       remoteAvatarsVisible: true,
+      keyboardHandlerAccepted: true,
       localMovementDistance: localMoved.distance,
       authoritativeMovementDistance: replicated.distance,
       authoritativeSequence: replicated.seq,
