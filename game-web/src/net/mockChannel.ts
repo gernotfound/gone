@@ -44,12 +44,19 @@ export class PeerJsDataChannel implements IDataChannel {
     public readyState: string = 'connecting';
 
     private closed = false;
+    private readonly conn: DataConnection;
+    private readonly ownerPeer: Peer | undefined;
+    private readonly destroyPeerOnClose: boolean;
 
     constructor(
-        private readonly conn: DataConnection,
-        private readonly ownerPeer?: Peer,
-        private readonly destroyPeerOnClose = false,
+        conn: DataConnection,
+        ownerPeer?: Peer,
+        destroyPeerOnClose = false,
     ) {
+        this.conn = conn;
+        this.ownerPeer = ownerPeer;
+        this.destroyPeerOnClose = destroyPeerOnClose;
+
         this.conn.on('open', () => {
             if (this.closed) return;
             this.readyState = 'open';
