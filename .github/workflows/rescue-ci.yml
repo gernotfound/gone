@@ -14,7 +14,7 @@ permissions:
 jobs:
   web-and-core:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -61,6 +61,43 @@ jobs:
           if-no-files-found: warn
           retention-days: 3
 
+      - name: Install browser smoke dependencies
+        shell: bash
+        run: |
+          cd game-web
+          npm install --no-save --package-lock=false playwright
+          npx playwright install --with-deps chromium
+
+      - name: Real browser multiplayer smoke
+        id: browser_smoke
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          cd game-web
+          npm run preview -- --host 127.0.0.1 --port 4173 > ../rescue-preview.log 2>&1 &
+          PREVIEW_PID=$!
+          trap 'kill $PREVIEW_PID 2>/dev/null || true' EXIT
+          for i in {1..40}; do
+            if curl -fsS http://127.0.0.1:4173/ >/dev/null; then
+              break
+            fi
+            sleep 0.25
+          done
+          curl -fsS http://127.0.0.1:4173/ >/dev/null
+          node scripts/rescue_browser_smoke.mjs 2>&1 | tee ../rescue-browser-smoke.log
+
+      - name: Upload browser smoke diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rescue-browser-smoke-log
+          path: |
+            rescue-browser-smoke.log
+            rescue-preview.log
+          if-no-files-found: warn
+          retention-days: 3
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -86,6 +123,8 @@ jobs:
         shell: bash
         run: |
           echo "Legacy E2E outcome: ${{ steps.legacy_e2e.outcome }}"
+          echo "Browser smoke outcome: ${{ steps.browser_smoke.outcome }}"
           echo "Rust outcome: ${{ steps.rust_core.outcome }}"
           test "${{ steps.legacy_e2e.outcome }}" = "success"
+          test "${{ steps.browser_smoke.outcome }}" = "success"
           test "${{ steps.rust_core.outcome }}" = "success"
