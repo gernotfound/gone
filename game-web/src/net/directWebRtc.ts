@@ -4,6 +4,10 @@ const SIGNAL_VERSION = 1;
 const ICE_GATHER_TIMEOUT_MS = 4500;
 const DATA_CHANNEL_ID = 0;
 const DISCONNECTED_GRACE_MS = 6000;
+const HEARTBEAT_INTERVAL_MS = 3000;
+const HEARTBEAT_TIMEOUT_MS = 15000;
+const HEARTBEAT_PING = '__gone_ping__';
+const HEARTBEAT_PONG = '__gone_pong__';
 const REALTIME_BACKPRESSURE_BYTES = 128 * 1024;
 const CLIENT_STATE_OPCODE = 0x01;
 const WORLD_SNAPSHOT_OPCODE = 0x02;
@@ -202,18 +206,77 @@ export class NativeRtcDataChannel implements IDataChannel {
     private readonly channel: RTCDataChannel;
     private readonly pc: RTCPeerConnection;
     private disconnectTimer: number | null = null;
+    private heartbeatTimer: number | null = null;
+    private lastInboundAt = performance.now();
+    private closeNotified = false;
+    private readonly pageHideHandler: () => void;
 
     constructor(channel: RTCDataChannel, pc: RTCPeerConnection) {
         this.channel = channel;
         this.pc = pc;
         this.channel.binaryType = 'arraybuffer';
-        this.channel.addEventListener('open', () => this.onopen?.());
-        this.channel.addEventListener('close', () => this.onclose?.());
+        this.pageHideHandler = () => this.close();
+
+        this.channel.addEventListener('open', () => {
+            this.lastInboundAt = performance.now();
+            this.startHeartbeat();
+            this.onopen?.();
+        });
+        this.channel.addEventListener('close', () => this.notifyClose());
         this.channel.addEventListener('error', (event) => this.onerror?.(event));
-        this.channel.addEventListener('message', (event) => this.onmessage?.({ data: event.data }));
+        this.channel.addEventListener('message', (event) => this.handleRawMessage(event.data));
 
         this.pc.addEventListener('connectionstatechange', () => this.handlePeerConnectionState());
         this.pc.addEventListener('iceconnectionstatechange', () => this.handlePeerConnectionState());
+        window.addEventListener('pagehide', this.pageHideHandler);
+
+        if (this.channel.readyState === 'open') {
+            this.startHeartbeat();
+        }
+    }
+
+    private handleRawMessage(data: unknown): void {
+        this.lastInboundAt = performance.now();
+
+        if (data === HEARTBEAT_PING) {
+            if (this.channel.readyState === 'open') {
+                try {
+                    this.channel.send(HEARTBEAT_PONG);
+                } catch (error) {
+                    this.terminate(error instanceof Error ? error : new Error(String(error)));
+                }
+            }
+            return;
+        }
+
+        if (data === HEARTBEAT_PONG) return;
+        this.onmessage?.({ data });
+    }
+
+    private startHeartbeat(): void {
+        if (this.heartbeatTimer !== null) return;
+        this.heartbeatTimer = window.setInterval(() => {
+            if (this.channel.readyState !== 'open') return;
+
+            const silenceMs = performance.now() - this.lastInboundAt;
+            if (silenceMs >= HEARTBEAT_TIMEOUT_MS) {
+                this.terminate(new Error('Peer non raggiungibile: heartbeat WebRTC scaduto.'));
+                return;
+            }
+
+            try {
+                this.channel.send(HEARTBEAT_PING);
+            } catch (error) {
+                this.terminate(error instanceof Error ? error : new Error(String(error)));
+            }
+        }, HEARTBEAT_INTERVAL_MS);
+    }
+
+    private clearHeartbeat(): void {
+        if (this.heartbeatTimer !== null) {
+            window.clearInterval(this.heartbeatTimer);
+            this.heartbeatTimer = null;
+        }
     }
 
     private clearDisconnectTimer(): void {
@@ -221,6 +284,32 @@ export class NativeRtcDataChannel implements IDataChannel {
             window.clearTimeout(this.disconnectTimer);
             this.disconnectTimer = null;
         }
+    }
+
+    private notifyClose(): void {
+        if (this.closeNotified) return;
+        this.closeNotified = true;
+        this.clearDisconnectTimer();
+        this.clearHeartbeat();
+        window.removeEventListener('pagehide', this.pageHideHandler);
+        this.onclose?.();
+    }
+
+    private terminate(error?: Error): void {
+        if (this.closeNotified) return;
+        if (error) this.onerror?.(error);
+        try {
+            if (this.channel.readyState !== 'closed') this.channel.close();
+        } catch {
+            // Continue with deterministic local teardown even if the browser
+            // refuses to close an already-failed SCTP channel.
+        }
+        try {
+            if (this.pc.connectionState !== 'closed') this.pc.close();
+        } catch {
+            // no-op
+        }
+        this.notifyClose();
     }
 
     private handlePeerConnectionState(): void {
@@ -234,8 +323,7 @@ export class NativeRtcDataChannel implements IDataChannel {
 
         if (state === 'failed' || iceState === 'failed') {
             this.clearDisconnectTimer();
-            this.onerror?.(new Error('Connessione WebRTC diretta fallita: rete/NAT non raggiungibile.'));
-            this.close();
+            this.terminate(new Error('Connessione WebRTC diretta fallita: rete/NAT non raggiungibile.'));
             return;
         }
 
@@ -244,8 +332,7 @@ export class NativeRtcDataChannel implements IDataChannel {
                 this.disconnectTimer = window.setTimeout(() => {
                     this.disconnectTimer = null;
                     if (this.pc.connectionState === 'disconnected' || this.pc.iceConnectionState === 'disconnected') {
-                        this.onerror?.(new Error('Connessione WebRTC diretta interrotta.'));
-                        this.close();
+                        this.terminate(new Error('Connessione WebRTC diretta interrotta.'));
                     }
                 }, DISCONNECTED_GRACE_MS);
             }
@@ -289,8 +376,7 @@ export class NativeRtcDataChannel implements IDataChannel {
     }
 
     close(): void {
-        this.clearDisconnectTimer();
-        if (this.channel.readyState !== 'closed') this.channel.close();
+        this.terminate();
     }
 }
 
@@ -338,7 +424,9 @@ export async function createDirectHostOffer(): Promise<DirectHostOffer> {
             return peerId;
         },
         close() {
-            try { channel.close?.(); } finally { pc.close(); }
+            try { channel.close?.(); } finally {
+                if (pc.connectionState !== 'closed') pc.close();
+            }
         },
     };
 }
@@ -374,7 +462,9 @@ export async function createDirectGuestAnswer(offerCode: string, peerId: string)
             channel,
             diagnostics: inspectSdp(localSdp),
             close() {
-                try { channel.close?.(); } finally { pc.close(); }
+                try { channel.close?.(); } finally {
+                    if (pc.connectionState !== 'closed') pc.close();
+                }
             },
         };
     } catch (error) {
