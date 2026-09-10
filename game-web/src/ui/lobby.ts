@@ -3,7 +3,13 @@ import { P2PClient } from '../net/p2pClient.ts';
 import { P2PHost } from '../net/p2pHost.ts';
 import { SimpleLagCompensator } from '../net/simpleLagCompensator.ts';
 import { NEON_PALETTE } from '../net/protocol.ts';
-import { startHostSignaling, connectClientSignaling } from '../net/mockChannel.ts';
+import {
+    buildDirectInviteUrl,
+    createDirectGuestAnswer,
+    createDirectHostOffer,
+    type DirectGuestAnswer,
+    type DirectHostOffer,
+} from '../net/directWebRtc.ts';
 import { encodeLobbyColorChanged } from '../net/binaryProtocol.ts';
 import { DOM } from './dom.ts';
 
@@ -20,6 +26,9 @@ let isHostMode = false;
 let lobbyPlayers: {id: string, name: string, color: string, isHost: boolean}[] = [];
 let onGameStartCb: (() => void) | null = null;
 let localSessionId: string | null = null;
+let pendingHostOffer: DirectHostOffer | null = null;
+let guestDirectSession: DirectGuestAnswer | null = null;
+const directHostSessions = new Set<DirectHostOffer>();
 
 function makePeerId(prefix: string): string {
     const raw = typeof crypto !== 'undefined' && 'randomUUID' in crypto
@@ -36,6 +45,11 @@ function setGuestStatus(text: string, error = false) {
         : 'w-2/3 bg-slate-700 cursor-not-allowed text-white font-black text-xl py-3 rounded-xl shadow-md uppercase tracking-widest border border-slate-600';
 }
 
+function setInviteLabel(text: string) {
+    const label = DOM.inviteLinkContainer.querySelector('label');
+    if (label) label.textContent = text;
+}
+
 function broadcastHostColor(playerId: string, color: string) {
     if (!activeP2PHost) return;
     const buf = encodeLobbyColorChanged(playerId, color);
@@ -49,29 +63,20 @@ function guardClientRenderingUntilGameplay(client: P2PClient) {
     const originalHit = client.config.onHitConfirmed;
     const originalLegacyShot = client.config.onHitscanFired;
     const originalBinaryShot = client.config.onBinaryHitscanFired;
-
     const gameplayReady = () => !DOM.gameCanvas.classList.contains('hidden');
 
-    if (originalSnapshot) {
-        client.config.onWorldSnapshot = (snapshot) => {
-            if (gameplayReady()) originalSnapshot(snapshot);
-        };
-    }
-    if (originalHit) {
-        client.config.onHitConfirmed = (hit) => {
-            if (gameplayReady()) originalHit(hit);
-        };
-    }
-    if (originalLegacyShot) {
-        client.config.onHitscanFired = (shot) => {
-            if (gameplayReady()) originalLegacyShot(shot);
-        };
-    }
-    if (originalBinaryShot) {
-        client.config.onBinaryHitscanFired = (shot) => {
-            if (gameplayReady()) originalBinaryShot(shot);
-        };
-    }
+    if (originalSnapshot) client.config.onWorldSnapshot = (snapshot) => {
+        if (gameplayReady()) originalSnapshot(snapshot);
+    };
+    if (originalHit) client.config.onHitConfirmed = (hit) => {
+        if (gameplayReady()) originalHit(hit);
+    };
+    if (originalLegacyShot) client.config.onHitscanFired = (shot) => {
+        if (gameplayReady()) originalLegacyShot(shot);
+    };
+    if (originalBinaryShot) client.config.onBinaryHitscanFired = (shot) => {
+        if (gameplayReady()) originalBinaryShot(shot);
+    };
 }
 
 function applyRequestedColor(hex: string) {
@@ -120,6 +125,139 @@ function renderColorPicker() {
     });
 }
 
+function removeDirectControls() {
+    document.getElementById('direct-host-controls')?.remove();
+    document.getElementById('direct-guest-help')?.remove();
+}
+
+function installHostDirectControls() {
+    removeDirectControls();
+    DOM.inviteLinkContainer.classList.remove('hidden');
+    setInviteLabel('1. INVIA QUESTO LINK A UN AMICO');
+    DOM.btnCopyLink.textContent = 'COPIA LINK';
+
+    const panel = document.createElement('div');
+    panel.id = 'direct-host-controls';
+    panel.className = 'mt-3 flex flex-col gap-2 rounded-xl border border-cyan-500/30 bg-cyan-950/20 p-3';
+
+    const help = document.createElement('p');
+    help.className = 'text-xs leading-relaxed text-slate-300';
+    help.textContent = '2. Il tuo amico aprirà il link e ti rimanderà un codice RISPOSTA. Incollalo qui: il tuo browser è il server della partita.';
+
+    const answer = document.createElement('textarea');
+    answer.id = 'direct-host-answer-input';
+    answer.rows = 3;
+    answer.placeholder = 'Incolla qui la RISPOSTA dell’amico...';
+    answer.className = 'w-full resize-y bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-slate-200 font-mono text-xs focus:outline-none focus:border-cyan-500';
+
+    const buttons = document.createElement('div');
+    buttons.className = 'flex gap-2';
+
+    const apply = document.createElement('button');
+    apply.id = 'btn-direct-apply-answer';
+    apply.type = 'button';
+    apply.textContent = 'COLLEGA AMICO';
+    apply.className = 'flex-1 bg-cyan-700 hover:bg-cyan-600 border border-cyan-500 text-white font-black text-sm py-2 rounded-lg transition-colors';
+
+    const fresh = document.createElement('button');
+    fresh.id = 'btn-direct-new-invite';
+    fresh.type = 'button';
+    fresh.textContent = 'NUOVO INVITO';
+    fresh.className = 'bg-slate-800 hover:bg-slate-700 border border-slate-600 text-white font-bold text-xs px-3 rounded-lg transition-colors';
+
+    const status = document.createElement('div');
+    status.id = 'direct-host-status';
+    status.className = 'text-xs font-bold text-cyan-300';
+    status.textContent = 'GENERAZIONE INVITO DIRETTO...';
+
+    apply.addEventListener('click', async () => {
+        const code = answer.value.trim();
+        if (!pendingHostOffer || !code) {
+            status.textContent = 'MANCA LA RISPOSTA DELL’AMICO.';
+            status.className = 'text-xs font-bold text-red-300';
+            return;
+        }
+        apply.disabled = true;
+        status.textContent = 'COLLEGAMENTO DIRETTO...';
+        status.className = 'text-xs font-bold text-cyan-300';
+        try {
+            const accepted = pendingHostOffer;
+            await accepted.applyAnswer(code);
+            pendingHostOffer = null;
+            answer.value = '';
+            status.textContent = 'RISPOSTA ACCETTATA. ATTESA DEL GIOCATORE...';
+            window.setTimeout(() => {
+                if (isHostMode && activeP2PHost) prepareHostInvite().catch(reportHostInviteError);
+            }, 350);
+        } catch (error) {
+            status.textContent = error instanceof Error ? error.message.toUpperCase() : 'RISPOSTA NON VALIDA';
+            status.className = 'text-xs font-bold text-red-300';
+        } finally {
+            apply.disabled = false;
+        }
+    });
+
+    fresh.addEventListener('click', () => {
+        prepareHostInvite().catch(reportHostInviteError);
+    });
+
+    buttons.append(apply, fresh);
+    panel.append(help, answer, buttons, status);
+    DOM.inviteLinkContainer.appendChild(panel);
+}
+
+function showGuestAnswer(answerCode: string) {
+    removeDirectControls();
+    DOM.inviteLinkContainer.classList.remove('hidden');
+    setInviteLabel('2. COPIA QUESTA RISPOSTA E INVIALA ALL’HOST');
+    DOM.inviteLinkInput.value = answerCode;
+    DOM.btnCopyLink.textContent = 'COPIA RISPOSTA';
+
+    const help = document.createElement('p');
+    help.id = 'direct-guest-help';
+    help.className = 'text-xs leading-relaxed text-cyan-200';
+    help.textContent = 'Dopo che l’host incolla la risposta, la connessione diventa diretta tra i due browser. Non passa da un server multiplayer esterno.';
+    DOM.inviteLinkContainer.appendChild(help);
+}
+
+function reportHostInviteError(error: unknown) {
+    console.error('[G.O.N.E.] Invito diretto fallito', error);
+    DOM.inviteLinkInput.value = 'ERRORE NELLA CREAZIONE DELL’INVITO';
+    const status = document.getElementById('direct-host-status');
+    if (status) {
+        status.textContent = error instanceof Error ? error.message.toUpperCase() : 'ERRORE WEBRTC';
+        status.className = 'text-xs font-bold text-red-300';
+    }
+}
+
+async function prepareHostInvite() {
+    if (!isHostMode || !activeP2PHost) return;
+
+    if (pendingHostOffer) {
+        pendingHostOffer.close();
+        directHostSessions.delete(pendingHostOffer);
+        pendingHostOffer = null;
+    }
+
+    DOM.inviteLinkInput.value = 'GENERAZIONE INVITO DIRETTO...';
+    const offer = await createDirectHostOffer();
+    if (!isHostMode || !activeP2PHost) {
+        offer.close();
+        return;
+    }
+
+    pendingHostOffer = offer;
+    directHostSessions.add(offer);
+    activeP2PHost.registerPeer(offer.connectionId, offer.channel);
+    DOM.inviteLinkInput.value = buildDirectInviteUrl(offer.offerCode);
+
+    const status = document.getElementById('direct-host-status');
+    if (status) {
+        status.textContent = 'INVITO PRONTO. INVIA IL LINK.';
+        status.className = 'text-xs font-bold text-emerald-300';
+    }
+}
+
 export function setLobbyGameStartCb(cb: () => void) {
     onGameStartCb = cb;
 }
@@ -127,15 +265,20 @@ export function setLobbyGameStartCb(cb: () => void) {
 /** Completely tears down a lobby/network session so a second attempt is clean. */
 export function resetMultiplayerSession() {
     try { activeP2PClient?.disconnect(); } catch { /* no-op */ }
+    try { guestDirectSession?.close(); } catch { /* no-op */ }
+    guestDirectSession = null;
+
+    for (const session of directHostSessions) {
+        try { session.close(); } catch { /* no-op */ }
+    }
+    directHostSessions.clear();
+    pendingHostOffer = null;
 
     if (activeP2PHost) {
         try { activeP2PHost.stopSnapshotTick(); } catch { /* no-op */ }
         try {
-            for (const peer of (activeP2PHost as any).peers.values()) {
-                peer.channel?.close?.();
-            }
+            for (const peer of (activeP2PHost as any).peers.values()) peer.channel?.close?.();
         } catch { /* no-op */ }
-        try { (activeP2PHost as any).__stopHostSignaling?.(); } catch { /* no-op */ }
     }
 
     (window as any).goneGame?.setP2PClient?.(null);
@@ -145,12 +288,12 @@ export function resetMultiplayerSession() {
     lobbyPlayers = [];
     localSessionId = null;
     isHostMode = false;
+    removeDirectControls();
 }
 
-export function setupLobby(isHost: boolean, hostIdParam?: string, onPlayMultiplayer?: () => void) {
+export function setupLobby(isHost: boolean, directOfferCode?: string, onPlayMultiplayer?: () => void) {
     isHostMode = isHost;
     if (onPlayMultiplayer) onGameStartCb = onPlayMultiplayer;
-
     renderColorPicker();
 
     const playerName = DOM.playerUsernameInput.value.trim() || 'Giocatore';
@@ -159,15 +302,8 @@ export function setupLobby(isHost: boolean, hostIdParam?: string, onPlayMultipla
 
     if (isHost && !activeP2PHost) {
         lobbyPlayers = [{ id: localId, name: playerName, color: localPlayerColor, isHost: true }];
-        const hostId = makePeerId('gone');
-        const url = new URL(window.location.href);
-        url.searchParams.set('join', hostId);
-        DOM.inviteLinkInput.value = url.toString();
-
         activeP2PHost = new P2PHost({
             hostPlayer: { id: localId, name: playerName, color: localPlayerColor },
-            // Always use a browser-safe compensator for live sessions. It fixes
-            // the player Y-anchor mismatch and cross-device clock mismatch.
             lagCompensator: new SimpleLagCompensator(500),
             onPlayerJoined: (p) => {
                 const existing = lobbyPlayers.find(x => x.id === p.id);
@@ -176,6 +312,11 @@ export function setupLobby(isHost: boolean, hostIdParam?: string, onPlayMultipla
                     existing.color = p.color;
                 } else {
                     lobbyPlayers.push({ id: p.id, name: p.name, color: p.color, isHost: false });
+                }
+                const status = document.getElementById('direct-host-status');
+                if (status) {
+                    status.textContent = `${p.name.toUpperCase()} COLLEGATO DIRETTAMENTE.`;
+                    status.className = 'text-xs font-bold text-emerald-300';
                 }
                 renderLobbyPlayers();
             },
@@ -188,7 +329,6 @@ export function setupLobby(isHost: boolean, hostIdParam?: string, onPlayMultipla
         });
         (window as any).goneGame?.setP2PHost?.(activeP2PHost);
 
-        // Keep the lobby display in sync when a connected client changes color.
         const originalColorReq = (activeP2PHost as any).processColorChangeRequest;
         (activeP2PHost as any).processColorChangeRequest = function(channel: any, msg: any) {
             originalColorReq.call(activeP2PHost, channel, msg);
@@ -200,8 +340,9 @@ export function setupLobby(isHost: boolean, hostIdParam?: string, onPlayMultipla
             }
         };
 
-        startHostSignaling(hostId, activeP2PHost);
-    } else if (!isHost && !activeP2PClient && hostIdParam) {
+        installHostDirectControls();
+        prepareHostInvite().catch(reportHostInviteError);
+    } else if (!isHost && !activeP2PClient && directOfferCode) {
         lobbyPlayers = [{ id: localId, name: playerName, color: localPlayerColor, isHost: false }];
         const client = new P2PClient({
             playerId: localId,
@@ -216,11 +357,24 @@ export function setupLobby(isHost: boolean, hostIdParam?: string, onPlayMultipla
                 }));
                 renderColorPicker();
                 renderLobbyPlayers();
+                DOM.inviteLinkContainer.classList.add('hidden');
                 setGuestStatus('IN ATTESA DELL\'HOST...');
             },
             onColorRejected: (data) => {
                 console.warn('[G.O.N.E.] Colore rifiutato:', data.reason);
-                setGuestStatus('SCEGLI UN ALTRO COLORE', true);
+                const nextColor = data.availableColors?.find(color => color !== localPlayerColor);
+                if (nextColor) {
+                    localPlayerColor = nextColor;
+                    renderColorPicker();
+                    window.setTimeout(() => {
+                        if (activeP2PClient === client && client.status === 'rejected') {
+                            client.retryWithColor(nextColor);
+                            setGuestStatus('ASSEGNAZIONE COLORE...');
+                        }
+                    }, 60);
+                } else {
+                    setGuestStatus('NESSUN COLORE DISPONIBILE', true);
+                }
             },
             onPlayerJoined: (p) => {
                 if (!lobbyPlayers.some(existing => existing.id === p.id)) {
@@ -243,7 +397,7 @@ export function setupLobby(isHost: boolean, hostIdParam?: string, onPlayMultipla
                 }
             },
             onStatusChange: (status) => {
-                if (status === 'connecting') setGuestStatus('CONNESSIONE...');
+                if (status === 'connecting') setGuestStatus('ATTESA CONFERMA HOST...');
                 if (status === 'disconnected') setGuestStatus('CONNESSIONE PERSA', true);
             },
             onGameStart: () => {
@@ -257,27 +411,26 @@ export function setupLobby(isHost: boolean, hostIdParam?: string, onPlayMultipla
             },
         });
         activeP2PClient = client;
-
-        // Bind the game networking now so state transmission is ready, but
-        // prevent any Three.js callback from running before initGame() has
-        // made the canvas/scene active.
         (window as any).goneGame?.setP2PClient?.(client);
         guardClientRenderingUntilGameplay(client);
-        setGuestStatus('CONNESSIONE...');
+        setGuestStatus('PREPARAZIONE CONNESSIONE...');
 
-        connectClientSignaling(hostIdParam, localId)
-            .then(channel => {
+        createDirectGuestAnswer(directOfferCode)
+            .then(session => {
                 if (activeP2PClient !== client) {
-                    channel.close?.();
+                    session.close();
                     return;
                 }
+                guestDirectSession = session;
                 client.playerName = DOM.playerUsernameInput.value.trim() || 'Giocatore';
-                client.connect(channel, localPlayerColor);
+                client.connect(session.channel, localPlayerColor);
+                showGuestAnswer(session.answerCode);
+                setGuestStatus('INVIA LA RISPOSTA ALL\'HOST');
             })
             .catch(err => {
                 if (activeP2PClient === client) {
-                    console.error('[G.O.N.E.] Signaling fallito', err);
-                    setGuestStatus('HOST NON RAGGIUNGIBILE', true);
+                    console.error('[G.O.N.E.] Connessione diretta fallita', err);
+                    setGuestStatus('INVITO NON VALIDO', true);
                 }
             });
     }
@@ -288,8 +441,6 @@ export function setupLobby(isHost: boolean, hostIdParam?: string, onPlayMultipla
         DOM.btnPlayMultiplayer.textContent = 'GIOCA';
         DOM.btnPlayMultiplayer.disabled = false;
         DOM.btnPlayMultiplayer.className = 'w-2/3 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-black text-xl py-3 rounded-xl transition-all active:scale-95 shadow-lg shadow-emerald-500/20 uppercase tracking-widest border border-emerald-400/30';
-    } else {
-        DOM.inviteLinkContainer.classList.add('hidden');
     }
 
     renderLobbyPlayers();
@@ -320,7 +471,7 @@ function renderLobbyPlayers() {
         if (p.isHost) {
             const hostBadge = document.createElement('span');
             hostBadge.className = 'text-xs font-black text-purple-400 bg-purple-900/30 px-2 py-1 rounded border border-purple-500/30 shrink-0';
-            hostBadge.textContent = 'HOST';
+            hostBadge.textContent = 'HOST / SERVER';
             li.appendChild(hostBadge);
         }
         DOM.lobbyPlayerList.appendChild(li);
@@ -347,9 +498,7 @@ export function initLobbyEvents() {
             if (record) record.name = newName;
         }
 
-        if (!isHostMode && activeP2PClient) {
-            activeP2PClient.playerName = newName;
-        }
+        if (!isHostMode && activeP2PClient) activeP2PClient.playerName = newName;
     });
 
     DOM.btnCopyLink.addEventListener('click', () => {
