@@ -2,7 +2,8 @@ import type { IDataChannel } from './protocol.ts';
 import { P2PHost } from './p2pHost.ts';
 import { Peer, type DataConnection } from 'peerjs';
 
-const WEBRTC_CONNECT_TIMEOUT_MS = 12000;
+const WEBRTC_CONNECT_TIMEOUT_MS = 8000;
+const WEBRTC_CONNECT_ATTEMPTS = 3;
 
 function buildPeerOptions() {
     const iceServers: RTCIceServer[] = [
@@ -30,6 +31,10 @@ function buildPeerOptions() {
             sdpSemantics: 'unified-plan' as const,
         },
     };
+}
+
+function delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 // ---------------------------------------------------------------------------
@@ -223,7 +228,23 @@ export async function connectClientSignaling(hostId: string, peerId: string): Pr
             // Local probing can race with tab lifecycle; WebRTC is a valid fallback.
         }
     }
-    return connectViaPeerJS(hostId, peerId);
+
+    let lastError: unknown = new Error('Connessione WebRTC non riuscita');
+    for (let attempt = 0; attempt < WEBRTC_CONNECT_ATTEMPTS; attempt += 1) {
+        try {
+            return await connectViaPeerJS(hostId, peerId);
+        } catch (err) {
+            lastError = err;
+            if (attempt < WEBRTC_CONNECT_ATTEMPTS - 1) {
+                // The invite can be opened a fraction of a second before the
+                // host finishes registering its PeerJS id. Retrying the same
+                // stable peer id is safe because each failed Peer is destroyed.
+                await delay(400 * (attempt + 1));
+            }
+        }
+    }
+
+    throw lastError;
 }
 
 function connectLocally(hostId: string, peerId: string): Promise<IDataChannel> {
@@ -280,7 +301,9 @@ function connectViaPeerJS(hostId: string, peerId: string): Promise<IDataChannel>
 
         peer.on('open', () => {
             connection = peer.connect(hostId, {
-                reliable: false,
+                // Reliability is the correct tradeoff for a small friends-only
+                // lobby: JOIN/GAME_START/health packets must never be dropped.
+                reliable: true,
                 serialization: 'none',
                 metadata: { game: 'gone', version: 1 },
             });
