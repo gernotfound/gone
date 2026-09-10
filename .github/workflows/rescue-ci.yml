@@ -30,7 +30,19 @@ jobs:
         run: npm ci --prefix game-web
 
       - name: TypeScript and Vite build
-        run: npm run build --prefix game-web
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run build --prefix game-web 2>&1 | tee rescue-build.log
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rescue-build-log
+          path: rescue-build.log
+          if-no-files-found: warn
+          retention-days: 3
 
       - name: Existing E2E/model suites
         run: node tests/e2e_runner.mjs
