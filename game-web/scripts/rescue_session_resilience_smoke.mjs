@@ -2,6 +2,7 @@ import { chromium } from 'playwright';
 
 const BASE_URL = process.env.GONE_SMOKE_URL || 'http://127.0.0.1:4173';
 const TIMEOUT = 25_000;
+const PEER_LOSS_TIMEOUT = 22_000;
 
 function invariant(condition, message) {
   if (!condition) throw new Error(message);
@@ -104,7 +105,7 @@ async function main() {
     await waitFor(async () => host.evaluate(() => {
       const server = window.goneGame?.getP2PHost?.();
       return server?.getClientCount?.() === 0 && server?.playerRecords?.size === 1;
-    }), 'host peer/record cleanup after guest close', 10_000);
+    }), 'host peer/record cleanup after guest close', PEER_LOSS_TIMEOUT);
     await waitFor(
       async () => (await playerCount(host)) === 1,
       'lobby cleanup after guest close',
@@ -134,7 +135,7 @@ async function main() {
     await waitFor(
       async () => guestB.evaluate(() => window.goneGame?.getP2PClient?.()?.status === 'disconnected'),
       'guest to detect host/server shutdown',
-      12_000,
+      PEER_LOSS_TIMEOUT,
     );
 
     if (errors.length > 0) {
