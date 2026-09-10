@@ -1,26 +1,37 @@
 // tests/helpers/asset_inspector.mjs
-// Inspects 3D assets, source models, and Three.js hierarchy metadata for G.O.N.E.
+// Portable inspection helpers for the versioned G.O.N.E. 3D sources/assets.
 
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+export const PROJECT_ROOT = path.resolve(HERE, '..', '..');
+
+const WEAPON_BUILDER = path.join(PROJECT_ROOT, 'game-web', 'src', 'models', 'weaponBuilders.ts');
+const ROBOT_BUILDER = path.join(PROJECT_ROOT, 'game-web', 'src', 'models', 'robotBuilder.ts');
+
+// The original project tests pointed at C:\Users\...\Downloads\*.html, which
+// made the test suite impossible to run anywhere except the author's PC.
+// The canonical procedural model sources are now the TypeScript builders that
+// are actually versioned and shipped with the game.
 export const ASSET_SOURCES = {
-  assalto: 'C:\\Users\\gerar\\Downloads\\assalto.html',
-  cecchino: 'C:\\Users\\gerar\\Downloads\\cecchino.html',
-  pompa: 'C:\\Users\\gerar\\Downloads\\pompa.html',
-  mitraglietta: 'C:\\Users\\gerar\\Downloads\\mitraglietta.html',
-  coltello: 'C:\\Users\\gerar\\Downloads\\coltello.html',
-  modello: 'C:\\Users\\gerar\\Downloads\\modello.html',
+  assalto: WEAPON_BUILDER,
+  cecchino: WEAPON_BUILDER,
+  pompa: WEAPON_BUILDER,
+  mitraglietta: WEAPON_BUILDER,
+  coltello: WEAPON_BUILDER,
+  modello: ROBOT_BUILDER,
 };
 
 export const EXPECTED_FLUO_COMPONENTS = [
-  'Nucleo centrale', // Torso core
-  'Visore ottico', // Eye visor
-  'Reattore di sollevamento', // Main lift thruster
-  'Propulsore manovra DX', // Right maneuvering thruster
-  'Propulsore manovra SX', // Left maneuvering thruster
-  'Zaino tubo DX', // Backpack right energy conduit
-  'Zaino tubo SX', // Backpack left energy conduit
+  'Nucleo centrale',
+  'Visore ottico',
+  'Reattore di sollevamento',
+  'Propulsore manovra DX',
+  'Propulsore manovra SX',
+  'Zaino tubo DX',
+  'Zaino tubo SX',
 ];
 
 export const WEAPON_SOCKET_ANCHOR = {
@@ -39,38 +50,53 @@ export const SCALE_FACTORS = {
 };
 
 /**
- * Inspects an HTML model source file to verify procedural Three.js hierarchy.
+ * Inspects the canonical procedural Three.js source used by the application.
+ * The historical function name is preserved so older suites keep working.
  */
 export function inspectHtmlModelSource(assetKey) {
   const filePath = ASSET_SOURCES[assetKey];
   if (!filePath || !fs.existsSync(filePath)) {
-    throw new Error(`Asset file not found for key ${assetKey}: ${filePath}`);
+    throw new Error(`Asset source not found for key ${assetKey}: ${filePath}`);
   }
 
   const content = fs.readFileSync(filePath, 'utf-8');
   const size = fs.statSync(filePath).size;
 
-  // Check for Three.js import
-  const hasThreeImport = content.includes('three.min.js') || content.includes('three.module.js') || content.includes('three.js');
+  const hasThreeImport =
+    content.includes("from 'three'") ||
+    content.includes('from "three"') ||
+    content.includes('three.min.js') ||
+    content.includes('three.module.js') ||
+    content.includes('three.js');
 
-  // Count addPart invocations (rough count of child meshes)
-  const addPartMatches = content.match(/addPart\(/g) || [];
-  const addPartCount = addPartMatches.length;
+  // Robot uses addPart(); weapon builders use a local add() helper. The weapon
+  // source contains all five builders, so this is a conservative whole-source
+  // hierarchy count rather than depending on deleted one-off HTML exports.
+  const partRegex = assetKey === 'modello' ? /addPart\(/g : /\badd\(/g;
+  const addPartCount = (content.match(partRegex) || []).length;
 
-  // Check for materials
-  const hasNeonGreen = content.includes('matNeonGreen') || content.includes('0x39ff14');
-  const hasNeonPink = content.includes('matNeonPink') || content.includes('0xff00ff');
-  const hasNeonCyan = content.includes('matNeonCyan') || content.includes('0x00ffff');
-  const hasOrange = content.includes('matOrange') || content.includes('0xffaa00');
+  const lower = content.toLowerCase();
+  const hasNeonGreen = lower.includes('matneongreen') || lower.includes('0x39ff14') || lower.includes('robotfluoaccent');
+  const hasNeonPink = lower.includes('matneonpink') || lower.includes('0xff00ff');
+  const hasNeonCyan = lower.includes('matneoncyan') || lower.includes('0x00ffff');
+  const hasOrange = lower.includes('matorange') || lower.includes('matenergyorange') || lower.includes('0xffaa00');
 
-  // Check fluo components in modello
-  let fluoMatches = [];
+  const fluoMatches = [];
   if (assetKey === 'modello') {
-    for (const comp of EXPECTED_FLUO_COMPONENTS) {
-      if (content.toLowerCase().includes(comp.toLowerCase()) || content.includes('matNeonGreen')) {
-        fluoMatches.push(comp);
+    const canonicalFluoNames = [
+      'chest_reactor',
+      'optical_visor',
+      'main_thruster_flame',
+      'right_thruster_exhaust',
+      'left_thruster_exhaust',
+      'backpack_right_conduit',
+      'backpack_left_conduit',
+    ];
+    EXPECTED_FLUO_COMPONENTS.forEach((component, index) => {
+      if (lower.includes(component.toLowerCase()) || lower.includes(canonicalFluoNames[index])) {
+        fluoMatches.push(component);
       }
-    }
+    });
   }
 
   return {
@@ -86,19 +112,13 @@ export function inspectHtmlModelSource(assetKey) {
   };
 }
 
-/**
- * Checks if exported GLB binary exists in game-web/public/assets/
- */
-export function inspectGlbAsset(assetKey, rootDir = 'c:\\Users\\gerar\\Documents\\GitHub\\gone') {
+/** Checks the checked-in binary glTF asset used by the browser build. */
+export function inspectGlbAsset(assetKey, rootDir = PROJECT_ROOT) {
   const glbPath = path.join(rootDir, 'game-web', 'public', 'assets', `${assetKey}.glb`);
   const exists = fs.existsSync(glbPath);
-  let size = 0;
-  if (exists) {
-    size = fs.statSync(glbPath).size;
-  }
   return {
     path: glbPath,
     exists,
-    size,
+    size: exists ? fs.statSync(glbPath).size : 0,
   };
 }
