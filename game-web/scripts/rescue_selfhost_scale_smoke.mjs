@@ -49,7 +49,7 @@ async function main() {
     const host = await hostContext.newPage();
 
     console.log('[selfhost-scale] Opening authoritative host');
-    await host.goto(`${BASE}/?goneHost=host&token=${TOKEN}`, { waitUntil: 'domcontentloaded', timeout: TIMEOUT });
+    await host.goto(`${BASE}/?goneHost=host#token=${TOKEN}`, { waitUntil: 'domcontentloaded', timeout: TIMEOUT });
     await waitFor(async () => host.evaluate(() => Boolean(window.goneGame?.getP2PHost?.())), 'host object');
 
     const guests = [];
@@ -58,7 +58,7 @@ async function main() {
       contexts.push(context);
       const page = await context.newPage();
       guests.push(page);
-      await page.goto(`${BASE}/?goneHost=guest&token=${TOKEN}`, { waitUntil: 'domcontentloaded', timeout: TIMEOUT });
+      await page.goto(`${BASE}/?goneHost=guest#token=${TOKEN}`, { waitUntil: 'domcontentloaded', timeout: TIMEOUT });
       await waitFor(
         async () => page.evaluate(() => window.goneGame?.getP2PClient?.()?.status === 'connected'),
         `guest ${i} connected`,
@@ -98,6 +98,7 @@ async function main() {
       hostClients: 7,
       guestSlots: slots,
       cleanupRemainingClients: 3,
+      acknowledgedHandshake: true,
     }));
   } finally {
     await Promise.allSettled(contexts.map((context) => context.close()));
