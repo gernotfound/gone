@@ -182,7 +182,10 @@ function installHostDirectControls() {
         status.className = 'text-xs font-bold text-cyan-300';
         try {
             const accepted = pendingHostOffer;
-            await accepted.applyAnswer(code);
+            await accepted.applyAnswer(code, (peerId) => {
+                if (!activeP2PHost) throw new Error('La stanza host non è più attiva.');
+                activeP2PHost.registerPeer(peerId, accepted.channel);
+            });
             pendingHostOffer = null;
             answer.value = '';
             status.textContent = 'RISPOSTA ACCETTATA. ATTESA DEL GIOCATORE...';
@@ -248,7 +251,6 @@ async function prepareHostInvite() {
 
     pendingHostOffer = offer;
     directHostSessions.add(offer);
-    activeP2PHost.registerPeer(offer.connectionId, offer.channel);
     DOM.inviteLinkInput.value = buildDirectInviteUrl(offer.offerCode);
 
     const status = document.getElementById('direct-host-status');
@@ -415,7 +417,7 @@ export function setupLobby(isHost: boolean, directOfferCode?: string, onPlayMult
         guardClientRenderingUntilGameplay(client);
         setGuestStatus('PREPARAZIONE CONNESSIONE...');
 
-        createDirectGuestAnswer(directOfferCode)
+        createDirectGuestAnswer(directOfferCode, localId)
             .then(session => {
                 if (activeP2PClient !== client) {
                     session.close();
