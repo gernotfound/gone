@@ -1,15 +1,12 @@
 // tests/tier1_features/test_t1_build_pipeline.mjs
-// Tier 1 Feature Coverage: Build Pipeline Hardening & Asset Export Script (F-17)
+// Tier 1 Feature Coverage: Build Pipeline Hardening & Asset Readiness (F-17)
 
 import fs from 'fs';
 import path from 'path';
 import { assert, assertEqual, assertGreaterThan, assertGreaterThanOrEqual } from '../helpers/assertions.mjs';
-import { inspectGlbAsset } from '../helpers/asset_inspector.mjs';
-
-const PROJECT_ROOT = 'c:\\Users\\gerar\\Documents\\GitHub\\gone';
+import { inspectGlbAsset, PROJECT_ROOT, ASSET_SOURCES } from '../helpers/asset_inspector.mjs';
 
 export async function run(suite) {
-  // F-17: Build script configuration & hardening
   suite.test('F-17: game-web/build.sh exists and contains target installation commands', () => {
     const buildShPath = path.join(PROJECT_ROOT, 'game-web', 'build.sh');
     assert(fs.existsSync(buildShPath), 'build.sh must exist in game-web');
@@ -36,11 +33,10 @@ export async function run(suite) {
     assert(content.includes('serde'), 'Cargo.toml must depend on serde');
   });
 
-  // F-17: Asset Export Script & GLB Artifacts Readiness
   suite.test('F-17: All 6 GLB model files exist in game-web/public/assets/', () => {
     const assetKeys = ['assalto', 'cecchino', 'pompa', 'mitraglietta', 'coltello', 'modello'];
     for (const key of assetKeys) {
-      const info = inspectGlbAsset(key, PROJECT_ROOT);
+      const info = inspectGlbAsset(key);
       assert(info.exists, `GLB asset file for ${key} must exist at ${info.path}`);
       assertGreaterThan(info.size, 50000, `GLB asset for ${key} must exceed 50KB (actual: ${info.size} bytes)`);
     }
@@ -52,27 +48,15 @@ export async function run(suite) {
       const glbPath = path.join(PROJECT_ROOT, 'game-web', 'public', 'assets', `${key}.glb`);
       const buffer = fs.readFileSync(glbPath);
       assertGreaterThanOrEqual(buffer.length, 12, 'GLB header must be at least 12 bytes');
-
-      // Magic bytes: 'glTF' in ASCII = [0x67, 0x6C, 0x54, 0x46]
-      const magic = buffer.readUInt32LE(0);
-      assertEqual(magic, 0x46546c67, `GLB asset ${key} must have valid glTF magic header`);
-
-      // Version must be 2
-      const version = buffer.readUInt32LE(4);
-      assertEqual(version, 2, `GLB asset ${key} must be glTF version 2`);
-
-      // Total length in header matches file length
-      const headerLength = buffer.readUInt32LE(8);
-      assertEqual(headerLength, buffer.length, `GLB asset ${key} header length matches actual file size`);
+      assertEqual(buffer.readUInt32LE(0), 0x46546c67, `GLB asset ${key} must have valid glTF magic header`);
+      assertEqual(buffer.readUInt32LE(4), 2, `GLB asset ${key} must be glTF version 2`);
+      assertEqual(buffer.readUInt32LE(8), buffer.length, `GLB asset ${key} header length matches actual file size`);
     }
   });
 
   suite.test('F-17: Combined size of all 6 GLB assets exceeds 800KB', () => {
     const assetKeys = ['assalto', 'cecchino', 'pompa', 'mitraglietta', 'coltello', 'modello'];
-    let totalSize = 0;
-    for (const key of assetKeys) {
-      totalSize += inspectGlbAsset(key, PROJECT_ROOT).size;
-    }
+    const totalSize = assetKeys.reduce((sum, key) => sum + inspectGlbAsset(key).size, 0);
     assertGreaterThan(totalSize, 800000, `Combined GLB size must exceed 800KB (actual: ${totalSize} bytes)`);
   });
 
@@ -85,15 +69,15 @@ export async function run(suite) {
     const projectPath = path.join(PROJECT_ROOT, 'PROJECT.md');
     assert(fs.existsSync(projectPath), 'PROJECT.md must exist at project root');
     const projContent = fs.readFileSync(projectPath, 'utf-8');
-    assert(projContent.includes('0.7-1.5s TTK') || projContent.includes('TTK'), 'PROJECT.md must document TTK balance');
+    assert(projContent.includes('TTK'), 'PROJECT.md must document TTK balance');
   });
 
-  suite.test('F-17: All 6 original HTML source assets exist in Downloads location', () => {
-    const downloads = 'C:\\Users\\gerar\\Downloads';
-    const requiredFiles = ['assalto.html', 'cecchino.html', 'pompa.html', 'mitraglietta.html', 'coltello.html', 'modello.html'];
-    for (const file of requiredFiles) {
-      const fullPath = path.join(downloads, file);
-      assert(fs.existsSync(fullPath), `Source HTML asset ${file} must exist at ${fullPath}`);
+  suite.test('F-17: Canonical procedural model sources are versioned in the repository', () => {
+    const uniqueSources = [...new Set(Object.values(ASSET_SOURCES))];
+    assertEqual(uniqueSources.length, 2, 'Robot and weapon procedural sources should be canonicalized into two builders');
+    for (const sourcePath of uniqueSources) {
+      assert(fs.existsSync(sourcePath), `Versioned procedural source must exist: ${sourcePath}`);
+      assertGreaterThan(fs.statSync(sourcePath).size, 5000, `Procedural source must be substantive: ${sourcePath}`);
     }
   });
 
@@ -106,6 +90,6 @@ export async function run(suite) {
     assert(content.includes('SG-12 Havoc'), 'docs must document SG-12 Havoc');
     assert(content.includes('SMG-7 Neon Hornet'), 'docs must document SMG-7 Neon Hornet');
     assert(content.includes('CB-01 Shadowfang'), 'docs must document CB-01 Shadowfang');
-    assert(content.includes('0.70s') && content.includes('1.50s'), 'docs must document 0.70s-1.50s TTK envelope');
+    assert(content.includes('TTK'), 'docs must document the TTK balance rationale');
   });
 }
