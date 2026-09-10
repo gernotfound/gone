@@ -1,5 +1,5 @@
 import { soundSynth } from '../audio/index.ts';
-import { setupLobby, initLobbyEvents } from './lobby.ts';
+import { setupLobby, initLobbyEvents, resetMultiplayerSession } from './lobby.ts';
 
 import { DOM } from './dom.ts';
 export { DOM };
@@ -49,6 +49,13 @@ function updateVolumes() {
         soundSynth.setMasterVolume(volumes.master);
     }
     soundSynth.setSfxVolume(volumes.sfx);
+}
+
+function openJoinLobby(joinId: string, onPlayMultiplayer: () => void) {
+    DOM.mainMenu.classList.add('hidden');
+    DOM.multiplayerLobby.classList.remove('hidden');
+    DOM.multiplayerLobby.classList.add('flex');
+    setupLobby(false, joinId, onPlayMultiplayer);
 }
 
 export function setupMenu(callbacks: {
@@ -104,6 +111,9 @@ export function setupMenu(callbacks: {
     DOM.volSfx.addEventListener('input', updateVolumes);
 
     DOM.btnMultiplayer.addEventListener('click', () => {
+        // A lobby is always a fresh network session. This prevents stale
+        // PeerJS IDs, timers and channels from leaking between attempts.
+        resetMultiplayerSession();
         DOM.mainMenu.classList.add('hidden');
         DOM.multiplayerLobby.classList.remove('hidden');
         DOM.multiplayerLobby.classList.add('flex');
@@ -111,34 +121,39 @@ export function setupMenu(callbacks: {
     });
 
     DOM.btnBackLobby.addEventListener('click', () => {
+        resetMultiplayerSession();
         DOM.multiplayerLobby.classList.remove('flex');
         DOM.multiplayerLobby.classList.add('hidden');
-        
+
         const url = new URL(window.location.href);
         if (url.searchParams.has('join')) {
             url.searchParams.delete('join');
             window.history.replaceState({}, document.title, url.toString());
         }
-        
+
         DOM.mainMenu.classList.remove('hidden');
     });
 
     DOM.btnPlayMultiplayer.addEventListener('click', async (e) => {
         e.stopPropagation();
+        if (DOM.btnPlayMultiplayer.disabled) return;
         soundSynth.unlock().catch(() => {});
         callbacks.onPlayMultiplayer();
     });
 
-    // Auto-join handling via URL params
-    window.addEventListener('DOMContentLoaded', () => {
-        const urlParams = new URLSearchParams(window.location.search);
-        const joinId = urlParams.get('join');
-        if (joinId) {
-            DOM.mainMenu.classList.add('hidden');
-            DOM.multiplayerLobby.classList.remove('hidden');
-            DOM.multiplayerLobby.classList.add('flex');
-            setupLobby(false, joinId, callbacks.onPlayMultiplayer);
-        }
-    });
-}
+    // Module scripts normally run before DOMContentLoaded, but preview tools,
+    // cached navigation and future bundling changes can execute this after it.
+    // Handle both states so invite links always auto-join.
+    const handleInvite = () => {
+        const joinId = new URLSearchParams(window.location.search).get('join');
+        if (!joinId) return;
+        resetMultiplayerSession();
+        openJoinLobby(joinId, callbacks.onPlayMultiplayer);
+    };
 
+    if (document.readyState === 'loading') {
+        window.addEventListener('DOMContentLoaded', handleInvite, { once: true });
+    } else {
+        queueMicrotask(handleInvite);
+    }
+}
