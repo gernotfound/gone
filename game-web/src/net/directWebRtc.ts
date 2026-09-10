@@ -2,6 +2,7 @@ import type { IDataChannel } from './protocol.ts';
 
 const SIGNAL_VERSION = 1;
 const ICE_GATHER_TIMEOUT_MS = 4500;
+const DATA_CHANNEL_ID = 0;
 
 interface SignalPayload {
     v: number;
@@ -110,6 +111,15 @@ function createPeerConnection(): RTCPeerConnection {
     });
 }
 
+function createNegotiatedChannel(pc: RTCPeerConnection): NativeRtcDataChannel {
+    const rawChannel = pc.createDataChannel('gone-game', {
+        ordered: true,
+        negotiated: true,
+        id: DATA_CHANNEL_ID,
+    });
+    return new NativeRtcDataChannel(rawChannel);
+}
+
 export class NativeRtcDataChannel implements IDataChannel {
     public binaryType: 'arraybuffer' = 'arraybuffer';
     public onmessage?: ((ev: { data: any }) => void) | null;
@@ -159,10 +169,7 @@ export class NativeRtcDataChannel implements IDataChannel {
 export async function createDirectHostOffer(): Promise<DirectHostOffer> {
     const pc = createPeerConnection();
     const connectionId = randomId();
-    const rawChannel = pc.createDataChannel('gone-game', {
-        ordered: true,
-    });
-    const channel = new NativeRtcDataChannel(rawChannel);
+    const channel = createNegotiatedChannel(pc);
 
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
@@ -205,24 +212,9 @@ export async function createDirectGuestAnswer(offerCode: string): Promise<Direct
     const offer = decodeSignal(offerCode, 'offer');
     const pc = createPeerConnection();
 
-    let resolveChannel!: (channel: IDataChannel) => void;
-    let rejectChannel!: (error: Error) => void;
-    const channelPromise = new Promise<IDataChannel>((resolve, reject) => {
-        resolveChannel = resolve;
-        rejectChannel = reject;
-    });
-
-    const channelTimeout = window.setTimeout(() => {
-        rejectChannel(new Error('L\'host non ha creato il DataChannel WebRTC.'));
-    }, 5000);
-
-    pc.addEventListener('datachannel', (event) => {
-        clearTimeout(channelTimeout);
-        resolveChannel(new NativeRtcDataChannel(event.channel));
-    }, { once: true });
-
     try {
         await pc.setRemoteDescription({ type: 'offer', sdp: offer.sdp });
+        const channel = createNegotiatedChannel(pc);
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         await waitForIceGatheringComplete(pc);
@@ -231,7 +223,6 @@ export async function createDirectGuestAnswer(offerCode: string): Promise<Direct
             throw new Error('Impossibile creare la risposta WebRTC.');
         }
 
-        const channel = await channelPromise;
         const answerCode = encodeSignal({
             v: SIGNAL_VERSION,
             type: 'answer',
@@ -248,7 +239,6 @@ export async function createDirectGuestAnswer(offerCode: string): Promise<Direct
             },
         };
     } catch (error) {
-        clearTimeout(channelTimeout);
         pc.close();
         throw error;
     }
