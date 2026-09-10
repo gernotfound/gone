@@ -1,5 +1,6 @@
 import { soundSynth } from '../audio/index.ts';
-import { setupLobby, initLobbyEvents } from './lobby.ts';
+import { setupLobby, initLobbyEvents, resetMultiplayerSession } from './lobby.ts';
+import { readDirectOfferFromLocation } from '../net/directWebRtc.ts';
 
 import { DOM } from './dom.ts';
 export { DOM };
@@ -49,6 +50,13 @@ function updateVolumes() {
         soundSynth.setMasterVolume(volumes.master);
     }
     soundSynth.setSfxVolume(volumes.sfx);
+}
+
+function openJoinLobby(directOfferCode: string, onPlayMultiplayer: () => void) {
+    DOM.mainMenu.classList.add('hidden');
+    DOM.multiplayerLobby.classList.remove('hidden');
+    DOM.multiplayerLobby.classList.add('flex');
+    setupLobby(false, directOfferCode, onPlayMultiplayer);
 }
 
 export function setupMenu(callbacks: {
@@ -104,6 +112,8 @@ export function setupMenu(callbacks: {
     DOM.volSfx.addEventListener('input', updateVolumes);
 
     DOM.btnMultiplayer.addEventListener('click', () => {
+        resetMultiplayerSession();
+        history.replaceState({}, document.title, `${location.pathname}${location.search}`);
         DOM.mainMenu.classList.add('hidden');
         DOM.multiplayerLobby.classList.remove('hidden');
         DOM.multiplayerLobby.classList.add('flex');
@@ -111,34 +121,35 @@ export function setupMenu(callbacks: {
     });
 
     DOM.btnBackLobby.addEventListener('click', () => {
+        resetMultiplayerSession();
         DOM.multiplayerLobby.classList.remove('flex');
         DOM.multiplayerLobby.classList.add('hidden');
-        
+
         const url = new URL(window.location.href);
-        if (url.searchParams.has('join')) {
-            url.searchParams.delete('join');
-            window.history.replaceState({}, document.title, url.toString());
-        }
-        
+        url.searchParams.delete('join');
+        url.hash = '';
+        window.history.replaceState({}, document.title, url.toString());
+
         DOM.mainMenu.classList.remove('hidden');
     });
 
     DOM.btnPlayMultiplayer.addEventListener('click', async (e) => {
         e.stopPropagation();
+        if (DOM.btnPlayMultiplayer.disabled) return;
         soundSynth.unlock().catch(() => {});
         callbacks.onPlayMultiplayer();
     });
 
-    // Auto-join handling via URL params
-    window.addEventListener('DOMContentLoaded', () => {
-        const urlParams = new URLSearchParams(window.location.search);
-        const joinId = urlParams.get('join');
-        if (joinId) {
-            DOM.mainMenu.classList.add('hidden');
-            DOM.multiplayerLobby.classList.remove('hidden');
-            DOM.multiplayerLobby.classList.add('flex');
-            setupLobby(false, joinId, callbacks.onPlayMultiplayer);
-        }
-    });
-}
+    const handleInvite = () => {
+        const directOffer = readDirectOfferFromLocation();
+        if (!directOffer) return;
+        resetMultiplayerSession();
+        openJoinLobby(directOffer, callbacks.onPlayMultiplayer);
+    };
 
+    if (document.readyState === 'loading') {
+        window.addEventListener('DOMContentLoaded', handleInvite, { once: true });
+    } else {
+        queueMicrotask(handleInvite);
+    }
+}

@@ -1,62 +1,13 @@
 import type { IDataChannel } from './protocol.ts';
 import { P2PHost } from './p2pHost.ts';
-import { Peer, type DataConnection } from 'peerjs';
 
-// ---------------------------------------------------------------------------
-// PeerJsDataChannel: wrapper intorno a DataConnection di PeerJS
-// ---------------------------------------------------------------------------
-export class PeerJsDataChannel implements IDataChannel {
-    public binaryType?: 'blob' | 'arraybuffer' = 'arraybuffer';
-    public onmessage?: ((ev: { data: any }) => void) | null;
-    public onopen?: (() => void) | null;
-    public onclose?: (() => void) | null;
-    public onerror?: ((err: any) => void) | null;
-    public readyState: string = 'connecting';
-    
-    private conn: DataConnection;
-
-    constructor(conn: DataConnection) {
-        this.conn = conn;
-
-        this.conn.on('open', () => {
-            this.readyState = 'open';
-            if (this.onopen) this.onopen();
-        });
-
-        this.conn.on('close', () => {
-            this.readyState = 'closed';
-            if (this.onclose) this.onclose();
-        });
-
-        this.conn.on('error', (err: any) => {
-            if (this.onerror) this.onerror(err);
-        });
-
-        this.conn.on('data', (data: any) => {
-            if (this.onmessage) this.onmessage({ data });
-        });
-
-        if (this.conn.open) {
-            this.readyState = 'open';
-            setTimeout(() => { if (this.onopen) this.onopen(); }, 0);
-        }
-    }
-
-    send(data: string | ArrayBuffer | ArrayBufferView): void {
-        if (this.readyState === 'open') {
-            this.conn.send(data);
-        }
-    }
-
-    close(): void {
-        this.conn.close();
-        this.readyState = 'closed';
-    }
-}
-
-// ---------------------------------------------------------------------------
-// MockBroadcastChannel: usato come fallback per test locali (stesso browser)
-// ---------------------------------------------------------------------------
+/**
+ * Legacy same-origin transport used only for local multi-tab development.
+ *
+ * Production/friends multiplayer lives in directWebRtc.ts and creates a
+ * dedicated native RTCPeerConnection for every guest. This module deliberately
+ * contains no PeerJS, STUN, TURN, signaling SaaS, or remote network endpoint.
+ */
 export class MockBroadcastChannel implements IDataChannel {
     private bc: BroadcastChannel;
     public binaryType?: 'blob' | 'arraybuffer' = 'arraybuffer';
@@ -64,164 +15,89 @@ export class MockBroadcastChannel implements IDataChannel {
     public onopen?: (() => void) | null;
     public onclose?: (() => void) | null;
     public onerror?: ((err: any) => void) | null;
-    public readyState: string = 'open';
+    public readyState = 'open';
 
     constructor(channelName: string) {
+        if (typeof BroadcastChannel === 'undefined') {
+            throw new Error('BroadcastChannel non disponibile in questo browser.');
+        }
         this.bc = new BroadcastChannel(channelName);
-        this.bc.onmessage = (ev) => {
-            if (this.onmessage) this.onmessage(ev);
-        };
-        setTimeout(() => {
-            if (this.onopen) this.onopen();
-        }, 10);
+        this.bc.onmessage = (ev) => this.onmessage?.(ev);
+        queueMicrotask(() => this.onopen?.());
     }
 
     send(data: string | ArrayBuffer | ArrayBufferView): void {
+        if (this.readyState !== 'open') throw new Error('BroadcastChannel chiuso.');
         this.bc.postMessage(data);
     }
 
     close(): void {
+        if (this.readyState === 'closed') return;
         this.readyState = 'closed';
         this.bc.close();
-        if (this.onclose) this.onclose();
+        this.onclose?.();
     }
 }
 
-// ---------------------------------------------------------------------------
-// Utility: rilevazione se siamo su stesso device (stesso origin, stesso browser)
-// Usa BroadcastChannel locale: se l'host risponde entro 200ms siamo locali.
-// ---------------------------------------------------------------------------
-async function isLocalHost(hostId: string): Promise<boolean> {
-    return new Promise((resolve) => {
-        const probeCh = new BroadcastChannel(`gone-probe-${hostId}`);
-        let resolved = false;
-        probeCh.onmessage = (ev) => {
-            if (ev.data?.type === 'PROBE_ACK') {
-                resolved = true;
-                probeCh.close();
-                resolve(true);
-            }
-        };
-        probeCh.postMessage({ type: 'PROBE' });
-        setTimeout(() => {
-            if (!resolved) {
-                probeCh.close();
-                resolve(false);
-            }
-        }, 200);
-    });
-}
-
-// ---------------------------------------------------------------------------
-// HOST SIGNALING
-// ---------------------------------------------------------------------------
+/**
+ * Backward-compatible local signaling for old tests/dev flows. It can connect
+ * tabs/windows on the same origin and device only; it never accesses Internet
+ * infrastructure. New multiplayer UI does not use this path.
+ */
 export function startHostSignaling(hostId: string, p2pHost: P2PHost): void {
-    // ---- Fallback locale: BroadcastChannel (stesso browser) ----
-    const localSig = new BroadcastChannel(`gone-sig-${hostId}`);
-    const localProbe = new BroadcastChannel(`gone-probe-${hostId}`);
-    const registeredLocalPeers = new Set<string>();
+    if (typeof BroadcastChannel === 'undefined') {
+        p2pHost.options.onError?.(new Error('BroadcastChannel non disponibile.'));
+        return;
+    }
 
-    localProbe.onmessage = (ev) => {
-        if (ev.data?.type === 'PROBE') {
-            localProbe.postMessage({ type: 'PROBE_ACK' });
-        }
+    const signal = new BroadcastChannel(`gone-sig-${hostId}`);
+    const probe = new BroadcastChannel(`gone-probe-${hostId}`);
+    const registered = new Set<string>();
+
+    probe.onmessage = (ev) => {
+        if (ev.data?.type === 'PROBE') probe.postMessage({ type: 'PROBE_ACK' });
     };
 
-    localSig.onmessage = (ev) => {
+    signal.onmessage = (ev) => {
         const msg = ev.data;
-        if (msg.type === 'PEER_CONNECT' && !registeredLocalPeers.has(msg.peerId)) {
-            registeredLocalPeers.add(msg.peerId);
-            const dataChannelName = `gone-data-${hostId}-${msg.peerId}`;
-            const channel = new MockBroadcastChannel(dataChannelName);
-            p2pHost.registerPeer(msg.peerId, channel);
-            localSig.postMessage({
-                type: 'PEER_ACCEPT',
-                peerId: msg.peerId,
-                channelName: dataChannelName,
-            });
-        }
+        if (msg?.type !== 'PEER_CONNECT' || typeof msg.peerId !== 'string' || registered.has(msg.peerId)) return;
+        registered.add(msg.peerId);
+        const channelName = `gone-data-${hostId}-${msg.peerId}`;
+        const channel = new MockBroadcastChannel(channelName);
+        p2pHost.registerPeer(msg.peerId, channel);
+        signal.postMessage({ type: 'PEER_ACCEPT', peerId: msg.peerId, channelName });
     };
-
-    // ---- PeerJS WebRTC per cross-device ----
-    const peer = new Peer(hostId);
-    
-    peer.on('open', (id) => {
-        console.log(`[Host] PeerJS host registered with ID: ${id}`);
-    });
-
-    peer.on('connection', (conn) => {
-        const peerId = conn.peer;
-        const channel = new PeerJsDataChannel(conn);
-        p2pHost.registerPeer(peerId, channel);
-    });
-
-    peer.on('error', (err) => {
-        console.error('[Host] PeerJS Error:', err);
-    });
 
     (p2pHost as any).__stopHostSignaling = () => {
-        localSig.close();
-        localProbe.close();
-        peer.destroy();
+        signal.close();
+        probe.close();
     };
 }
 
-// ---------------------------------------------------------------------------
-// CLIENT SIGNALING
-// ---------------------------------------------------------------------------
-export function connectClientSignaling(hostId: string, peerId: string): Promise<IDataChannel> {
-    return new Promise(async (resolve, reject) => {
-        // Prima tenta connessione locale via BroadcastChannel (stesso browser)
-        const isLocal = await isLocalHost(hostId);
+export async function connectClientSignaling(hostId: string, peerId: string): Promise<IDataChannel> {
+    if (typeof BroadcastChannel === 'undefined') {
+        throw new Error('Connessione locale non disponibile. Usa l’invito WebRTC diretto.');
+    }
 
-        if (isLocal) {
-            // Connessione locale: usa BroadcastChannel
-            let resolvedLocal = false;
-            const localSig = new BroadcastChannel(`gone-sig-${hostId}`);
-            localSig.onmessage = (ev) => {
-                const msg = ev.data;
-                if (msg.type === 'PEER_ACCEPT' && msg.peerId === peerId && !resolvedLocal) {
-                    resolvedLocal = true;
-                    localSig.close();
-                    resolve(new MockBroadcastChannel(msg.channelName));
-                }
-            };
-            localSig.postMessage({ type: 'PEER_CONNECT', peerId });
+    return new Promise<IDataChannel>((resolve, reject) => {
+        const signal = new BroadcastChannel(`gone-sig-${hostId}`);
+        let settled = false;
+        const timeout = window.setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            signal.close();
+            reject(new Error('Host locale non trovato. Usa l’invito WebRTC diretto.'));
+        }, 1000);
 
-            // Timeout fallback a WebRTC
-            setTimeout(() => {
-                if (!resolvedLocal) {
-                    localSig.close();
-                    connectViaPeerJS(hostId, peerId).then(resolve).catch(reject);
-                }
-            }, 300);
-        } else {
-            // Connessione cross-device: usa PeerJS
-            connectViaPeerJS(hostId, peerId).then(resolve).catch(reject);
-        }
-    });
-}
+        signal.onmessage = (ev) => {
+            const msg = ev.data;
+            if (settled || msg?.type !== 'PEER_ACCEPT' || msg.peerId !== peerId || typeof msg.channelName !== 'string') return;
+            settled = true;
+            clearTimeout(timeout);
+            signal.close();
+            resolve(new MockBroadcastChannel(msg.channelName));
+        };
 
-function connectViaPeerJS(hostId: string, peerId: string): Promise<IDataChannel> {
-    return new Promise((resolve, reject) => {
-        const peer = new Peer(peerId);
-        
-        peer.on('open', () => {
-            // Connessi al signaling server, ora mi connetto all'host
-            const conn = peer.connect(hostId, {
-                reliable: false, 
-                serialization: 'none'
-            });
-            
-            const channel = new PeerJsDataChannel(conn);
-            
-            // Risolviamo subito, il channel poi lancerà onopen
-            resolve(channel);
-        });
-
-        peer.on('error', (err) => {
-            console.error('[Client] PeerJS Error:', err);
-            reject(err);
-        });
+        signal.postMessage({ type: 'PEER_CONNECT', peerId });
     });
 }

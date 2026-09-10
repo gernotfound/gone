@@ -2,7 +2,6 @@
 // Tier 2 Boundary & Corner Cases: 3D Asset Bounds, Transforms & Socket Anchors (F-01 to F-08)
 
 import fs from 'fs';
-import path from 'path';
 import {
   assert,
   assertEqual,
@@ -17,9 +16,8 @@ import {
   SCALE_FACTORS,
   WEAPON_SOCKET_ANCHOR,
   EXPECTED_FLUO_COMPONENTS,
+  PROJECT_ROOT,
 } from '../helpers/asset_inspector.mjs';
-
-const PROJECT_ROOT = 'c:\\Users\\gerar\\Documents\\GitHub\\gone';
 
 export async function run(suite) {
   // Asset source key boundaries
@@ -40,7 +38,7 @@ export async function run(suite) {
 
   // GLB Existence and Corrupt Check
   suite.test('T2-Asset: Non-existent GLB asset in invalid directory returns exists = false and size = 0', () => {
-    const res = inspectGlbAsset('ghost_weapon', 'c:\\non_existent_folder_path');
+    const res = inspectGlbAsset('ghost_weapon', '/non_existent_gone_folder_path');
     assertEqual(res.exists, false);
     assertEqual(res.size, 0);
   });
