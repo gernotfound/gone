@@ -95,6 +95,7 @@ jobs:
           node scripts/rescue_combat_network_smoke.mjs 2>&1 | tee ../rescue-combat-network.log
           node scripts/rescue_session_resilience_smoke.mjs 2>&1 | tee ../rescue-session-resilience.log
           node scripts/rescue_selfhost_relay_smoke.mjs 2>&1 | tee ../rescue-selfhost-relay.log
+          node scripts/rescue_selfhost_scale_smoke.mjs 2>&1 | tee ../rescue-selfhost-scale.log
 
       - name: Upload browser smoke diagnostics
         if: always()
@@ -107,6 +108,7 @@ jobs:
             rescue-combat-network.log
             rescue-session-resilience.log
             rescue-selfhost-relay.log
+            rescue-selfhost-scale.log
             rescue-preview.log
           if-no-files-found: warn
           retention-days: 3
