@@ -87,6 +87,7 @@ jobs:
           curl -fsS http://127.0.0.1:4173/ >/dev/null
           node scripts/rescue_browser_smoke.mjs 2>&1 | tee ../rescue-browser-smoke.log
           node scripts/rescue_webrtc_scale_smoke.mjs 2>&1 | tee ../rescue-webrtc-scale.log
+          node scripts/rescue_combat_network_smoke.mjs 2>&1 | tee ../rescue-combat-network.log
 
       - name: Upload browser smoke diagnostics
         if: always()
@@ -96,6 +97,7 @@ jobs:
           path: |
             rescue-browser-smoke.log
             rescue-webrtc-scale.log
+            rescue-combat-network.log
             rescue-preview.log
           if-no-files-found: warn
           retention-days: 3
