@@ -9,13 +9,14 @@ interface SignalPayload {
     type: 'offer' | 'answer';
     connectionId: string;
     sdp: string;
+    peerId?: string;
 }
 
 export interface DirectHostOffer {
     connectionId: string;
     offerCode: string;
     channel: IDataChannel;
-    applyAnswer(answerCode: string): Promise<void>;
+    applyAnswer(answerCode: string, onPeerIdentified?: (peerId: string) => void): Promise<string>;
     close(): void;
 }
 
@@ -74,7 +75,8 @@ function decodeSignal(code: string, expectedType: SignalPayload['type']): Signal
         payload.type !== expectedType ||
         typeof payload.connectionId !== 'string' ||
         typeof payload.sdp !== 'string' ||
-        payload.sdp.length < 20
+        payload.sdp.length < 20 ||
+        (expectedType === 'answer' && (typeof payload.peerId !== 'string' || payload.peerId.length < 3))
     ) {
         throw new Error(`Codice ${expectedType} non valido o incompatibile.`);
     }
@@ -103,8 +105,8 @@ async function waitForIceGatheringComplete(pc: RTCPeerConnection): Promise<void>
 }
 
 function createPeerConnection(): RTCPeerConnection {
-    // Deliberately no STUN/TURN servers. The host browser is the only game
-    // authority and no third-party signaling/relay service is contacted.
+    // Intentionally no STUN/TURN: no third-party multiplayer/signaling/relay
+    // infrastructure is contacted. The room creator remains the game server.
     return new RTCPeerConnection({
         iceServers: [],
         bundlePolicy: 'max-bundle',
@@ -193,14 +195,19 @@ export async function createDirectHostOffer(): Promise<DirectHostOffer> {
         connectionId,
         offerCode,
         channel,
-        async applyAnswer(answerCode: string) {
+        async applyAnswer(answerCode: string, onPeerIdentified?: (peerId: string) => void) {
             if (answerApplied) throw new Error('Questa risposta è già stata applicata.');
             const answer = decodeSignal(answerCode, 'answer');
             if (answer.connectionId !== connectionId) {
                 throw new Error('La risposta appartiene a un altro invito.');
             }
+            const peerId = answer.peerId!;
+            // Bind the authoritative host channel to the actual guest identity
+            // before setRemoteDescription can open the negotiated DataChannel.
+            onPeerIdentified?.(peerId);
             await pc.setRemoteDescription({ type: 'answer', sdp: answer.sdp });
             answerApplied = true;
+            return peerId;
         },
         close() {
             try { channel.close?.(); } finally { pc.close(); }
@@ -208,7 +215,8 @@ export async function createDirectHostOffer(): Promise<DirectHostOffer> {
     };
 }
 
-export async function createDirectGuestAnswer(offerCode: string): Promise<DirectGuestAnswer> {
+export async function createDirectGuestAnswer(offerCode: string, peerId: string): Promise<DirectGuestAnswer> {
+    if (!peerId || peerId.length < 3) throw new Error('Identità giocatore non valida.');
     const offer = decodeSignal(offerCode, 'offer');
     const pc = createPeerConnection();
 
@@ -227,6 +235,7 @@ export async function createDirectGuestAnswer(offerCode: string): Promise<Direct
             v: SIGNAL_VERSION,
             type: 'answer',
             connectionId: offer.connectionId,
+            peerId,
             sdp: pc.localDescription.sdp,
         });
 
