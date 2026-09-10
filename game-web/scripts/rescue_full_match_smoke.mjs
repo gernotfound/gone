@@ -33,6 +33,10 @@ function attachDiagnostics(page, label, errors) {
   });
 }
 
+function planarDistance(a, b) {
+  return Math.hypot(a.x - b.x, a.z - b.z);
+}
+
 async function main() {
   const hostProcess = spawn(process.execPath, ['../gone-host/server.mjs', '--no-upnp', '--no-open', '--port', String(PORT)], {
     cwd: new URL('..', import.meta.url).pathname,
@@ -86,11 +90,6 @@ async function main() {
     );
 
     const guestId = await guest.evaluate(() => window.goneGame.getP2PClient().playerId);
-    const before = await host.evaluate((id) => {
-      const record = window.goneGame.getP2PHost().playerRecords.get(id);
-      if (!record) throw new Error('Guest record missing before game start');
-      return { x: record.position.x, y: record.position.y, z: record.position.z };
-    }, guestId);
 
     console.log('[full-match] Host starts the actual 3D match');
     await host.locator('#btn-play-multiplayer').click();
@@ -136,17 +135,44 @@ async function main() {
       invariant(state.remotes >= 1, `Player ${index} has no remote avatar: ${JSON.stringify(state)}`);
     }
 
-    console.log('[full-match] Driving real guest movement through the running physics loop');
-    await guest.evaluate(() => { window.goneGame.keys.forward = true; });
-    await new Promise((resolve) => setTimeout(resolve, 900));
-    await guest.evaluate(() => { window.goneGame.keys.forward = false; });
+    // Take the movement baseline only after both 3D scenes, physics loops and
+    // networking are fully active. Pre-load terrain/respawn settling must not be
+    // mistaken for player input movement.
+    const localBaseline = await guest.evaluate(() => ({
+      x: window.goneGame.player.position.x,
+      z: window.goneGame.player.position.z,
+    }));
+    const hostBaseline = await host.evaluate((id) => {
+      const record = window.goneGame.getP2PHost().playerRecords.get(id);
+      if (!record) throw new Error('Guest record missing after game start');
+      return { x: record.position.x, z: record.position.z, seq: record.lastClientSeq };
+    }, guestId);
 
-    const moved = await waitFor(async () => host.evaluate(([id, start]) => {
+    console.log('[full-match] Driving real W-key movement through input, physics and networking');
+    await guest.bringToFront();
+    try {
+      await guest.keyboard.down('KeyW');
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+    } finally {
+      await guest.keyboard.up('KeyW').catch(() => {});
+    }
+
+    const localMoved = await waitFor(async () => guest.evaluate((start) => {
+      const position = window.goneGame.player.position;
+      const distance = Math.hypot(position.x - start.x, position.z - start.z);
+      return distance > 2 ? { distance, x: position.x, z: position.z } : null;
+    }, localBaseline), 'guest local physics movement from real W key', 8_000);
+
+    const replicated = await waitFor(async () => host.evaluate(([id, start]) => {
       const record = window.goneGame.getP2PHost().playerRecords.get(id);
       if (!record) return null;
       const distance = Math.hypot(record.position.x - start.x, record.position.z - start.z);
-      return distance > 2 ? { distance, position: { ...record.position } } : null;
-    }, [guestId, before]), 'authoritative host to receive in-game guest movement', 12_000);
+      return distance > 2 && record.lastClientSeq !== start.seq
+        ? { distance, seq: record.lastClientSeq, x: record.position.x, z: record.position.z }
+        : null;
+    }, [guestId, hostBaseline]), 'authoritative host to receive in-game guest movement', 12_000);
+
+    invariant(planarDistance(localMoved, replicated) < 6, `Host and guest movement diverged excessively: local=${JSON.stringify(localMoved)} host=${JSON.stringify(replicated)}`);
 
     if (errors.length) throw new Error(`Runtime/browser errors detected:\n${errors.join('\n')}`);
 
@@ -154,7 +180,9 @@ async function main() {
       guestId,
       bothScenesRunning: true,
       remoteAvatarsVisible: true,
-      movementDistance: moved.distance,
+      localMovementDistance: localMoved.distance,
+      authoritativeMovementDistance: replicated.distance,
+      authoritativeSequence: replicated.seq,
     }));
   } finally {
     if (hostContext) await hostContext.close().catch(() => {});
