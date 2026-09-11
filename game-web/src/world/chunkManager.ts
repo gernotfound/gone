@@ -22,12 +22,101 @@ export function getTerrainHeightAt(x: number, z: number): number {
     return get_height_at(x, z);
 }
 
+function sampleRockFootprint(worldX: number, worldZ: number, footprint: number): {
+    min: number;
+    max: number;
+    center: number;
+} {
+    const center = get_height_at(worldX, worldZ);
+    const heights = [
+        center,
+        get_height_at(worldX + footprint, worldZ),
+        get_height_at(worldX - footprint, worldZ),
+        get_height_at(worldX, worldZ + footprint),
+        get_height_at(worldX, worldZ - footprint),
+    ];
+    return {
+        min: Math.min(...heights),
+        max: Math.max(...heights),
+        center,
+    };
+}
+
+function createGroundedRocks(
+    rocks: Float32Array,
+    offsetX: number,
+    offsetZ: number,
+): THREE.InstancedMesh | null {
+    if (rocks.length < 9) return null;
+
+    const accepted: Array<{
+        x: number; y: number; z: number;
+        sx: number; sy: number; sz: number;
+        rx: number; ry: number; rz: number;
+    }> = [];
+
+    const rockCount = Math.floor(rocks.length / 9);
+    for (let i = 0; i < rockCount; i += 1) {
+        const idx = i * 9;
+        const localX = rocks[idx];
+        const localZ = rocks[idx + 2];
+        const sx = Math.max(0.05, rocks[idx + 3]);
+        const sy = Math.max(0.05, rocks[idx + 4]);
+        const sz = Math.max(0.05, rocks[idx + 5]);
+        const worldX = offsetX + localX;
+        const worldZ = offsetZ + localZ;
+
+        // A rock must be supportable by the terrain under its footprint, not
+        // merely by one center height sample. On cliff/crater edges, remove it.
+        const footprint = Math.max(0.35, Math.min(3.5, Math.max(sx, sz) * 0.55));
+        const ground = sampleRockFootprint(worldX, worldZ, footprint);
+        const heightSpan = ground.max - ground.min;
+        const maxSupportableSpan = Math.max(1.15, sy * 0.95);
+        if (!Number.isFinite(ground.max) || heightSpan > maxSupportableSpan) continue;
+
+        // DodecahedronGeometry is centered at the origin with radius ~1. Embed
+        // most of the lower half into the highest support point so no side can
+        // visibly hover after the small allowed tilt.
+        const embeddedCenterY = ground.max + sy * 0.38;
+        const rx = Math.sin(rocks[idx + 6]) * 0.18;
+        const ry = rocks[idx + 7];
+        const rz = Math.sin(rocks[idx + 8]) * 0.18;
+
+        accepted.push({
+            x: localX,
+            y: embeddedCenterY,
+            z: localZ,
+            sx,
+            sy,
+            sz,
+            rx,
+            ry,
+            rz,
+        });
+    }
+
+    if (accepted.length === 0) return null;
+    const instanced = new THREE.InstancedMesh(sceneManager.rockGeo, sceneManager.rockMat, accepted.length);
+    instanced.castShadow = false;
+    instanced.receiveShadow = false;
+    const dummy = new THREE.Object3D();
+
+    accepted.forEach((rock, index) => {
+        dummy.position.set(rock.x, rock.y, rock.z);
+        dummy.scale.set(rock.sx, rock.sy, rock.sz);
+        dummy.rotation.set(rock.rx, rock.ry, rock.rz);
+        dummy.updateMatrix();
+        instanced.setMatrixAt(index, dummy.matrix);
+    });
+    instanced.instanceMatrix.needsUpdate = true;
+    return instanced;
+}
+
 export function updateChunks(playerPosition: THREE.Vector3) {
     const px = Math.floor(playerPosition.x / CHUNK_SIZE);
     const pz = Math.floor(playerPosition.z / CHUNK_SIZE);
 
-    // Chunk membership only changes after crossing a 400 m boundary. The old
-    // code rebuilt Sets and walked the whole neighborhood every render frame.
+    // Chunk membership only changes after crossing a 400 m boundary.
     if (activeChunks.size > 0 && px === lastChunkX && pz === lastChunkZ) return;
     lastChunkX = px;
     lastChunkZ = pz;
@@ -45,11 +134,8 @@ export function updateChunks(playerPosition: THREE.Vector3) {
 
             if (!activeChunks.has(id)) {
                 activeChunks.set(id, { mesh: null, targetY: 0 });
-
                 const offsetX = cx * CHUNK_SIZE;
                 const offsetZ = cz * CHUNK_SIZE;
-
-                // CALL RUST WASM MODULE SYNCHRONOUSLY!
                 const chunkData = generate_chunk(cx, cz, offsetX, offsetZ, CHUNK_SIZE, CHUNK_RESOLUTION);
 
                 const heights = chunkData.get_heights();
@@ -58,11 +144,8 @@ export function updateChunks(playerPosition: THREE.Vector3) {
 
                 const geometry = new THREE.PlaneGeometry(CHUNK_SIZE, CHUNK_SIZE, CHUNK_RESOLUTION, CHUNK_RESOLUTION);
                 geometry.rotateX(-Math.PI / 2);
-
                 const positions = geometry.attributes.position;
-                for (let i = 0; i < positions.count; i++) {
-                    positions.setY(i, heights[i]);
-                }
+                for (let i = 0; i < positions.count; i += 1) positions.setY(i, heights[i]);
                 geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
                 geometry.computeVertexNormals();
 
@@ -71,42 +154,26 @@ export function updateChunks(playerPosition: THREE.Vector3) {
                 mesh.receiveShadow = false;
                 mesh.castShadow = false;
 
-                if (rocks.length > 0) {
-                    const rockCount = rocks.length / 9;
-                    const instancedRocks = new THREE.InstancedMesh(sceneManager.rockGeo, sceneManager.rockMat, rockCount);
-                    instancedRocks.castShadow = false;
-                    instancedRocks.receiveShadow = false;
+                const groundedRocks = createGroundedRocks(rocks, offsetX, offsetZ);
+                if (groundedRocks) mesh.add(groundedRocks);
 
-                    const dummy = new THREE.Object3D();
-                    for (let i = 0; i < rockCount; i++) {
-                        const idx = i * 9;
-                        // Abbassiamo la roccia di un bel po' rispetto alla sua scala Y per evitare che voli
-                        dummy.position.set(rocks[idx], rocks[idx + 1] - rocks[idx + 4] * 0.8, rocks[idx + 2]);
-                        dummy.scale.set(rocks[idx + 3], rocks[idx + 4], rocks[idx + 5]);
-                        dummy.rotation.set(rocks[idx + 6], rocks[idx + 7], rocks[idx + 8]);
-                        dummy.updateMatrix();
-                        instancedRocks.setMatrixAt(i, dummy.matrix);
-                    }
-                    instancedRocks.instanceMatrix.needsUpdate = true;
-                    mesh.add(instancedRocks);
-                }
-
-                // Volumetric rays are large transparent meshes and therefore
-                // fill-rate heavy. Keep the ambience but make them sparse.
+                // Large transparent god rays are fill-rate heavy. Keep a sparse
+                // deterministic ambience instead of multiple rays per chunk.
                 const seededRandom = (s: number) => {
                     const r = Math.sin(s) * 43758.5453;
                     return r - Math.floor(r);
                 };
-
                 const chunkSeed = cx * 12.9898 + cz * 78.233;
                 if (seededRandom(chunkSeed) > 0.82) {
                     const sunDir = new THREE.Vector3(200, 300, -100).normalize();
                     const up = new THREE.Vector3(0, 1, 0);
                     const quaternion = new THREE.Quaternion().setFromUnitVectors(up, sunDir);
                     const ray = new THREE.Mesh(sceneManager.rayGeo, sceneManager.rayMat);
-                    const rX = ((seededRandom(chunkSeed + 2.1) - 0.5) * CHUNK_SIZE);
-                    const rZ = ((seededRandom(chunkSeed + 3.7) - 0.5) * CHUNK_SIZE);
-                    ray.position.set(rX, -50, rZ);
+                    ray.position.set(
+                        (seededRandom(chunkSeed + 2.1) - 0.5) * CHUNK_SIZE,
+                        -50,
+                        (seededRandom(chunkSeed + 3.7) - 0.5) * CHUNK_SIZE,
+                    );
                     ray.quaternion.copy(quaternion);
                     mesh.add(ray);
                 }
@@ -114,13 +181,11 @@ export function updateChunks(playerPosition: THREE.Vector3) {
                 sceneManager.scene.add(mesh);
                 const chunkObj = activeChunks.get(id);
                 if (chunkObj) chunkObj.mesh = mesh;
-
                 chunkData.free();
             }
         }
     }
 
-    // Clean distant chunks
     for (const [id, chunkObj] of activeChunks.entries()) {
         if (!currentChunks.has(id)) {
             if (chunkObj.mesh) {

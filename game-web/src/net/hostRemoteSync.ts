@@ -1,14 +1,14 @@
 import { DOM } from '../ui/dom.ts';
 
 /**
- * The authoritative host receives CLIENT_STATE packets directly into
- * P2PHost.playerRecords. Unlike clients, it does not receive its own
- * WORLD_SNAPSHOT, so engine.ts never gets the normal snapshot callback that
- * creates/interpolates remote player meshes. This bridge mirrors host records
- * into the renderer while the actual game canvas is active.
+ * Mirrors authoritative guest records into the host renderer. CLIENT_STATE is
+ * 30 Hz, so the bridge runs at the same cadence and only pushes transforms when
+ * the client's sequence changes. This avoids duplicate interpolation samples
+ * while removing the old 20 Hz visual bottleneck on the host browser.
  */
 export function startHostRemoteSync(): () => void {
     let wasHost = false;
+    const lastSeqByPlayer = new Map<string, number>();
 
     const timer = window.setInterval(() => {
         const api = (window as any).goneGame;
@@ -22,6 +22,7 @@ export function startHostRemoteSync(): () => void {
                 }
             }
             wasHost = false;
+            lastSeqByPlayer.clear();
             return;
         }
 
@@ -36,20 +37,27 @@ export function startHostRemoteSync(): () => void {
             if (record.id === host.hostPlayer.id) continue;
             activeIds.add(record.id);
 
-            const remote = api.addOrUpdateRemotePlayer(
-                record.id,
-                record.position.x,
-                record.position.y,
-                record.position.z,
-                record.yaw,
-                record.color,
-                record.activeWeapon,
-                record.slot,
-            );
+            const existing = api.remotePlayers.get(record.id);
+            const previousSeq = lastSeqByPlayer.get(record.id);
+            const hasFreshTransform = !existing || previousSeq !== record.lastClientSeq;
+            let remote = existing;
+
+            if (hasFreshTransform) {
+                remote = api.addOrUpdateRemotePlayer(
+                    record.id,
+                    record.position.x,
+                    record.position.y,
+                    record.position.z,
+                    record.yaw,
+                    record.color,
+                    record.activeWeapon,
+                    record.slot,
+                );
+                lastSeqByPlayer.set(record.id, record.lastClientSeq);
+            }
 
             if (remote?.group) {
                 remote.group.visible = record.isAlive;
-
                 const shieldController = api.shieldVfxController;
                 const isShielded = record.isAlive && record.shieldExpiresAt > now;
                 if (isShielded && !shieldController?.hasShield?.(remote.group)) {
@@ -63,11 +71,13 @@ export function startHostRemoteSync(): () => void {
             }
         }
 
-        // Remove meshes for players that have actually left the host session.
         for (const id of Array.from(api.remotePlayers.keys()) as string[]) {
-            if (!activeIds.has(id)) api.removeRemotePlayer?.(id);
+            if (!activeIds.has(id)) {
+                api.removeRemotePlayer?.(id);
+                lastSeqByPlayer.delete(id);
+            }
         }
-    }, 50);
+    }, 33);
 
     return () => window.clearInterval(timer);
 }

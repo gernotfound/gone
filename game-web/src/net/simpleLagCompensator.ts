@@ -1,13 +1,5 @@
-/**
- * Browser-safe lag compensator used by the rescue build.
- *
- * It deliberately does not trust client performance.now() timestamps because
- * monotonic clocks are not synchronized between computers. When clocks do not
- * line up, it validates against the newest authoritative host snapshot.
- *
- * Player network Y is the physics/top anchor used by engine.ts. The actual
- * collision cylinder therefore starts one player-height below Y.
- */
+/** Browser-safe authoritative lag compensation for the self-hosted WebRTC game. */
+import { calculateWeaponDamageAtDistance, getWeaponRuntimeById } from '../weapons/weaponConfig.ts';
 
 export interface SimpleHitscanResult {
   hit: boolean;
@@ -24,17 +16,6 @@ type Snapshot = {
   radius: number;
   height: number;
 };
-
-// Keep the browser authoritative fallback aligned with game-core/src/weapons.rs.
-// The previous rescue table was intentionally aggressive (AR 34, SMG 20) and
-// produced 3-5 hit kills in real multiplayer, far below the intended arena TTK.
-const WEAPON = {
-  0: { body: 18, head: 27, range: 150 },
-  1: { body: 70, head: 140, range: 500 },
-  2: { body: 64, head: 96, range: 40 },
-  3: { body: 12, head: 18, range: 80 },
-  4: { body: 50, head: 50, range: 2.5 },
-} as const;
 
 export class SimpleLagCompensator {
   private readonly histories = new Map<number, Snapshot[]>();
@@ -96,20 +77,16 @@ export class SimpleLagCompensator {
     } satisfies SimpleHitscanResult);
 
     if (shooterId === victimId) return miss();
-
     const history = this.histories.get(victimId);
     if (!history?.length) return miss();
 
     const newest = history[history.length - 1];
     const maxUnlag = Math.max(0, Math.min(this.maxHistoryMs, maxUnlagMs || this.maxHistoryMs));
 
-    // Browser performance.now() has a per-page time origin. Across computers
-    // (and even across tabs) client and host timestamps are not comparable.
-    // Only accept the supplied value when it is plausibly in the host domain.
+    // performance.now() is page-local. Only trust a client timestamp if it is
+    // plausibly in the host clock domain; otherwise rewind by render latency.
     let targetTime = shotTimeMs;
     if (!Number.isFinite(targetTime) || Math.abs(targetTime - newest.timestamp) > maxUnlag + 250) {
-      // Rewind roughly by the render interpolation delay. This makes the
-      // authoritative hitbox line up with what the shooter actually saw.
       targetTime = newest.timestamp - 90;
     }
     targetTime = Math.max(newest.timestamp - maxUnlag, Math.min(newest.timestamp, targetTime));
@@ -127,11 +104,8 @@ export class SimpleLagCompensator {
       }
     }
 
-    // The client renders/aims from camera center, while the old network path
-    // supplied a viewmodel muzzle origin. Their X/Z can differ enough to turn
-    // a visually perfect shot into an authoritative miss. Anchor horizontal
-    // origin to the latest host-known shooter position. Preserve the supplied
-    // vertical origin only when it is physically plausible for that player.
+    // Anchor horizontal shot origin to the newest authoritative shooter state.
+    // The supplied viewmodel muzzle is only a visual origin and can be offset.
     let validatedOriginX = originX;
     let validatedOriginY = originY;
     let validatedOriginZ = originZ;
@@ -147,8 +121,8 @@ export class SimpleLagCompensator {
       }
     }
 
-    const weapon = WEAPON[weaponType as keyof typeof WEAPON] ?? WEAPON[0];
-    const effectiveRange = Math.max(0.1, Math.min(maxRange || weapon.range, weapon.range));
+    const weapon = getWeaponRuntimeById(weaponType);
+    const effectiveRange = Math.max(0.1, Math.min(maxRange || weapon.maxRange, weapon.maxRange));
     const hit = this.intersectCylinder(
       [validatedOriginX, validatedOriginY, validatedOriginZ],
       [dirX, dirY, dirZ],
@@ -157,10 +131,12 @@ export class SimpleLagCompensator {
     );
 
     if (!hit) return miss();
+    const damage = calculateWeaponDamageAtDistance(weaponType, hit.distance, hit.isHeadshot);
+    if (damage <= 0) return miss();
 
     return JSON.stringify({
       hit: true,
-      damage: hit.isHeadshot ? weapon.head : weapon.body,
+      damage,
       is_headshot: hit.isHeadshot,
       distance: hit.distance,
     } satisfies SimpleHitscanResult);
@@ -182,7 +158,6 @@ export class SimpleLagCompensator {
     const dx = direction[0] / magnitude;
     const dy = direction[1] / magnitude;
     const dz = direction[2] / magnitude;
-
     const localX = origin[0] - snapshot.x;
     const localZ = origin[2] - snapshot.z;
     const a = dx * dx + dz * dz;
@@ -194,14 +169,12 @@ export class SimpleLagCompensator {
     if (discriminant < 0) return null;
 
     const root = Math.sqrt(discriminant);
-    const roots = [
-      (-b - root) / (2 * a),
-      (-b + root) / (2 * a),
-    ].filter((t) => t >= 0 && t <= maxRange).sort((x, y) => x - y);
+    const roots = [(-b - root) / (2 * a), (-b + root) / (2 * a)]
+      .filter((t) => t >= 0 && t <= maxRange)
+      .sort((x, y) => x - y);
 
     const baseY = snapshot.y - snapshot.height;
     const topY = snapshot.y;
-
     for (const t of roots) {
       const hitY = origin[1] + dy * t;
       if (hitY >= baseY && hitY <= topY) {
@@ -211,7 +184,6 @@ export class SimpleLagCompensator {
         };
       }
     }
-
     return null;
   }
 }
