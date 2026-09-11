@@ -17,6 +17,7 @@ import { startMusicSourceGain } from './audio/musicSourceGain.ts';
 import { startNaturalSunRays } from './world/naturalSunRays.ts';
 import { startPerformancePack } from './performance/performancePack.ts';
 import { startLocalTelemetry } from './performance/localTelemetry.ts';
+import { startAdaptiveRenderScale } from './performance/adaptiveRenderScale.ts';
 
 // Install lightweight runtime patches before any game/session objects are created.
 startNetworkStabilityFix();
@@ -38,3 +39,4 @@ startLiveMapOverlay();
 startMusicSourceGain();
 startPerformancePack();
 startLocalTelemetry();
+startAdaptiveRenderScale();
