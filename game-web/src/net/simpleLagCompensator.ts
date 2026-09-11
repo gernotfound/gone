@@ -1,5 +1,6 @@
 /** Browser-safe authoritative lag compensation for the self-hosted WebRTC game. */
 import { calculateWeaponDamageAtDistance, getWeaponRuntimeById } from '../weapons/weaponConfig.ts';
+import { intersectRobotHitbox } from './robotHitbox.ts';
 
 export interface SimpleHitscanResult {
   hit: boolean;
@@ -123,7 +124,7 @@ export class SimpleLagCompensator {
 
     const weapon = getWeaponRuntimeById(weaponType);
     const effectiveRange = Math.max(0.1, Math.min(maxRange || weapon.maxRange, weapon.maxRange));
-    const hit = this.intersectCylinder(
+    const hit = intersectRobotHitbox(
       [validatedOriginX, validatedOriginY, validatedOriginZ],
       [dirX, dirY, dirZ],
       snapshot,
@@ -144,46 +145,5 @@ export class SimpleLagCompensator {
 
   clear_player(playerId: number): void {
     this.histories.delete(playerId);
-  }
-
-  private intersectCylinder(
-    origin: [number, number, number],
-    direction: [number, number, number],
-    snapshot: Snapshot,
-    maxRange: number,
-  ): { distance: number; isHeadshot: boolean } | null {
-    const magnitude = Math.hypot(direction[0], direction[1], direction[2]);
-    if (magnitude < 1e-6) return null;
-
-    const dx = direction[0] / magnitude;
-    const dy = direction[1] / magnitude;
-    const dz = direction[2] / magnitude;
-    const localX = origin[0] - snapshot.x;
-    const localZ = origin[2] - snapshot.z;
-    const a = dx * dx + dz * dz;
-    if (a < 1e-8) return null;
-
-    const b = 2 * (localX * dx + localZ * dz);
-    const c = localX * localX + localZ * localZ - snapshot.radius * snapshot.radius;
-    const discriminant = b * b - 4 * a * c;
-    if (discriminant < 0) return null;
-
-    const root = Math.sqrt(discriminant);
-    const roots = [(-b - root) / (2 * a), (-b + root) / (2 * a)]
-      .filter((t) => t >= 0 && t <= maxRange)
-      .sort((x, y) => x - y);
-
-    const baseY = snapshot.y - snapshot.height;
-    const topY = snapshot.y;
-    for (const t of roots) {
-      const hitY = origin[1] + dy * t;
-      if (hitY >= baseY && hitY <= topY) {
-        return {
-          distance: t,
-          isHeadshot: hitY >= baseY + snapshot.height * 0.78,
-        };
-      }
-    }
-    return null;
   }
 }
