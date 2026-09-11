@@ -1,16 +1,18 @@
 const CACHE_PREFIX = 'gone-performance-pack-';
-const CACHE_NAME = `${CACHE_PREFIX}2026-09-11-v1`;
+const params = new URL(self.location.href).searchParams;
+const rawVersion = params.get('v') || 'runtime-v2';
+const safeVersion = rawVersion.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80);
+const CACHE_NAME = `${CACHE_PREFIX}${safeVersion}`;
 
 function isCacheable(request) {
   if (request.method !== 'GET') return false;
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return false;
-  if (request.headers.has('range')) return false;
   const path = url.pathname;
   return (
     path.startsWith('/assets/') ||
     path.startsWith('/pkg/') ||
-    /\.(?:js|css|wasm|glb|svg)$/i.test(path)
+    /\.(?:js|css|wasm|glb|svg|mp3)$/i.test(path)
   );
 }
 
@@ -35,12 +37,13 @@ self.addEventListener('fetch', (event) => {
 
   event.respondWith((async () => {
     const cache = await caches.open(CACHE_NAME);
-    const cached = await cache.match(event.request);
+    const cached = await cache.match(event.request.url);
     if (cached) return cached;
 
     const response = await fetch(event.request);
-    if (response.ok) {
-      event.waitUntil(cache.put(event.request, response.clone()));
+    const isRangeRequest = event.request.headers.has('range');
+    if (response.ok && !isRangeRequest) {
+      event.waitUntil(cache.put(event.request.url, response.clone()));
     }
     return response;
   })());
@@ -63,12 +66,16 @@ self.addEventListener('message', (event) => {
       try {
         const url = new URL(String(raw), self.location.origin);
         if (url.origin !== self.location.origin) throw new Error('cross-origin');
-        const request = new Request(url.href, { credentials: 'same-origin', cache: 'reload' });
+        const request = new Request(url.href, {
+          credentials: 'same-origin',
+          cache: 'reload',
+        });
         const response = await fetch(request);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
         const length = Number(response.headers.get('content-length') || 0);
         if (Number.isFinite(length) && length > 0) bytes += length;
-        await cache.put(request, response.clone());
+        await cache.put(url.href, response.clone());
       } catch {
         failed += 1;
       }
