@@ -57,6 +57,23 @@ export interface IWasmLagCompensator {
   clear_player(player_id: number): void;
 }
 
+// Browser fallback balance mirrors game-core/src/weapons.rs. Keeping this table
+// here makes the emergency geometric path obey the same TTK as the normal lag
+// compensated path instead of reverting to the old 3-hit AR / 5-hit SMG tuning.
+const FALLBACK_WEAPON_DAMAGE: Record<number, { body: number; head: number }> = {
+  0: { body: 18, head: 27 },
+  1: { body: 70, head: 140 },
+  2: { body: 64, head: 96 },
+  3: { body: 12, head: 18 },
+  4: { body: 50, head: 50 },
+};
+
+// Approximate world-space muzzle offset of the third-person robot after the
+// authored +Z model has been adapted to gameplay -Z forward and scaled by 0.67.
+const VISUAL_MUZZLE_LOCAL_X = 0.77;
+const VISUAL_MUZZLE_LOCAL_Y = 0.36;
+const VISUAL_MUZZLE_LOCAL_Z = -1.15;
+
 // --- Color Registry Interfaces & Implementations ---
 
 export interface IWasmColorRegistry {
@@ -74,14 +91,9 @@ export interface IColorRegistry {
   getAssignedColor(playerId: string): string | undefined;
 }
 
-/**
- * Pure TypeScript implementation of the fluorescent color uniqueness registry.
- * Mirrors the Rust SessionColorRegistry logic and provides complete standalone
- * functionality for Node.js automated tests and browser fallback.
- */
 export class LocalColorRegistry implements IColorRegistry {
-  private claimedColors = new Map<string, string>(); // playerId -> normalizedHex
-  private hexToPlayer = new Map<string, string>(); // normalizedHex -> playerId
+  private claimedColors = new Map<string, string>();
+  private hexToPlayer = new Map<string, string>();
   private presetPalette: string[];
 
   constructor(presetPalette: readonly string[] = DEFAULT_NEON_HEX_LIST) {
@@ -118,19 +130,12 @@ export class LocalColorRegistry implements IColorRegistry {
       };
     }
 
-    // Release previous color held by this player if different
     const previous = this.claimedColors.get(playerId);
-    if (previous && previous !== norm) {
-      this.hexToPlayer.delete(previous);
-    }
+    if (previous && previous !== norm) this.hexToPlayer.delete(previous);
 
     this.claimedColors.set(playerId, norm);
     this.hexToPlayer.set(norm, playerId);
-
-    return {
-      success: true,
-      color: norm,
-    };
+    return { success: true, color: norm };
   }
 
   releasePlayer(playerId: string): string | null {
@@ -145,8 +150,7 @@ export class LocalColorRegistry implements IColorRegistry {
 
   isColorAvailable(hex: string): boolean {
     const norm = normalizeHexColor(hex);
-    if (!norm) return false;
-    if (!isFluorescentColor(norm)) return false;
+    if (!norm || !isFluorescentColor(norm)) return false;
     return !this.hexToPlayer.has(norm);
   }
 
@@ -159,9 +163,6 @@ export class LocalColorRegistry implements IColorRegistry {
   }
 }
 
-/**
- * Adapter wrapping Rust WASM WasmColorRegistry to conform to IColorRegistry.
- */
 export class WasmColorRegistryAdapter implements IColorRegistry {
   private wasm: IWasmColorRegistry;
   private assigned = new Map<string, string>();
@@ -176,18 +177,14 @@ export class WasmColorRegistryAdapter implements IColorRegistry {
       const parsed = JSON.parse(raw);
       if (parsed.success) {
         this.assigned.set(playerId, parsed.color);
-        return {
-          success: true,
-          color: parsed.color,
-        };
-      } else {
-        return {
-          success: false,
-          error: parsed.error || COLOR_REJECT_REASONS.COLOR_ALREADY_TAKEN,
-          message: parsed.message || 'Colore non disponibile.',
-          availableColors: this.getAvailablePalette(),
-        };
+        return { success: true, color: parsed.color };
       }
+      return {
+        success: false,
+        error: parsed.error || COLOR_REJECT_REASONS.COLOR_ALREADY_TAKEN,
+        message: parsed.message || 'Colore non disponibile.',
+        availableColors: this.getAvailablePalette(),
+      };
     } catch (e: any) {
       return {
         success: false,
@@ -219,8 +216,6 @@ export class WasmColorRegistryAdapter implements IColorRegistry {
   }
 }
 
-// --- P2P Host Session Manager ---
-
 export interface HostPlayerConfig {
   id: string;
   name: string;
@@ -232,10 +227,10 @@ export interface PlayerCombatRecord {
   slot: number;
   name: string;
   color: string;
-  hp: number; // 0 to 100
+  hp: number;
   isAlive: boolean;
-  deathTime: number; // ms timestamp
-  shieldExpiresAt: number; // ms timestamp
+  deathTime: number;
+  shieldExpiresAt: number;
   position: { x: number; y: number; z: number };
   yaw: number;
   pitch: number;
@@ -285,15 +280,11 @@ export class P2PHost {
   public options: P2PHostOptions;
   public lagCompensator: WasmLagCompensator | IWasmLagCompensator | null = null;
 
-  // 1-Byte Slot Management
   public readonly slotManager = new SlotManager();
   public readonly slotToPlayerId = new Map<number, string>();
   public readonly playerIdToSlot = new Map<string, number>();
-
-  // Authoritative player combat records
   public readonly playerRecords = new Map<string, PlayerCombatRecord>();
 
-  // 30 Hz World Snapshot broadcast loop
   private snapshotTickTimer: ReturnType<typeof setInterval> | null = null;
   private snapshotSeq: number = 0;
 
@@ -302,10 +293,8 @@ export class P2PHost {
     this.colorRegistry = options.colorRegistry ?? new LocalColorRegistry();
     this.lagCompensator = options.lagCompensator ?? null;
 
-    // Claim authoritative color for host player
     const desiredColor = options.hostPlayer.color || DEFAULT_NEON_HEX_LIST[0];
     const claim = this.colorRegistry.requestColor(options.hostPlayer.id, desiredColor);
-
     const hostAssignedColor = claim.success && claim.color ? claim.color : DEFAULT_NEON_HEX_LIST[0];
 
     this.hostPlayer = {
@@ -315,7 +304,6 @@ export class P2PHost {
       slot: 0,
     };
 
-    // Initialize slot 0 for host
     this.slotManager.registerHost(this.hostPlayer.id);
     this.slotToPlayerId.set(0, this.hostPlayer.id);
     this.playerIdToSlot.set(this.hostPlayer.id, 0);
@@ -329,7 +317,7 @@ export class P2PHost {
       hp: 100,
       isAlive: true,
       deathTime: 0,
-      shieldExpiresAt: now + 10000, // 10s initial invulnerability shield (R2)
+      shieldExpiresAt: now + 10000,
       position: { x: 0, y: 17.5, z: 0 },
       yaw: 0,
       pitch: 0,
@@ -356,38 +344,18 @@ export class P2PHost {
     return slot;
   }
 
-  /**
-   * Registers a new peer's DataChannel connection and binds listeners.
-   */
   public registerPeer(peerId: string, channel: IDataChannel): void {
     if ('binaryType' in channel) {
-      try {
-        channel.binaryType = 'arraybuffer';
-      } catch {
-        // Mock fallback
-      }
+      try { channel.binaryType = 'arraybuffer'; } catch { /* mock fallback */ }
     }
 
-    channel.onmessage = (ev: { data: any }) => {
-      this.handleChannelMessage(peerId, channel, ev.data);
-    };
-
-    channel.onclose = () => {
-      this.handlePeerDisconnect(peerId);
-    };
-
-    channel.onerror = (err: any) => {
-      this.options.onError?.(new Error(`Peer ${peerId} error: ${err}`));
-    };
+    channel.onmessage = (ev: { data: any }) => this.handleChannelMessage(peerId, channel, ev.data);
+    channel.onclose = () => this.handlePeerDisconnect(peerId);
+    channel.onerror = (err: any) => this.options.onError?.(new Error(`Peer ${peerId} error: ${err}`));
   }
 
-  /**
-   * Directly processes an incoming network message (text or binary) from a peer.
-   */
   public handleChannelMessage(peerId: string, channel: IDataChannel, rawData: unknown): void {
-    if (isBinaryMessage(rawData)) {
-      this.handleBinaryChannelMessage(peerId, channel, toArrayBuffer(rawData));
-    }
+    if (isBinaryMessage(rawData)) this.handleBinaryChannelMessage(peerId, channel, toArrayBuffer(rawData));
   }
 
   private handleBinaryChannelMessage(peerId: string, channel: IDataChannel, buffer: ArrayBuffer): void {
@@ -398,41 +366,30 @@ export class P2PHost {
       const msg = decodeLobbyMessage(buffer);
       if (!msg) return;
       switch (msg.type) {
-        case 'JOIN_REQUEST': {
-          this.processJoinRequest(channel, msg as any);
-          break;
-        }
-        case 'COLOR_REQUEST': {
-          this.processColorChangeRequest(channel, msg as any);
-          break;
-        }
+        case 'JOIN_REQUEST': this.processJoinRequest(channel, msg as any); break;
+        case 'COLOR_REQUEST': this.processColorChangeRequest(channel, msg as any); break;
       }
       return;
     }
 
     switch (opcode) {
-      case PACKET_TYPE.CLIENT_STATE: { // 0x01
+      case PACKET_TYPE.CLIENT_STATE: {
         const state = decodeClientState(buffer);
         if (state) {
           const expectedSlot = this.playerIdToSlot.get(peerId);
-          if (expectedSlot !== undefined && state.slot === expectedSlot) {
-            this.processClientState(peerId, state);
-          }
+          if (expectedSlot !== undefined && state.slot === expectedSlot) this.processClientState(peerId, state);
         }
         break;
       }
-      case PACKET_TYPE.FIRE_HITSCAN: { // 0x03
+      case PACKET_TYPE.FIRE_HITSCAN: {
         const shot = decodeFireHitscan(buffer);
         if (shot) {
           const expectedSlot = this.playerIdToSlot.get(peerId);
-          if (expectedSlot !== undefined && shot.shooterSlot === expectedSlot) {
-            this.processFireHitscan(peerId, shot);
-          }
+          if (expectedSlot !== undefined && shot.shooterSlot === expectedSlot) this.processFireHitscan(peerId, shot);
         }
         break;
       }
-      default:
-        break;
+      default: break;
     }
   }
 
@@ -440,11 +397,8 @@ export class P2PHost {
     const record = this.playerRecords.get(peerId);
     if (!record || !record.isAlive) return;
 
-    // Sequence wrap & drop protection
     const seqDiff = (state.seq - record.lastClientSeq) & 0xffff;
-    if (seqDiff > 32768 && record.lastClientSeq !== 0) {
-      return; // Stale or dropped packet
-    }
+    if (seqDiff > 32768 && record.lastClientSeq !== 0) return;
 
     record.position = { x: state.x, y: state.y, z: state.z };
     record.yaw = state.yaw;
@@ -453,37 +407,39 @@ export class P2PHost {
     record.lastClientSeq = state.seq;
     record.lastClientTimestamp = state.timestamp;
 
-    // Feed position into Rust Lag Compensation Engine if available
     const now = performance.now();
     if (this.lagCompensator) {
-      this.lagCompensator.record_player_position(
-        record.slot,
-        now,
-        state.x,
-        state.y,
-        state.z,
-        0.45, // cylinder radius 0.45m
-        2.0   // cylinder height 2.0m
-      );
+      this.lagCompensator.record_player_position(record.slot, now, state.x, state.y, state.z, 0.45, 2.0);
     }
+  }
+
+  private visualMuzzleOrigin(shooter: PlayerCombatRecord): [number, number, number] {
+    const cos = Math.cos(shooter.yaw);
+    const sin = Math.sin(shooter.yaw);
+    return [
+      shooter.position.x + VISUAL_MUZZLE_LOCAL_X * cos + VISUAL_MUZZLE_LOCAL_Z * sin,
+      shooter.position.y + VISUAL_MUZZLE_LOCAL_Y,
+      shooter.position.z - VISUAL_MUZZLE_LOCAL_X * sin + VISUAL_MUZZLE_LOCAL_Z * cos,
+    ];
   }
 
   private processFireHitscan(shooterId: string, shot: FireHitscanData): void {
     const shooter = this.playerRecords.get(shooterId);
     if (!shooter || !shooter.isAlive) return;
 
-    // 1. Relay binary shot tracer to other peers
+    // Relay only the visual tracer with the third-person weapon muzzle as start.
+    // Authoritative validation below still uses the original camera/aim ray.
+    const visualOrigin = this.visualMuzzleOrigin(shooter);
     const relayBuffer = encodeFireHitscan(
       shot.shooterSlot,
       shot.weaponType,
       shot.shotSeq,
       shot.clientTimestamp,
-      shot.origin,
+      visualOrigin,
       shot.direction
     );
     this.broadcastBinary(relayBuffer, shooterId);
 
-    // 2. Authoritative Hit Validation across all potential targets
     const now = performance.now();
     for (const victim of this.playerRecords.values()) {
       if (victim.id === shooterId || !victim.isAlive) continue;
@@ -494,26 +450,25 @@ export class P2PHost {
       let hitX = 0, hitY = 0, hitZ = 0;
 
       if (this.lagCompensator) {
-        // Rust temporal rewind hit validation
         try {
           const resultJson = this.lagCompensator.validate_rewind_hitscan(
             shooter.slot,
             victim.slot,
             shot.weaponType,
             shot.clientTimestamp,
-            1000.0, // max unlag rewind 1000ms
+            1000.0,
             shot.originX,
             shot.originY,
             shot.originZ,
             shot.dirX,
             shot.dirY,
             shot.dirZ,
-            1000.0  // max range
+            1000.0
           );
           const res = JSON.parse(resultJson);
           if (res.hit) {
             hitConfirmed = true;
-            damage = res.damage ?? 34;
+            damage = res.damage ?? (FALLBACK_WEAPON_DAMAGE[shot.weaponType]?.body ?? 18);
             isHeadshot = !!res.is_headshot;
             const dist = res.distance ?? 10.0;
             hitX = shot.originX + shot.dirX * dist;
@@ -521,7 +476,6 @@ export class P2PHost {
             hitZ = shot.originZ + shot.dirZ * dist;
           }
         } catch {
-          // Fallback to geometric check
           const fallback = this.checkRayCylinderHit(shot, victim.position);
           if (fallback.hit) {
             hitConfirmed = true;
@@ -533,7 +487,6 @@ export class P2PHost {
           }
         }
       } else {
-        // Geometric ray-cylinder fallback
         const fallback = this.checkRayCylinderHit(shot, victim.position);
         if (fallback.hit) {
           hitConfirmed = true;
@@ -549,20 +502,18 @@ export class P2PHost {
         let hitFlags = 0;
         if (isHeadshot) hitFlags |= HIT_FLAGS.HEADSHOT;
 
-        // R2: Check 10s Invulnerability Shield
         if (victim.shieldExpiresAt > now) {
           damage = 0;
-          hitFlags |= HIT_FLAGS.SHIELD_BLOCKED; // Shield blocked!
+          hitFlags |= HIT_FLAGS.SHIELD_BLOCKED;
         } else {
           victim.hp = Math.max(0, victim.hp - damage);
           if (victim.hp === 0) {
             victim.isAlive = false;
             victim.deathTime = now;
-            hitFlags |= HIT_FLAGS.FATAL_KILL; // Fatal kill
+            hitFlags |= HIT_FLAGS.FATAL_KILL;
           }
         }
 
-        // Broadcast binary HIT_CONFIRMED (16 bytes)
         const hitBuffer = encodeHitConfirmed(
           victim.slot,
           shooter.slot,
@@ -591,14 +542,11 @@ export class P2PHost {
         };
 
         this.options.onHitConfirmed?.(eventData);
-        break; // Hitscan ray stops at first victim
+        break;
       }
     }
   }
 
-  /**
-   * Authoritative hitscan fire entry point for host or programmatic invocations.
-   */
   public fireHitscan(
     shooterId: string,
     weaponType: number,
@@ -626,9 +574,6 @@ export class P2PHost {
     this.processFireHitscan(shooterId, shotData);
   }
 
-  /**
-   * Applies damage to an authoritative player record with invulnerability shield enforcement.
-   */
   public dealDamage(
     targetId: string,
     damage: number
@@ -650,9 +595,6 @@ export class P2PHost {
     return { effectiveDamage, newHp: record.hp, isFatal, wasShielded };
   }
 
-  /**
-   * Respawns a player authoritatively at the central platform with 10s invulnerability shield.
-   */
   public respawnPlayer(playerId: string): boolean {
     const record = this.playerRecords.get(playerId);
     if (!record) return false;
@@ -667,17 +609,12 @@ export class P2PHost {
     return true;
   }
 
-  /**
-   * Geometric ray-cylinder intersection calculation for fallback hit validation.
-   */
   private checkRayCylinderHit(
     shot: FireHitscanData,
     targetPos: { x: number; y: number; z: number }
   ): { hit: boolean; damage: number; isHeadshot: boolean; hitX: number; hitY: number; hitZ: number } {
     const radius = 0.45;
     const height = 2.0;
-
-    // Vector from ray origin to cylinder center in horizontal XZ plane
     const dx = targetPos.x - shot.originX;
     const dz = targetPos.z - shot.originZ;
 
@@ -686,7 +623,6 @@ export class P2PHost {
       return { hit: false, damage: 0, isHeadshot: false, hitX: 0, hitY: 0, hitZ: 0 };
     }
 
-    // Projection along ray direction
     const tProj = (dx * shot.dirX + dz * shot.dirZ) / dirLenSq;
     if (tProj < 0) {
       return { hit: false, damage: 0, isHeadshot: false, hitX: 0, hitY: 0, hitZ: 0 };
@@ -698,11 +634,12 @@ export class P2PHost {
 
     if (distSq <= radius * radius) {
       const hitY = shot.originY + shot.dirY * tProj;
-      if (hitY >= targetPos.y && hitY <= targetPos.y + height) {
-        const isHeadshot = hitY >= targetPos.y + height * 0.8;
-        const weaponBaseDamages: Record<number, number> = { 0: 34, 1: 90, 2: 80, 3: 20, 4: 50 };
-        let baseDmg = weaponBaseDamages[shot.weaponType] ?? 34;
-        if (isHeadshot) baseDmg *= 2.0;
+      const baseY = targetPos.y - height;
+      const topY = targetPos.y;
+      if (hitY >= baseY && hitY <= topY) {
+        const isHeadshot = hitY >= baseY + height * 0.78;
+        const damageConfig = FALLBACK_WEAPON_DAMAGE[shot.weaponType] ?? FALLBACK_WEAPON_DAMAGE[0];
+        const baseDmg = isHeadshot ? damageConfig.head : damageConfig.body;
 
         return {
           hit: true,
@@ -718,14 +655,10 @@ export class P2PHost {
     return { hit: false, damage: 0, isHeadshot: false, hitX: 0, hitY: 0, hitZ: 0 };
   }
 
-  // --- 30 Hz World Snapshot Broadcast Tick ---
-
   public startSnapshotTick(tickRateHz: number = 30): void {
     this.stopSnapshotTick();
     const intervalMs = Math.max(1, Math.round(1000 / tickRateHz));
-    this.snapshotTickTimer = setInterval(() => {
-      this.tickSnapshot();
-    }, intervalMs);
+    this.snapshotTickTimer = setInterval(() => this.tickSnapshot(), intervalMs);
   }
 
   public stopSnapshotTick(): void {
@@ -738,26 +671,22 @@ export class P2PHost {
   public tickSnapshot(nowOverride?: number): void {
     const now = nowOverride ?? performance.now();
 
-    // 1. Process 5.0s Death Cycle & Respawn (R1, R2)
     for (const record of this.playerRecords.values()) {
       if (!record.isAlive && record.deathTime !== 0 && now - record.deathTime >= 5000) {
-        // 5s death phase expired: RESPAWN AT CENTER PLATFORM
         record.isAlive = true;
         record.hp = 100;
         record.deathTime = 0;
         record.position = { x: 0, y: 17.5, z: 0 };
-        record.shieldExpiresAt = now + 10000; // 10s immunity shield on respawn
+        record.shieldExpiresAt = now + 10000;
         this.options.onPlayerRespawned?.(record.id);
       }
 
-      // Update bitfield flags
       let flags = 0;
       if (record.isAlive) flags |= STATE_FLAGS.ALIVE;
       if (record.shieldExpiresAt > now) flags |= STATE_FLAGS.SHIELD_ACTIVE;
       record.stateFlags = flags;
     }
 
-    // 2. Build WorldSnapshot binary payload
     const players: PlayerSnapshotEntry[] = Array.from(this.playerRecords.values()).map((p) => ({
       slot: p.slot,
       hp: Math.round(p.hp),
@@ -788,7 +717,6 @@ export class P2PHost {
     }
   }
 
-  // Lifecycle updates for host player (when Host is a local player in main.ts)
   public updateHostPlayerState(state: { position: { x: number; y: number; z: number }; yaw: number; pitch: number; activeWeapon?: number }): void {
     const record = this.playerRecords.get(this.hostPlayer.id);
     if (!record || !record.isAlive) return;
@@ -800,42 +728,27 @@ export class P2PHost {
 
     const now = performance.now();
     if (this.lagCompensator) {
-      this.lagCompensator.record_player_position(
-        0,
-        now,
-        state.position.x,
-        state.position.y,
-        state.position.z,
-        0.45,
-        2.0
-      );
+      this.lagCompensator.record_player_position(0, now, state.position.x, state.position.y, state.position.z, 0.45, 2.0);
     }
   }
 
-  /**
-   * Handles a client's JOIN_REQUEST with authoritative color validation and slot assignment.
-   */
   private processJoinRequest(
     channel: IDataChannel,
     msg: { type: 'JOIN_REQUEST'; playerId: string; playerName: string; proposedColor: string }
   ): void {
     const { playerId, playerName, proposedColor } = msg;
-
-    // Authoritative check against color registry
     const validation = this.colorRegistry.requestColor(playerId, proposedColor);
 
     if (!validation.success) {
-      const rejectedMsg = encodeLobbyColorRejected(
+      channel.send(encodeLobbyColorRejected(
         playerId,
         proposedColor,
         validation.error || COLOR_REJECT_REASONS.COLOR_ALREADY_TAKEN,
         validation.availableColors || this.colorRegistry.getAvailablePalette()
-      );
-      channel.send(rejectedMsg);
+      ));
       return;
     }
 
-    // Allocate 1-byte slot for joining client
     const assignedSlot = this.allocateSlot(playerId);
     const assignedColor = validation.color!;
     const newPlayerInfo: SessionPlayerInfo = {
@@ -845,11 +758,7 @@ export class P2PHost {
       slot: assignedSlot,
     };
 
-    // Store peer connection and player info
-    this.peers.set(playerId, {
-      channel,
-      info: newPlayerInfo,
-    });
+    this.peers.set(playerId, { channel, info: newPlayerInfo });
 
     const now = performance.now();
     this.playerRecords.set(playerId, {
@@ -860,7 +769,7 @@ export class P2PHost {
       hp: 100,
       isAlive: true,
       deathTime: 0,
-      shieldExpiresAt: now + 10000, // 10s initial spawn immunity
+      shieldExpiresAt: now + 10000,
       position: { x: 0, y: 17.5, z: 0 },
       yaw: 0,
       pitch: 0,
@@ -870,26 +779,12 @@ export class P2PHost {
       lastClientTimestamp: 0,
     });
 
-    // 1. Reply to joining client with full session player list
     const sessionPlayers = this.getAllSessionPlayers();
-    const acceptedMsgBuf = encodeLobbyJoinAccepted(
-      playerId,
-      assignedColor,
-      assignedSlot,
-      sessionPlayers
-    );
-    channel.send(acceptedMsgBuf);
-
-    // 2. Broadcast PLAYER_JOINED to all other active peers
-    const joinedBroadcastBuf = encodeLobbyPlayerJoined(newPlayerInfo);
-    this.broadcastBinary(joinedBroadcastBuf, playerId);
-
+    channel.send(encodeLobbyJoinAccepted(playerId, assignedColor, assignedSlot, sessionPlayers));
+    this.broadcastBinary(encodeLobbyPlayerJoined(newPlayerInfo), playerId);
     this.options.onPlayerJoined?.(newPlayerInfo);
   }
 
-  /**
-   * Handles dynamic color change request from already connected peer.
-   */
   private processColorChangeRequest(
     channel: IDataChannel,
     msg: { type: 'COLOR_REQUEST'; playerId: string; requestedColor: string }
@@ -900,29 +795,21 @@ export class P2PHost {
 
     const validation = this.colorRegistry.requestColor(playerId, requestedColor);
     if (!validation.success) {
-      const rejectedMsg = encodeLobbyColorRejected(
+      channel.send(encodeLobbyColorRejected(
         playerId,
         requestedColor,
         validation.error || COLOR_REJECT_REASONS.COLOR_ALREADY_TAKEN,
         validation.availableColors || this.colorRegistry.getAvailablePalette()
-      );
-      channel.send(rejectedMsg);
+      ));
       return;
     }
 
     peer.info.color = validation.color!;
     const record = this.playerRecords.get(playerId);
-    if (record) {
-      record.color = validation.color!;
-    }
-
-    const changedMsgBuf = encodeLobbyColorChanged(playerId, validation.color!);
-    this.broadcastBinary(changedMsgBuf);
+    if (record) record.color = validation.color!;
+    this.broadcastBinary(encodeLobbyColorChanged(playerId, validation.color!));
   }
 
-  /**
-   * Handles peer disconnection: releases slot, assigned color, and notifies peers.
-   */
   public handlePeerDisconnect(peerId: string): void {
     const peer = this.peers.get(peerId);
     if (!peer) return;
@@ -936,47 +823,25 @@ export class P2PHost {
     }
 
     const freedColor = this.colorRegistry.releasePlayer(peerId) || peer.info.color;
-
-    // Broadcast to remaining peers
-    const leftMsgBuf = encodeLobbyPlayerLeft(peerId, freedColor);
-    this.broadcastBinary(leftMsgBuf);
-
+    this.broadcastBinary(encodeLobbyPlayerLeft(peerId, freedColor));
     this.options.onPlayerLeft?.(peerId, freedColor);
   }
 
-  /**
-   * Broadcasts a network message (JSON) to all connected peers, optionally excluding one sender.
-   */
-  /**
-   * Returns list of all players currently in the session (host + active clients).
-   */
   public getAllSessionPlayers(): SessionPlayerInfo[] {
-    const list: SessionPlayerInfo[] = [
-      {
-        id: this.hostPlayer.id,
-        name: this.hostPlayer.name,
-        color: this.hostPlayer.color,
-        slot: 0,
-      },
-    ];
-
-    for (const peer of this.peers.values()) {
-      list.push({ ...peer.info });
-    }
-
+    const list: SessionPlayerInfo[] = [{
+      id: this.hostPlayer.id,
+      name: this.hostPlayer.name,
+      color: this.hostPlayer.color,
+      slot: 0,
+    }];
+    for (const peer of this.peers.values()) list.push({ ...peer.info });
     return list;
   }
 
-  /**
-   * Get connected peer count (excluding host).
-   */
   public getClientCount(): number {
     return this.peers.size;
   }
 
-  /**
-   * Check if a specific player ID is currently in the session.
-   */
   public hasPlayer(playerId: string): boolean {
     return playerId === this.hostPlayer.id || this.peers.has(playerId);
   }
