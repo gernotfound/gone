@@ -1,6 +1,7 @@
 import './style.css';
 import { bootstrap } from './gameplay/engine.ts';
 import { startAdvancedWeaponController } from './gameplay/advancedWeaponController.ts';
+import { startDynamicPrecisionReticle } from './gameplay/dynamicPrecisionReticle.ts';
 import { startSpawnController } from './gameplay/spawnController.ts';
 import { startKillAmmoReset } from './gameplay/killAmmoReset.ts';
 import { startHostRemoteSync } from './net/hostRemoteSync.ts';
@@ -20,6 +21,7 @@ startNaturalSunRays();
 
 bootstrap();
 startAdvancedWeaponController();
+startDynamicPrecisionReticle();
 startLobbyPresenceSync();
 startPvpTimingTuning();
 startHostRemoteSync();
