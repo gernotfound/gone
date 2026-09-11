@@ -1,3 +1,24 @@
+const playerDisplayNameInput = document.getElementById('player-username') as HTMLInputElement;
+
+// This field is a public in-game nickname, never an account credential.
+// Classify it explicitly so Safari/iCloud Passwords and browser extensions do
+// not mistake it for a login username. Safari may ignore autocomplete="off"
+// for fields it heuristically considers credentials, so use the semantic
+// "nickname" token and remove other credential-like metadata instead.
+playerDisplayNameInput.autocomplete = 'nickname';
+playerDisplayNameInput.name = 'gone-player-display-name';
+playerDisplayNameInput.placeholder = 'Nome nel gioco...';
+playerDisplayNameInput.inputMode = 'text';
+playerDisplayNameInput.autocapitalize = 'words';
+playerDisplayNameInput.spellcheck = false;
+playerDisplayNameInput.setAttribute('autocorrect', 'off');
+playerDisplayNameInput.setAttribute('aria-autocomplete', 'none');
+// Best-effort hints for common third-party password managers. Harmless for
+// native browsers and useful on systems where an extension owns AutoFill.
+playerDisplayNameInput.setAttribute('data-form-type', 'other');
+playerDisplayNameInput.setAttribute('data-lpignore', 'true');
+playerDisplayNameInput.setAttribute('data-1p-ignore', 'true');
+
 export const DOM = {
     bgMusic: document.getElementById('bg-music') as HTMLAudioElement,
     mainMenu: document.getElementById('main-menu') as HTMLElement,
@@ -12,7 +33,7 @@ export const DOM = {
     btnBack: document.getElementById('btn-back') as HTMLButtonElement,
     btnMultiplayer: document.getElementById('btn-multiplayer') as HTMLButtonElement,
     multiplayerLobby: document.getElementById('multiplayer-lobby') as HTMLElement,
-    playerUsernameInput: document.getElementById('player-username') as HTMLInputElement,
+    playerUsernameInput: playerDisplayNameInput,
     colorPickerContainer: document.getElementById('color-picker-container') as HTMLElement,
     inviteLinkContainer: document.getElementById('invite-link-container') as HTMLElement,
     inviteLinkInput: document.getElementById('invite-link-input') as HTMLInputElement,
