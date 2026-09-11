@@ -1,11 +1,10 @@
 const playerDisplayNameInput = document.getElementById('player-username') as HTMLInputElement;
 
 // This field is a public in-game nickname, never an account credential.
-// Classify it explicitly so Safari/iCloud Passwords and browser extensions do
-// not mistake it for a login username. Safari may ignore autocomplete="off"
-// for fields it heuristically considers credentials, so use the semantic
-// "nickname" token and remove other credential-like metadata instead.
-playerDisplayNameInput.autocomplete = 'nickname';
+// Use setAttribute rather than the DOM `autocomplete` property because the
+// TypeScript lib.dom AutoFill union used by Vercel does not currently include
+// the valid HTML "nickname" token.
+playerDisplayNameInput.setAttribute('autocomplete', 'nickname');
 playerDisplayNameInput.name = 'gone-player-display-name';
 playerDisplayNameInput.placeholder = 'Nome nel gioco...';
 playerDisplayNameInput.inputMode = 'text';
