@@ -25,11 +25,14 @@ type Snapshot = {
   height: number;
 };
 
+// Keep the browser authoritative fallback aligned with game-core/src/weapons.rs.
+// The previous rescue table was intentionally aggressive (AR 34, SMG 20) and
+// produced 3-5 hit kills in real multiplayer, far below the intended arena TTK.
 const WEAPON = {
-  0: { body: 34, head: 51, range: 120 },
-  1: { body: 90, head: 140, range: 400 },
-  2: { body: 80, head: 100, range: 24 },
-  3: { body: 20, head: 30, range: 75 },
+  0: { body: 18, head: 27, range: 150 },
+  1: { body: 70, head: 140, range: 500 },
+  2: { body: 64, head: 96, range: 40 },
+  3: { body: 12, head: 18, range: 80 },
   4: { body: 50, head: 50, range: 2.5 },
 } as const;
 

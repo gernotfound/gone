@@ -19,26 +19,26 @@ export class SceneManager {
     public init() {
         if (this.isInitialized) return;
         this.scene = new THREE.Scene();
-        
+
         const fogColor = 0x1e293b;
         this.scene.background = new THREE.Color(fogColor);
-        
+
         const fogNear = CHUNK_SIZE * (CHUNK_RADIUS - 1.6);
         const fogFar = CHUNK_SIZE * (CHUNK_RADIUS - 0.7);
         this.scene.fog = new THREE.Fog(fogColor, fogNear, fogFar);
 
-        this.rayGeo = new THREE.CylinderGeometry(0, 45, 800, 16, 1, true);
+        this.rayGeo = new THREE.CylinderGeometry(0, 45, 800, 12, 1, true);
         this.rayGeo.translate(0, 400, 0);
         this.rayMat = new THREE.MeshBasicMaterial({
             color: 0xfef08a,
             transparent: true,
-            opacity: 0.04,
+            opacity: 0.03,
             blending: THREE.AdditiveBlending,
             depthWrite: false,
             side: THREE.DoubleSide,
             fog: true
         });
-        
+
         this.rayMat.onBeforeCompile = (shader) => {
             shader.fragmentShader = shader.fragmentShader.replace(
                 `#include <fog_fragment>`,
@@ -57,28 +57,26 @@ export class SceneManager {
 
         this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.01, 3000);
 
-        this.renderer = new THREE.WebGLRenderer({ canvas: DOM.gameCanvas, antialias: true });
+        // Prioritize stable frame pacing over expensive desktop-style rendering.
+        // At devicePixelRatio 2 the old path rendered 4x as many pixels and also
+        // performed a full 2048² shadow pass, which was a major cost on laptops.
+        this.renderer = new THREE.WebGLRenderer({
+            canvas: DOM.gameCanvas,
+            antialias: false,
+            alpha: false,
+            powerPreference: 'high-performance'
+        });
         this.renderer.setSize(window.innerWidth, window.innerHeight);
-        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-        this.renderer.shadowMap.enabled = true;
-        this.renderer.shadowMap.type = THREE.PCFShadowMap;
+        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.25));
+        this.renderer.shadowMap.enabled = false;
         this.renderer.outputColorSpace = THREE.SRGBColorSpace;
-        
+
         const hemiLight = new THREE.HemisphereLight(0x0f172a, 0x020617, 1.5);
         this.scene.add(hemiLight);
 
         const sunLight = new THREE.DirectionalLight(0x38bdf8, 1.2);
         sunLight.position.set(200, 300, -100);
-        sunLight.castShadow = true;
-        sunLight.shadow.mapSize.width = 2048;
-        sunLight.shadow.mapSize.height = 2048;
-        sunLight.shadow.camera.near = 10;
-        sunLight.shadow.camera.far = 1000;
-        const d = 500;
-        sunLight.shadow.camera.left = -d;
-        sunLight.shadow.camera.right = d;
-        sunLight.shadow.camera.top = d;
-        sunLight.shadow.camera.bottom = -d;
+        sunLight.castShadow = false;
         this.scene.add(sunLight);
 
         this.terrainMaterial = new THREE.MeshStandardMaterial({
@@ -90,11 +88,11 @@ export class SceneManager {
 
         this.rockGeo = new THREE.DodecahedronGeometry(1, 0);
         this.rockMat = new THREE.MeshStandardMaterial({
-            color: 0x1e293b, 
+            color: 0x1e293b,
             roughness: 0.9,
             metalness: 0.1
         });
-        
+
         this.isInitialized = true;
     }
 
@@ -107,13 +105,13 @@ export class SceneManager {
 
     public dispose() {
         if (!this.isInitialized) return;
-        
+
         this.terrainMaterial.dispose();
         this.rockGeo.dispose();
         this.rockMat.dispose();
         this.rayGeo.dispose();
         this.rayMat.dispose();
-        
+
         this.renderer.dispose();
         this.isInitialized = false;
     }

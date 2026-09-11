@@ -8,6 +8,7 @@
  * - Dynamic health color gradient: Emerald-500 to Cyan-400 (>30% HP), pulsing Red-600/Rose-500 (<=30% HP).
  * - Numeric HP readout ("100 HP").
  * - Neon Cyan (#00F0FF) Shield Badge with animated icon and active 10s countdown.
+ * - Damage feedback vignette on HP loss.
  * - Death overlay with crimson background blur, "SEI STATO ELIMINATO", and 5-second countdown.
  * - Graceful headless/DOM fallback for automated testing environments.
  */
@@ -29,6 +30,8 @@ export class HealthHUDController {
   private shieldTimerEl: HTMLElement | null = null;
   private deathOverlayEl: HTMLElement | null = null;
   private deathCountdownEl: HTMLElement | null = null;
+  private damageVignetteEl: HTMLDivElement | null = null;
+  private damageFlashSerial = 0;
 
   public currentHp: number = 100;
   public maxHp: number = 100;
@@ -38,9 +41,7 @@ export class HealthHUDController {
   public deathCountdownSeconds: number = 0;
 
   constructor(elements?: HealthHudElements) {
-    if (elements) {
-      this.bindElements(elements);
-    }
+    if (elements) this.bindElements(elements);
   }
 
   public bindElements(elements: HealthHudElements): void {
@@ -61,19 +62,78 @@ export class HealthHUDController {
     this.shieldTimerEl = document.getElementById('hud-shield-timer');
     this.deathOverlayEl = document.getElementById('death-overlay');
     this.deathCountdownEl = document.getElementById('death-countdown');
+    this.ensureDamageVignette();
 
     this.updateHealth(this.currentHp, this.maxHp);
     this.updateShield(0);
     this.hideDeathOverlay();
   }
 
+  private ensureDamageVignette(): void {
+    if (typeof document === 'undefined' || !document.body) return;
+    const existing = document.getElementById('damage-vignette');
+    if (typeof HTMLDivElement !== 'undefined' && existing instanceof HTMLDivElement) {
+      this.damageVignetteEl = existing;
+      return;
+    }
+
+    const overlay = document.createElement('div');
+    overlay.id = 'damage-vignette';
+    overlay.setAttribute('aria-hidden', 'true');
+    Object.assign(overlay.style, {
+      position: 'fixed',
+      inset: '0',
+      zIndex: '45',
+      pointerEvents: 'none',
+      opacity: '0',
+      transform: 'scale(1)',
+      background: 'radial-gradient(circle at center, rgba(255,255,255,0) 28%, rgba(239,68,68,0.05) 48%, rgba(220,38,38,0.32) 73%, rgba(69,10,10,0.84) 100%)',
+      boxShadow: 'inset 0 0 110px rgba(239,68,68,0.72)',
+      mixBlendMode: 'screen',
+      willChange: 'opacity, transform',
+    });
+    document.body.appendChild(overlay);
+    this.damageVignetteEl = overlay;
+  }
+
+  /** Brief red edge flash when authoritative HP drops. */
+  public showDamageFeedback(damage: number): void {
+    if (!this.damageVignetteEl) this.ensureDamageVignette();
+    const overlay = this.damageVignetteEl;
+    if (!overlay) return;
+
+    const serial = ++this.damageFlashSerial;
+    const normalized = Math.max(0, Math.min(1, damage / Math.max(1, this.maxHp)));
+    const peakOpacity = Math.min(0.9, 0.36 + normalized * 1.4);
+    const peakScale = 1 + Math.min(0.018, normalized * 0.035);
+
+    overlay.style.transition = 'none';
+    overlay.style.opacity = String(peakOpacity);
+    overlay.style.transform = `scale(${peakScale})`;
+
+    const fade = () => {
+      if (serial !== this.damageFlashSerial) return;
+      overlay.style.transition = 'opacity 320ms cubic-bezier(.15,.7,.2,1), transform 320ms ease-out';
+      overlay.style.opacity = '0';
+      overlay.style.transform = 'scale(1)';
+    };
+
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(fade);
+    else fade();
+  }
+
   /**
    * Updates health bar fill percentage, numeric HP readout, and critical pulse styling.
    */
   public updateHealth(hp: number, maxHp: number = 100): void {
+    const previousHp = this.currentHp;
     this.maxHp = Math.max(1, maxHp);
     this.currentHp = Math.max(0, Math.min(this.maxHp, hp));
     const pct = Math.max(0, Math.min(100, (this.currentHp / this.maxHp) * 100));
+
+    if (this.currentHp < previousHp && previousHp > 0) {
+      this.showDamageFeedback(previousHp - this.currentHp);
+    }
 
     if (this.hpValEl) {
       this.hpValEl.textContent = `${Math.ceil(this.currentHp)} HP`;
@@ -98,9 +158,7 @@ export class HealthHUDController {
     }
   }
 
-  /**
-   * Shows or hides the 10-second neon cyan invulnerability shield badge above the health bar.
-   */
+  /** Shows or hides the neon cyan invulnerability shield badge. */
   public updateShield(remainingSeconds: number): void {
     this.shieldRemainingSeconds = Math.max(0, remainingSeconds);
     this.isShieldActive = this.shieldRemainingSeconds > 0;
@@ -111,7 +169,8 @@ export class HealthHUDController {
       this.shieldBadgeEl.classList.remove('hidden');
       this.shieldBadgeEl.classList.add('flex');
       if (this.shieldTimerEl) {
-        this.shieldTimerEl.textContent = `${this.shieldRemainingSeconds.toFixed(1)}s`;
+        const nextText = `${this.shieldRemainingSeconds.toFixed(1)}s`;
+        if (this.shieldTimerEl.textContent !== nextText) this.shieldTimerEl.textContent = nextText;
       }
     } else {
       this.shieldBadgeEl.classList.add('hidden');
@@ -119,9 +178,6 @@ export class HealthHUDController {
     }
   }
 
-  /**
-   * Shows the 5-second death overlay with active countdown timer.
-   */
   public showDeathOverlay(countdownSeconds: number): void {
     this.isDeathOverlayVisible = true;
     this.deathCountdownSeconds = Math.max(0, countdownSeconds);
@@ -135,9 +191,6 @@ export class HealthHUDController {
     }
   }
 
-  /**
-   * Updates only the countdown numeric display during death phase.
-   */
   public updateDeathCountdown(countdownSeconds: number): void {
     this.deathCountdownSeconds = Math.max(0, countdownSeconds);
     if (this.deathCountdownEl) {
@@ -145,9 +198,6 @@ export class HealthHUDController {
     }
   }
 
-  /**
-   * Hides the death overlay on respawn.
-   */
   public hideDeathOverlay(): void {
     this.isDeathOverlayVisible = false;
     this.deathCountdownSeconds = 0;
@@ -158,9 +208,6 @@ export class HealthHUDController {
     }
   }
 
-  /**
-   * Resets the HUD to full health, inactive shield, and hidden death overlay.
-   */
   public reset(): void {
     this.updateHealth(100, 100);
     this.updateShield(0);
