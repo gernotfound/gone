@@ -13,6 +13,7 @@ import { startTracerPresentationFix } from './gameplay/tracerPresentationFix.ts'
 import { startLiveMapOverlay } from './gameplay/liveMapOverlay.ts';
 import { startMusicSourceGain } from './audio/musicSourceGain.ts';
 import { startNaturalSunRays } from './world/naturalSunRays.ts';
+import { startPerformancePack } from './performance/performancePack.ts';
 
 // Install lightweight runtime patches before any game/session objects are created.
 startNetworkStabilityFix();
@@ -30,3 +31,4 @@ startKillAmmoReset();
 startSpawnController();
 startLiveMapOverlay();
 startMusicSourceGain();
+startPerformancePack();
