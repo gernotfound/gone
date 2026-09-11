@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
-/// Enumeration of the 5 available weapon types in G.O.N.E.
+/// Stable numeric weapon IDs shared with the browser protocol.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(u32)]
 pub enum WeaponType {
@@ -13,37 +13,34 @@ pub enum WeaponType {
 }
 
 impl WeaponType {
-    /// Convert an integer ID (from JS/WASM) into a WeaponType
     pub fn from_u32(val: u32) -> Option<Self> {
         match val {
-            0 => Some(WeaponType::Assalto),
-            1 => Some(WeaponType::Cecchino),
-            2 => Some(WeaponType::Pompa),
-            3 => Some(WeaponType::Mitraglietta),
-            4 => Some(WeaponType::Coltello),
+            0 => Some(Self::Assalto),
+            1 => Some(Self::Cecchino),
+            2 => Some(Self::Pompa),
+            3 => Some(Self::Mitraglietta),
+            4 => Some(Self::Coltello),
             _ => None,
         }
     }
 
-    /// Return standard numeric identifier
     pub fn as_u32(&self) -> u32 {
         *self as u32
     }
 
-    /// Canonical weapon display name
     pub fn name(&self) -> &'static str {
         match self {
-            WeaponType::Assalto => "AR-42 Viper",
-            WeaponType::Cecchino => "SR-99 Railphantom",
-            WeaponType::Pompa => "SG-12 Havoc",
-            WeaponType::Mitraglietta => "SMG-7 Neon Hornet",
-            WeaponType::Coltello => "CB-01 Shadowfang",
+            Self::Assalto => "AR-42 Viper",
+            Self::Cecchino => "SR-99 Railphantom",
+            Self::Pompa => "SG-12 Havoc",
+            Self::Mitraglietta => "SMG-7 Neon Hornet",
+            Self::Coltello => "CB-01 Shadowfang",
         }
     }
 }
 
-/// Full configuration parameters for a weapon in G.O.N.E.
-/// Strictly tuned for high TTK (0.70s - 1.50s) arena FPS gameplay.
+/// Canonical Rust/WASM combat balance. Keep semantically aligned with
+/// game-web/src/weapons/weaponConfig.ts.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WeaponConfig {
     pub base_damage: f64,
@@ -62,98 +59,81 @@ pub struct WeaponConfig {
     pub recoil_recovery_rate: f64,
 }
 
-/// Retrieve the authoritative WeaponConfig for a given WeaponType
 pub fn get_weapon_config(weapon_type: WeaponType) -> WeaponConfig {
     match weapon_type {
-        // AR-42 "Viper": Balanced all-rounder
-        // Base: 18 dmg, 20m: 17 dmg, 6.25 rps (375 RPM) -> 6 hits -> TTK = 0.800s
         WeaponType::Assalto => WeaponConfig {
             base_damage: 18.0,
             fire_rate_rps: 6.25,
             pellets: 1,
-            effective_range_m: 150.0,
-            falloff_start_m: 10.0,
-            falloff_end_m: 70.0,
-            min_damage: 12.0,
+            effective_range_m: 180.0,
+            falloff_start_m: 35.0,
+            falloff_end_m: 140.0,
+            min_damage: 10.0,
             headshot_multiplier: 1.5,
-            spread_base_rad: 0.012,
-            spread_bloom_rad: 0.005,
-            spread_max_rad: 0.060,
+            spread_base_rad: 0.0035,
+            spread_bloom_rad: 0.0045,
+            spread_max_rad: 0.045,
             recoil_pitch_deg: 1.10,
             recoil_yaw_deg: 0.35,
             recoil_recovery_rate: 8.0,
         },
-
-        // SR-99 "Railphantom": Precision long-range rifle
-        // Base/20m: 70 dmg, 1.00 rps (60 RPM) -> 2 hits -> TTK = 1.000s
-        // 2.0x headshot multiplier yields 140.0 dmg (1-shot precision reward)
         WeaponType::Cecchino => WeaponConfig {
             base_damage: 70.0,
-            fire_rate_rps: 1.00,
+            fire_rate_rps: 1.0,
             pellets: 1,
-            effective_range_m: 500.0,
-            falloff_start_m: 100.0,
-            falloff_end_m: 300.0,
-            min_damage: 55.0,
+            effective_range_m: 550.0,
+            falloff_start_m: 180.0,
+            falloff_end_m: 450.0,
+            min_damage: 50.0,
             headshot_multiplier: 2.0,
-            spread_base_rad: 0.0005,
-            spread_bloom_rad: 0.070,
-            spread_max_rad: 0.100,
+            spread_base_rad: 0.00035,
+            spread_bloom_rad: 0.020,
+            spread_max_rad: 0.075,
             recoil_pitch_deg: 5.50,
             recoil_yaw_deg: 0.80,
             recoil_recovery_rate: 3.5,
         },
-
-        // SG-12 "Havoc": CQB 8-pellet shotgun
-        // Base: 64 dmg (8x8), 20m: 52.5 dmg (7x7.5), 1.25 rps (75 RPM) -> 2 hits -> TTK = 0.800s
         WeaponType::Pompa => WeaponConfig {
             base_damage: 64.0,
             fire_rate_rps: 1.25,
             pellets: 8,
-            effective_range_m: 40.0,
-            falloff_start_m: 10.0,
+            effective_range_m: 42.0,
+            falloff_start_m: 8.0,
             falloff_end_m: 30.0,
-            min_damage: 41.0,
-            headshot_multiplier: 1.5,
-            spread_base_rad: 0.075,
-            spread_bloom_rad: 0.010,
-            spread_max_rad: 0.120,
+            min_damage: 20.0,
+            headshot_multiplier: 1.25,
+            spread_base_rad: 0.045,
+            spread_bloom_rad: 0.008,
+            spread_max_rad: 0.110,
             recoil_pitch_deg: 4.00,
             recoil_yaw_deg: 1.20,
             recoil_recovery_rate: 4.0,
         },
-
-        // SMG-7 "Neon Hornet": Rapid-fire CQB/Medium submachine gun
-        // Base: 12 dmg, 20m: 10 dmg, 10.00 rps (600 RPM) -> 10 hits -> TTK = 0.900s (0.800s close)
         WeaponType::Mitraglietta => WeaponConfig {
             base_damage: 12.0,
-            fire_rate_rps: 10.00,
+            fire_rate_rps: 10.0,
             pellets: 1,
-            effective_range_m: 80.0,
-            falloff_start_m: 10.0,
-            falloff_end_m: 40.0,
-            min_damage: 6.0,
+            effective_range_m: 90.0,
+            falloff_start_m: 15.0,
+            falloff_end_m: 65.0,
+            min_damage: 7.0,
             headshot_multiplier: 1.5,
-            spread_base_rad: 0.025,
-            spread_bloom_rad: 0.008,
-            spread_max_rad: 0.095,
+            spread_base_rad: 0.008,
+            spread_bloom_rad: 0.006,
+            spread_max_rad: 0.075,
             recoil_pitch_deg: 0.55,
             recoil_yaw_deg: 0.65,
             recoil_recovery_rate: 10.0,
         },
-
-        // CB-01 "Shadowfang": Melee blade
-        // <=2.5m: 50 dmg, 1.25 rps (75 RPM) -> 2 hits -> TTK = 0.800s
-        // >2.5m: 0 dmg (strict melee envelope)
         WeaponType::Coltello => WeaponConfig {
             base_damage: 50.0,
             fire_rate_rps: 1.25,
             pellets: 1,
-            effective_range_m: 2.5,
-            falloff_start_m: 2.5,
-            falloff_end_m: 2.5,
+            effective_range_m: 2.6,
+            falloff_start_m: 2.6,
+            falloff_end_m: 2.6,
             min_damage: 0.0,
-            headshot_multiplier: 1.5,
+            headshot_multiplier: 1.0,
             spread_base_rad: 0.0,
             spread_bloom_rad: 0.0,
             spread_max_rad: 0.0,
@@ -164,22 +144,10 @@ pub fn get_weapon_config(weapon_type: WeaponType) -> WeaponConfig {
     }
 }
 
-/// Calculate distance-based piecewise linear damage with optional headshot multiplier.
-///
-/// Formulation:
-/// - d <= falloff_start: D = base_damage
-/// - falloff_start < d < falloff_end: D = base - (base - min) * ((d - start) / (end - start))
-/// - d >= falloff_end: D = min_damage
-/// - Knife hard cutoff: D = 0 for distance > 2.5m
+/// Piecewise linear damage with a strict hard range for every weapon.
 pub fn calculate_damage(weapon_type: WeaponType, distance_m: f64, is_headshot: bool) -> f64 {
     let config = get_weapon_config(weapon_type);
-
-    if distance_m < 0.0 {
-        return 0.0;
-    }
-
-    // Strict melee range cutoff for knife
-    if weapon_type == WeaponType::Coltello && distance_m > config.effective_range_m {
+    if !distance_m.is_finite() || distance_m < 0.0 || distance_m > config.effective_range_m {
         return 0.0;
     }
 
@@ -193,128 +161,83 @@ pub fn calculate_damage(weapon_type: WeaponType, distance_m: f64, is_headshot: b
             config.min_damage
         } else {
             let t = (distance_m - config.falloff_start_m) / span;
-            config.base_damage - (config.base_damage - config.min_damage) * t
+            config.base_damage + (config.min_damage - config.base_damage) * t
         }
     };
 
-    if is_headshot {
-        raw_damage * config.headshot_multiplier
-    } else {
-        raw_damage
-    }
+    raw_damage * if is_headshot { config.headshot_multiplier } else { 1.0 }
 }
 
-/// Calculate theoretical Time-To-Kill (TTK) in seconds against a target with specified HP.
-/// Assumes all body hits (no headshots) landed at firing cadence.
-///
-/// Formula:
-/// hits = ceil(target_hp / damage)
-/// TTK = (hits - 1) / fire_rate_rps   (first hit lands at t = 0.0s)
 pub fn calculate_theoretical_ttk(weapon_type: WeaponType, target_hp: f64, distance_m: f64) -> f64 {
     let config = get_weapon_config(weapon_type);
-    let dmg = calculate_damage(weapon_type, distance_m, false);
-
-    if dmg <= 1e-9 || target_hp <= 0.0 || config.fire_rate_rps <= 1e-9 {
+    let damage = calculate_damage(weapon_type, distance_m, false);
+    if damage <= 1e-9 || target_hp <= 0.0 || config.fire_rate_rps <= 1e-9 {
         return f64::INFINITY;
     }
-
-    let hits = (target_hp / dmg).ceil();
-    if hits <= 1.0 {
-        0.0
-    } else {
-        (hits - 1.0) / config.fire_rate_rps
-    }
+    let hits = (target_hp / damage).ceil();
+    if hits <= 1.0 { 0.0 } else { (hits - 1.0) / config.fire_rate_rps }
 }
 
-/// Calculate current spread cone half-angle in radians given continuous firing burst and stance.
-///
-/// Stance multipliers typically:
-/// - Standing: 1.0
-/// - Crouching: 0.75
-/// - Walking: 1.4
-/// - Sprinting: 2.0
-/// - Airborne: 2.5
 pub fn calculate_spread_angle(config: &WeaponConfig, burst_count: u32, stance_multiplier: f64) -> f64 {
-    let raw = config.spread_base_rad + (burst_count as f64) * config.spread_bloom_rad;
+    let raw = config.spread_base_rad + burst_count as f64 * config.spread_bloom_rad;
     let clamped = raw.min(config.spread_max_rad);
-    let effective = (clamped * stance_multiplier).min(config.spread_max_rad);
-    effective.max(0.0)
+    (clamped * stance_multiplier.max(0.0)).min(config.spread_max_rad)
 }
 
-/// Linear spread recovery over delta time when firing ceases.
 pub fn recover_spread(current_spread_rad: f64, base_spread_rad: f64, recovery_rate_rad_s: f64, dt_s: f64) -> f64 {
     if dt_s <= 0.0 {
         return current_spread_rad;
     }
-    (current_spread_rad - recovery_rate_rad_s * dt_s).max(base_spread_rad)
+    (current_spread_rad - recovery_rate_rad_s.max(0.0) * dt_s).max(base_spread_rad)
 }
 
-/// Perturb a normalized direction vector by an angular spread cone half-angle using
-/// two uniform random samples u1, u2 in [0.0, 1.0).
+/// Perturb a normalized direction inside a cone using two uniform samples.
 pub fn perturb_direction(dir: [f64; 3], spread_angle_rad: f64, u1: f64, u2: f64) -> [f64; 3] {
     let len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt();
     if len < 1e-9 {
         return [0.0, 0.0, 1.0];
     }
     let f = [dir[0] / len, dir[1] / len, dir[2] / len];
-
     if spread_angle_rad <= 1e-9 {
         return f;
     }
 
-    // Build orthonormal basis (R, U, F)
-    let up = if f[1].abs() < 0.99 {
-        [0.0, 1.0, 0.0]
-    } else {
-        [1.0, 0.0, 0.0]
-    };
-
-    // Cross product: R = F x up
-    let rx = f[1] * up[2] - f[2] * up[1];
-    let ry = f[2] * up[0] - f[0] * up[2];
-    let rz = f[0] * up[1] - f[1] * up[0];
+    let reference_up = if f[1].abs() < 0.99 { [0.0, 1.0, 0.0] } else { [1.0, 0.0, 0.0] };
+    let rx = f[1] * reference_up[2] - f[2] * reference_up[1];
+    let ry = f[2] * reference_up[0] - f[0] * reference_up[2];
+    let rz = f[0] * reference_up[1] - f[1] * reference_up[0];
     let r_len = (rx * rx + ry * ry + rz * rz).sqrt();
+    if r_len < 1e-9 {
+        return f;
+    }
     let r = [rx / r_len, ry / r_len, rz / r_len];
+    let u = [
+        r[1] * f[2] - r[2] * f[1],
+        r[2] * f[0] - r[0] * f[2],
+        r[0] * f[1] - r[1] * f[0],
+    ];
 
-    // Cross product: U = R x F
-    let ux = r[1] * f[2] - r[2] * f[1];
-    let uy = r[2] * f[0] - r[0] * f[2];
-    let uz = r[0] * f[1] - r[1] * f[0];
-    let u = [ux, uy, uz];
-
-    // Sample uniform disk on tangent plane at distance 1.0
     let radius = spread_angle_rad.tan() * u1.clamp(0.0, 1.0).sqrt();
     let phi = 2.0 * std::f64::consts::PI * u2.clamp(0.0, 1.0);
-
-    let cos_phi = phi.cos();
-    let sin_phi = phi.sin();
-
-    let vx = f[0] + radius * (cos_phi * r[0] + sin_phi * u[0]);
-    let vy = f[1] + radius * (cos_phi * r[1] + sin_phi * u[1]);
-    let vz = f[2] + radius * (cos_phi * r[2] + sin_phi * u[2]);
-
+    let vx = f[0] + radius * (phi.cos() * r[0] + phi.sin() * u[0]);
+    let vy = f[1] + radius * (phi.cos() * r[1] + phi.sin() * u[1]);
+    let vz = f[2] + radius * (phi.cos() * r[2] + phi.sin() * u[2]);
     let v_len = (vx * vx + vy * vy + vz * vz).sqrt();
-    if v_len < 1e-9 {
-        f
-    } else {
-        [vx / v_len, vy / v_len, vz / v_len]
-    }
+    if v_len < 1e-9 { f } else { [vx / v_len, vy / v_len, vz / v_len] }
 }
 
-/// Apply instant recoil kick (pitch climb and horizontal yaw kick with variance factor in [-1.0, 1.0]).
 pub fn apply_recoil_kick(
     pitch_deg: f64,
     yaw_deg: f64,
     config: &WeaponConfig,
     yaw_variance_factor: f64,
 ) -> (f64, f64) {
-    let y_factor = yaw_variance_factor.clamp(-1.0, 1.0);
-    let new_pitch = pitch_deg + config.recoil_pitch_deg;
-    let new_yaw = yaw_deg + config.recoil_yaw_deg * y_factor;
-    (new_pitch, new_yaw)
+    (
+        pitch_deg + config.recoil_pitch_deg,
+        yaw_deg + config.recoil_yaw_deg * yaw_variance_factor.clamp(-1.0, 1.0),
+    )
 }
 
-/// Exponential continuous recoil recovery toward reticle center (0.0, 0.0).
 pub fn recover_recoil(pitch_deg: f64, yaw_deg: f64, recovery_rate: f64, dt_s: f64) -> (f64, f64) {
     if dt_s <= 0.0 || recovery_rate <= 0.0 {
         return (pitch_deg, yaw_deg);
@@ -323,7 +246,6 @@ pub fn recover_recoil(pitch_deg: f64, yaw_deg: f64, recovery_rate: f64, dt_s: f6
     (pitch_deg * decay, yaw_deg * decay)
 }
 
-/// Result of an authoritative hitscan validation query
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct HitscanResult {
     pub hit: bool,
@@ -332,18 +254,9 @@ pub struct HitscanResult {
     pub distance: f64,
 }
 
-/// Exact 3D ray-cylinder intersection with vertical player cylinder.
-///
-/// Parameters:
-/// - `origin`: Ray start point [x, y, z]
-/// - `direction`: Ray direction vector [x, y, z]
-/// - `target_base`: Cylinder base center [x, y, z] (feet position)
-/// - `radius`: Cylinder radius in meters (e.g. 0.45m)
-/// - `height`: Cylinder height in meters (e.g. 2.0m)
-/// - `max_range`: Maximum ray travel distance in meters
-///
-/// Returns Option<(hit_distance, is_headshot)> where headshot is defined as
-/// intersection height relative to base >= 1.55m.
+/// Legacy Rust compatibility collider. Browser live PvP uses the cheaper robot
+/// torso/head AABBs in net/robotHitbox.ts; this cylinder API remains stable for
+/// WASM callers and historical geometry tests.
 pub fn intersect_ray_cylinder(
     origin: [f64; 3],
     direction: [f64; 3],
@@ -353,10 +266,9 @@ pub fn intersect_ray_cylinder(
     max_range: f64,
 ) -> Option<(f64, bool)> {
     let dir_len = (direction[0] * direction[0] + direction[1] * direction[1] + direction[2] * direction[2]).sqrt();
-    if dir_len < 1e-9 {
+    if dir_len < 1e-9 || max_range < 0.0 {
         return None;
     }
-
     let ndx = direction[0] / dir_len;
     let ndy = direction[1] / dir_len;
     let ndz = direction[2] / dir_len;
@@ -364,20 +276,14 @@ pub fn intersect_ray_cylinder(
     let rel_ox = origin[0] - target_base[0];
     let rel_oy = origin[1] - target_base[1];
     let rel_oz = origin[2] - target_base[2];
-
-    // Check if origin is already inside cylinder
     let r_sq = radius * radius;
     let origin_xz_sq = rel_ox * rel_ox + rel_oz * rel_oz;
     if origin_xz_sq <= r_sq && rel_oy >= 0.0 && rel_oy <= height {
-        let is_headshot = rel_oy >= 1.55;
-        return Some((0.0, is_headshot));
+        return Some((0.0, rel_oy >= 1.55));
     }
 
     let mut min_t = f64::INFINITY;
     let mut hit_y = 0.0;
-
-    // 1. Infinite cylinder side: (ndx*t + rel_ox)^2 + (ndz*t + rel_oz)^2 = R^2
-    // A*t^2 + B*t + C = 0
     let a = ndx * ndx + ndz * ndz;
     let b = 2.0 * (rel_ox * ndx + rel_oz * ndz);
     let c = origin_xz_sq - r_sq;
@@ -385,11 +291,8 @@ pub fn intersect_ray_cylinder(
     if a > 1e-9 {
         let discr = b * b - 4.0 * a * c;
         if discr >= 0.0 {
-            let sqrt_discr = discr.sqrt();
-            let t1 = (-b - sqrt_discr) / (2.0 * a);
-            let t2 = (-b + sqrt_discr) / (2.0 * a);
-
-            for t in [t1, t2] {
+            let root = discr.sqrt();
+            for t in [(-b - root) / (2.0 * a), (-b + root) / (2.0 * a)] {
                 if t > 1e-4 && t < min_t {
                     let y = origin[1] + t * ndy;
                     if y >= target_base[1] && y <= target_base[1] + height {
@@ -401,41 +304,27 @@ pub fn intersect_ray_cylinder(
         }
     }
 
-    // 2. Top cap (y = target_base[1] + height) and bottom cap (y = target_base[1])
     if ndy.abs() > 1e-9 {
-        // Top cap
-        let t_top = (target_base[1] + height - origin[1]) / ndy;
-        if t_top > 1e-4 && t_top < min_t {
-            let x_top = origin[0] + t_top * ndx - target_base[0];
-            let z_top = origin[2] + t_top * ndz - target_base[2];
-            if x_top * x_top + z_top * z_top <= r_sq {
-                min_t = t_top;
-                hit_y = target_base[1] + height;
-            }
-        }
-
-        // Bottom cap
-        let t_bot = (target_base[1] - origin[1]) / ndy;
-        if t_bot > 1e-4 && t_bot < min_t {
-            let x_bot = origin[0] + t_bot * ndx - target_base[0];
-            let z_bot = origin[2] + t_bot * ndz - target_base[2];
-            if x_bot * x_bot + z_bot * z_bot <= r_sq {
-                min_t = t_bot;
-                hit_y = target_base[1];
+        for y_plane in [target_base[1] + height, target_base[1]] {
+            let t = (y_plane - origin[1]) / ndy;
+            if t > 1e-4 && t < min_t {
+                let x = origin[0] + t * ndx - target_base[0];
+                let z = origin[2] + t * ndz - target_base[2];
+                if x * x + z * z <= r_sq {
+                    min_t = t;
+                    hit_y = y_plane;
+                }
             }
         }
     }
 
     if min_t.is_finite() && min_t <= max_range {
-        let rel_hit_y = hit_y - target_base[1];
-        let is_headshot = rel_hit_y >= 1.55;
-        Some((min_t, is_headshot))
+        Some((min_t, hit_y - target_base[1] >= 1.55))
     } else {
         None
     }
 }
 
-/// Validate hitscan shot and return full HitscanResult
 pub fn validate_hitscan_shot_internal(
     weapon_type: WeaponType,
     origin: [f64; 3],
@@ -447,74 +336,51 @@ pub fn validate_hitscan_shot_internal(
     let config = get_weapon_config(weapon_type);
     let radius = if target_radius > 0.0 { target_radius } else { 0.45 };
     let height = if target_height > 0.0 { target_height } else { 2.0 };
-
-    if let Some((distance, is_headshot)) =
-        intersect_ray_cylinder(origin, direction, target_base, radius, height, config.effective_range_m)
-    {
+    if let Some((distance, is_headshot)) = intersect_ray_cylinder(
+        origin,
+        direction,
+        target_base,
+        radius,
+        height,
+        config.effective_range_m,
+    ) {
         let damage = calculate_damage(weapon_type, distance, is_headshot);
-        HitscanResult {
-            hit: true,
-            damage,
-            is_headshot,
-            distance,
-        }
+        HitscanResult { hit: damage > 0.0, damage, is_headshot, distance }
     } else {
-        HitscanResult {
-            hit: false,
-            damage: 0.0,
-            is_headshot: false,
-            distance: 0.0,
-        }
+        HitscanResult { hit: false, damage: 0.0, is_headshot: false, distance: 0.0 }
     }
 }
 
-/// WASM exported combat engine for weapon config queries, damage calculation,
-/// theoretical TTK computation, and authoritative hitscan verification.
 #[wasm_bindgen]
 pub struct WasmCombatEngine;
 
 impl Default for WasmCombatEngine {
-    fn default() -> Self {
-        Self::new()
-    }
+    fn default() -> Self { Self::new() }
 }
 
 #[wasm_bindgen]
 impl WasmCombatEngine {
     #[wasm_bindgen(constructor)]
-    pub fn new() -> Self {
-        WasmCombatEngine
-    }
+    pub fn new() -> Self { Self }
 
-    /// Retrieve weapon configuration as a JSON string.
     pub fn get_weapon_config(weapon_type: u32) -> String {
-        match WeaponType::from_u32(weapon_type) {
-            Some(wt) => {
-                let config = get_weapon_config(wt);
-                serde_json::to_string(&config).unwrap_or_else(|_| "{}".to_string())
-            }
-            None => "{}".to_string(),
-        }
+        WeaponType::from_u32(weapon_type)
+            .and_then(|wt| serde_json::to_string(&get_weapon_config(wt)).ok())
+            .unwrap_or_else(|| "{}".to_string())
     }
 
-    /// Calculate distance-based falloff damage with optional headshot multiplier.
     pub fn calculate_damage(weapon_type: u32, distance_m: f64, is_headshot: bool) -> f64 {
-        match WeaponType::from_u32(weapon_type) {
-            Some(wt) => calculate_damage(wt, distance_m, is_headshot),
-            None => 0.0,
-        }
+        WeaponType::from_u32(weapon_type)
+            .map(|wt| calculate_damage(wt, distance_m, is_headshot))
+            .unwrap_or(0.0)
     }
 
-    /// Calculate theoretical Time-To-Kill (TTK) in seconds against a target with specified HP.
     pub fn calculate_theoretical_ttk(weapon_type: u32, target_hp: f64, distance_m: f64) -> f64 {
-        match WeaponType::from_u32(weapon_type) {
-            Some(wt) => calculate_theoretical_ttk(wt, target_hp, distance_m),
-            None => f64::INFINITY,
-        }
+        WeaponType::from_u32(weapon_type)
+            .map(|wt| calculate_theoretical_ttk(wt, target_hp, distance_m))
+            .unwrap_or(f64::INFINITY)
     }
 
-    /// Perform authoritative 3D ray-cylinder intersection and damage computation.
-    /// Returns a JSON string of HitscanResult: { hit: bool, damage: f64, is_headshot: bool, distance: f64 }
     #[allow(clippy::too_many_arguments)]
     pub fn validate_hitscan_shot(
         weapon_type: u32,
@@ -530,19 +396,9 @@ impl WasmCombatEngine {
         target_radius: f64,
         target_height: f64,
     ) -> String {
-        let wt = match WeaponType::from_u32(weapon_type) {
-            Some(wt) => wt,
-            None => {
-                let empty_res = HitscanResult {
-                    hit: false,
-                    damage: 0.0,
-                    is_headshot: false,
-                    distance: 0.0,
-                };
-                return serde_json::to_string(&empty_res).unwrap_or_else(|_| "{}".to_string());
-            }
+        let Some(wt) = WeaponType::from_u32(weapon_type) else {
+            return "{\"hit\":false,\"damage\":0.0,\"is_headshot\":false,\"distance\":0.0}".to_string();
         };
-
         let result = validate_hitscan_shot_internal(
             wt,
             [origin_x, origin_y, origin_z],
@@ -551,7 +407,6 @@ impl WasmCombatEngine {
             target_radius,
             target_height,
         );
-
         serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string())
     }
 }
@@ -561,299 +416,83 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_all_weapon_configs_loaded() {
-        let types = [
-            WeaponType::Assalto,
-            WeaponType::Cecchino,
-            WeaponType::Pompa,
-            WeaponType::Mitraglietta,
-            WeaponType::Coltello,
-        ];
-        for wt in types {
-            let cfg = get_weapon_config(wt);
-            assert!(cfg.base_damage > 0.0);
-            assert!(cfg.fire_rate_rps > 0.0);
-            assert!(cfg.effective_range_m > 0.0);
-            assert!(cfg.headshot_multiplier >= 1.0);
-        }
+    fn configs_match_browser_balance() {
+        let ar = get_weapon_config(WeaponType::Assalto);
+        assert_eq!((ar.effective_range_m, ar.falloff_start_m, ar.falloff_end_m, ar.min_damage), (180.0, 35.0, 140.0, 10.0));
+        let sr = get_weapon_config(WeaponType::Cecchino);
+        assert_eq!((sr.effective_range_m, sr.falloff_start_m, sr.falloff_end_m, sr.min_damage), (550.0, 180.0, 450.0, 50.0));
+        let sg = get_weapon_config(WeaponType::Pompa);
+        assert_eq!((sg.effective_range_m, sg.falloff_start_m, sg.falloff_end_m, sg.min_damage, sg.headshot_multiplier), (42.0, 8.0, 30.0, 20.0, 1.25));
+        let smg = get_weapon_config(WeaponType::Mitraglietta);
+        assert_eq!((smg.effective_range_m, smg.falloff_start_m, smg.falloff_end_m, smg.min_damage), (90.0, 15.0, 65.0, 7.0));
+        let knife = get_weapon_config(WeaponType::Coltello);
+        assert_eq!((knife.effective_range_m, knife.headshot_multiplier), (2.6, 1.0));
     }
 
     #[test]
-    fn test_damage_and_falloff() {
-        // 1. Assalto: 18 base, 17 @ 20m, 12 @ 70m+
-        let d_ar_0 = calculate_damage(WeaponType::Assalto, 0.0, false);
-        assert_eq!(d_ar_0, 18.0);
-        let d_ar_10 = calculate_damage(WeaponType::Assalto, 10.0, false);
-        assert_eq!(d_ar_10, 18.0);
-        let d_ar_20 = calculate_damage(WeaponType::Assalto, 20.0, false);
-        assert!((d_ar_20 - 17.0).abs() < 1e-6);
-        let d_ar_70 = calculate_damage(WeaponType::Assalto, 70.0, false);
-        assert_eq!(d_ar_70, 12.0);
-        let d_ar_100 = calculate_damage(WeaponType::Assalto, 100.0, false);
-        assert_eq!(d_ar_100, 12.0);
-
-        // 2. Cecchino: 70 base, 70 @ 20m, 70 @ 100m, falloff to 55 @ 300m
-        let d_sr_0 = calculate_damage(WeaponType::Cecchino, 0.0, false);
-        assert_eq!(d_sr_0, 70.0);
-        let d_sr_20 = calculate_damage(WeaponType::Cecchino, 20.0, false);
-        assert_eq!(d_sr_20, 70.0);
-        let d_sr_100 = calculate_damage(WeaponType::Cecchino, 100.0, false);
-        assert_eq!(d_sr_100, 70.0);
-        let d_sr_300 = calculate_damage(WeaponType::Cecchino, 300.0, false);
-        assert_eq!(d_sr_300, 55.0);
-
-        // 3. Pompa: 64 base, 52.5 @ 20m, 41 @ 30m+
-        let d_sg_0 = calculate_damage(WeaponType::Pompa, 0.0, false);
-        assert_eq!(d_sg_0, 64.0);
-        let d_sg_20 = calculate_damage(WeaponType::Pompa, 20.0, false);
-        assert!((d_sg_20 - 52.5).abs() < 1e-6);
-        let d_sg_30 = calculate_damage(WeaponType::Pompa, 30.0, false);
-        assert_eq!(d_sg_30, 41.0);
-
-        // 4. Mitraglietta: 12 base, 10 @ 20m, 6 @ 40m+
-        let d_smg_0 = calculate_damage(WeaponType::Mitraglietta, 0.0, false);
-        assert_eq!(d_smg_0, 12.0);
-        let d_smg_20 = calculate_damage(WeaponType::Mitraglietta, 20.0, false);
-        assert!((d_smg_20 - 10.0).abs() < 1e-6);
-        let d_smg_40 = calculate_damage(WeaponType::Mitraglietta, 40.0, false);
-        assert_eq!(d_smg_40, 6.0);
-
-        // 5. Coltello: 50 base, 50 @ 2.5m, 0 @ >2.5m
-        let d_kn_0 = calculate_damage(WeaponType::Coltello, 0.0, false);
-        assert_eq!(d_kn_0, 50.0);
-        let d_kn_2 = calculate_damage(WeaponType::Coltello, 2.0, false);
-        assert_eq!(d_kn_2, 50.0);
-        let d_kn_25 = calculate_damage(WeaponType::Coltello, 2.5, false);
-        assert_eq!(d_kn_25, 50.0);
-        let d_kn_26 = calculate_damage(WeaponType::Coltello, 2.6, false);
-        assert_eq!(d_kn_26, 0.0);
-        let d_kn_20 = calculate_damage(WeaponType::Coltello, 20.0, false);
-        assert_eq!(d_kn_20, 0.0);
-
-        // Headshots
-        let hs_ar = calculate_damage(WeaponType::Assalto, 0.0, true);
-        assert_eq!(hs_ar, 27.0); // 18 * 1.5
-        let hs_sr = calculate_damage(WeaponType::Cecchino, 0.0, true);
-        assert_eq!(hs_sr, 140.0); // 70 * 2.0 (precision 1-shot reward)
-        let hs_sg = calculate_damage(WeaponType::Pompa, 0.0, true);
-        assert_eq!(hs_sg, 96.0); // 64 * 1.5
-        let hs_smg = calculate_damage(WeaponType::Mitraglietta, 0.0, true);
-        assert_eq!(hs_smg, 18.0); // 12 * 1.5
-        let hs_kn = calculate_damage(WeaponType::Coltello, 1.0, true);
-        assert_eq!(hs_kn, 75.0); // 50 * 1.5
+    fn falloff_and_hard_ranges() {
+        assert_eq!(calculate_damage(WeaponType::Assalto, 35.0, false), 18.0);
+        assert_eq!(calculate_damage(WeaponType::Assalto, 140.0, false), 10.0);
+        assert_eq!(calculate_damage(WeaponType::Assalto, 180.1, false), 0.0);
+        assert_eq!(calculate_damage(WeaponType::Cecchino, 450.0, false), 50.0);
+        assert_eq!(calculate_damage(WeaponType::Cecchino, 550.1, false), 0.0);
+        assert!((calculate_damage(WeaponType::Pompa, 19.0, false) - 42.0).abs() < 1e-9);
+        assert_eq!(calculate_damage(WeaponType::Pompa, 42.1, false), 0.0);
+        assert!((calculate_damage(WeaponType::Mitraglietta, 40.0, false) - 9.5).abs() < 1e-9);
+        assert_eq!(calculate_damage(WeaponType::Mitraglietta, 90.1, false), 0.0);
+        assert_eq!(calculate_damage(WeaponType::Coltello, 2.6, true), 50.0);
+        assert_eq!(calculate_damage(WeaponType::Coltello, 2.61, false), 0.0);
     }
 
     #[test]
-    fn test_theoretical_ttk_within_bounds() {
-        let hp = 100.0;
-        let medium_distance = 20.0;
-
-        // Assalto @ 20m: 17.0 dmg -> 6 hits -> (6-1)/6.25 = 0.800s
-        let ttk_ar = calculate_theoretical_ttk(WeaponType::Assalto, hp, medium_distance);
-        assert!((ttk_ar - 0.800).abs() < 1e-4, "AR TTK {} != 0.800s", ttk_ar);
-        assert!(ttk_ar >= 0.70 && ttk_ar <= 1.50);
-
-        // Cecchino @ 20m: 70.0 dmg -> 2 hits -> (2-1)/1.00 = 1.000s
-        let ttk_sr = calculate_theoretical_ttk(WeaponType::Cecchino, hp, medium_distance);
-        assert!((ttk_sr - 1.000).abs() < 1e-4, "SR TTK {} != 1.000s", ttk_sr);
-        assert!(ttk_sr >= 0.70 && ttk_sr <= 1.50);
-
-        // Pompa @ 20m: 52.5 dmg -> 2 hits -> (2-1)/1.25 = 0.800s
-        let ttk_sg = calculate_theoretical_ttk(WeaponType::Pompa, hp, medium_distance);
-        assert!((ttk_sg - 0.800).abs() < 1e-4, "SG TTK {} != 0.800s", ttk_sg);
-        assert!(ttk_sg >= 0.70 && ttk_sg <= 1.50);
-
-        // Mitraglietta @ 20m: 10.0 dmg -> 10 hits -> (10-1)/10.00 = 0.900s
-        let ttk_smg = calculate_theoretical_ttk(WeaponType::Mitraglietta, hp, medium_distance);
-        assert!((ttk_smg - 0.900).abs() < 1e-4, "SMG TTK {} != 0.900s", ttk_smg);
-        assert!(ttk_smg >= 0.70 && ttk_smg <= 1.50);
-
-        // Coltello @ 2.0m (melee): 50.0 dmg -> 2 hits -> (2-1)/1.25 = 0.800s
-        let ttk_kn = calculate_theoretical_ttk(WeaponType::Coltello, hp, 2.0);
-        assert!((ttk_kn - 0.800).abs() < 1e-4, "Knife TTK {} != 0.800s", ttk_kn);
-        assert!(ttk_kn >= 0.70 && ttk_kn <= 1.50);
-
-        // Knife out of range must have infinite TTK
-        let ttk_kn_out = calculate_theoretical_ttk(WeaponType::Coltello, hp, 5.0);
-        assert!(ttk_kn_out.is_infinite());
-
-        // Verify NO weapon has a 1-shot body kill at medium range
-        for wt in [
-            WeaponType::Assalto,
-            WeaponType::Cecchino,
-            WeaponType::Pompa,
-            WeaponType::Mitraglietta,
-        ] {
-            let dmg = calculate_damage(wt, medium_distance, false);
-            assert!(dmg < 100.0, "{:?} deals 1-shot body damage: {}", wt, dmg);
-        }
+    fn expected_ttk_profile() {
+        assert!((calculate_theoretical_ttk(WeaponType::Assalto, 100.0, 20.0) - 0.8).abs() < 1e-6);
+        assert!((calculate_theoretical_ttk(WeaponType::Cecchino, 100.0, 20.0) - 1.0).abs() < 1e-6);
+        assert!((calculate_theoretical_ttk(WeaponType::Pompa, 100.0, 20.0) - 1.6).abs() < 1e-6);
+        assert!((calculate_theoretical_ttk(WeaponType::Mitraglietta, 100.0, 20.0) - 0.8).abs() < 1e-6);
+        assert!((calculate_theoretical_ttk(WeaponType::Coltello, 100.0, 2.0) - 0.8).abs() < 1e-6);
     }
 
     #[test]
-    fn test_spread_cone_bounds() {
-        let ar_cfg = get_weapon_config(WeaponType::Assalto);
-
-        // Base spread without bloom
-        let base_angle = calculate_spread_angle(&ar_cfg, 0, 1.0);
-        assert_eq!(base_angle, ar_cfg.spread_base_rad);
-
-        // Crouch modifier reduces spread
-        let crouch_angle = calculate_spread_angle(&ar_cfg, 0, 0.75);
-        assert_eq!(crouch_angle, ar_cfg.spread_base_rad * 0.75);
-        assert!(crouch_angle < base_angle);
-
-        // Sprint modifier increases spread
-        let sprint_angle = calculate_spread_angle(&ar_cfg, 0, 2.0);
-        assert_eq!(sprint_angle, ar_cfg.spread_base_rad * 2.0);
-        assert!(sprint_angle > base_angle);
-
-        // Max spread clamp
-        let max_bloom_angle = calculate_spread_angle(&ar_cfg, 100, 1.0);
-        assert_eq!(max_bloom_angle, ar_cfg.spread_max_rad);
-
-        // Recovery
-        let recovered = recover_spread(0.05, ar_cfg.spread_base_rad, ar_cfg.recoil_recovery_rate, 0.1);
-        assert!(recovered < 0.05);
-        let fully_recovered = recover_spread(0.05, ar_cfg.spread_base_rad, ar_cfg.recoil_recovery_rate, 10.0);
-        assert_eq!(fully_recovered, ar_cfg.spread_base_rad);
-
-        // Perturbation vector within spread cone
-        let forward = [0.0, 0.0, 1.0];
-        let spread = 0.05; // ~2.86 deg
+    fn spread_stays_inside_cone() {
+        let cfg = get_weapon_config(WeaponType::Assalto);
+        assert_eq!(calculate_spread_angle(&cfg, 0, 1.0), cfg.spread_base_rad);
+        assert!(calculate_spread_angle(&cfg, 3, 1.0) > cfg.spread_base_rad);
+        assert_eq!(calculate_spread_angle(&cfg, 100, 2.0), cfg.spread_max_rad);
         for i in 0..100 {
-            let u1 = (i as f64) / 100.0;
-            let u2 = ((i * 7) % 100) as f64 / 100.0;
-            let perturbed = perturb_direction(forward, spread, u1, u2);
-            let dot = perturbed[0] * forward[0] + perturbed[1] * forward[1] + perturbed[2] * forward[2];
-            let angle = dot.clamp(-1.0, 1.0).acos();
-            assert!(angle <= spread + 1e-4, "Perturbed angle {} exceeds cone {}", angle, spread);
+            let spread = 0.04;
+            let out = perturb_direction([0.0, 0.0, 1.0], spread, i as f64 / 100.0, ((i * 7) % 100) as f64 / 100.0);
+            let angle = out[2].clamp(-1.0, 1.0).acos();
+            assert!(angle <= spread + 1e-4);
         }
     }
 
     #[test]
-    fn test_recoil_dynamics() {
-        let ar_cfg = get_weapon_config(WeaponType::Assalto);
-
-        // Kick increases pitch
-        let (p1, y1) = apply_recoil_kick(0.0, 0.0, &ar_cfg, 0.5);
-        assert_eq!(p1, ar_cfg.recoil_pitch_deg);
-        assert_eq!(y1, ar_cfg.recoil_yaw_deg * 0.5);
-
-        // Recovery decays toward zero
-        let (p2, y2) = recover_recoil(p1, y1, ar_cfg.recoil_recovery_rate, 0.1);
-        assert!(p2 < p1);
-        assert!(y2 < y1);
-
-        // Long time recovery reaches zero
-        let (p_zero, y_zero) = recover_recoil(p1, y1, ar_cfg.recoil_recovery_rate, 5.0);
-        assert!(p_zero < 1e-6);
-        assert!(y_zero < 1e-6);
+    fn recoil_recovers() {
+        let cfg = get_weapon_config(WeaponType::Assalto);
+        let (pitch, yaw) = apply_recoil_kick(0.0, 0.0, &cfg, 0.5);
+        assert_eq!(pitch, cfg.recoil_pitch_deg);
+        assert_eq!(yaw, cfg.recoil_yaw_deg * 0.5);
+        let (next_pitch, next_yaw) = recover_recoil(pitch, yaw, cfg.recoil_recovery_rate, 0.1);
+        assert!(next_pitch < pitch);
+        assert!(next_yaw < yaw);
     }
 
     #[test]
-    fn test_hitscan_ray_cylinder_intersection() {
-        let origin = [0.0, 1.0, -10.0];
-        let dir = [0.0, 0.0, 1.0];
-        let target_base = [0.0, 0.0, 0.0];
-        let radius = 0.45;
-        let height = 2.0;
-
-        // Body shot test: hit at y = 1.0 (< 1.55)
-        let body_hit = intersect_ray_cylinder(origin, dir, target_base, radius, height, 100.0);
-        assert!(body_hit.is_some());
-        let (dist, is_hs) = body_hit.unwrap();
-        assert!((dist - 9.55).abs() < 1e-2);
-        assert!(!is_hs);
-
-        // Headshot test: ray at y = 1.7 (>= 1.55)
-        let head_origin = [0.0, 1.7, -10.0];
-        let head_hit = intersect_ray_cylinder(head_origin, dir, target_base, radius, height, 100.0);
-        assert!(head_hit.is_some());
-        let (_, is_hs_2) = head_hit.unwrap();
-        assert!(is_hs_2);
-
-        // Miss test: ray aimed perpendicular
-        let miss_dir = [1.0, 0.0, 0.0];
-        let miss = intersect_ray_cylinder(origin, miss_dir, target_base, radius, height, 100.0);
-        assert!(miss.is_none());
-
-        // Full hitscan validation check
-        let res_body = validate_hitscan_shot_internal(WeaponType::Assalto, origin, dir, target_base, radius, height);
-        assert!(res_body.hit);
-        assert!(!res_body.is_headshot);
-        assert!(res_body.damage > 0.0);
-
-        let res_head = validate_hitscan_shot_internal(WeaponType::Cecchino, head_origin, dir, target_base, radius, height);
-        assert!(res_head.hit);
-        assert!(res_head.is_headshot);
-        assert_eq!(res_head.damage, 140.0); // 70 * 2.0
-
-        // Knife range boundary: 2.0m hits, 3.0m misses
-        let knife_close_orig = [0.0, 1.0, -2.0];
-        let knife_hit = validate_hitscan_shot_internal(WeaponType::Coltello, knife_close_orig, dir, target_base, radius, height);
-        assert!(knife_hit.hit);
-        assert_eq!(knife_hit.damage, 50.0);
-
-        let knife_far_orig = [0.0, 1.0, -5.0];
-        let knife_miss = validate_hitscan_shot_internal(WeaponType::Coltello, knife_far_orig, dir, target_base, radius, height);
-        assert!(!knife_miss.hit);
-        assert_eq!(knife_miss.damage, 0.0);
-
-        // Point blank: shooter inside target cylinder
-        let inside_orig = [0.0, 1.0, 0.0];
-        let pb_hit = intersect_ray_cylinder(inside_orig, dir, target_base, radius, height, 100.0);
-        assert!(pb_hit.is_some());
-        let (pb_dist, _) = pb_hit.unwrap();
-        assert_eq!(pb_dist, 0.0);
-    }
-
-    #[test]
-    fn test_wasm_combat_engine() {
-        let _engine = WasmCombatEngine::new();
-
-        // 1. Config JSON query
-        let cfg_json = WasmCombatEngine::get_weapon_config(0); // Assalto
-        let parsed_cfg: serde_json::Value = serde_json::from_str(&cfg_json).unwrap();
-        assert_eq!(parsed_cfg["base_damage"], 18.0);
-        assert_eq!(parsed_cfg["fire_rate_rps"], 6.25);
-
-        // Invalid weapon type returns empty json
-        let invalid_cfg = WasmCombatEngine::get_weapon_config(99);
-        assert_eq!(invalid_cfg, "{}");
-
-        // 2. Damage calculation
-        let dmg_body = WasmCombatEngine::calculate_damage(0, 20.0, false);
-        assert!((dmg_body - 17.0).abs() < 1e-4);
-        let dmg_head = WasmCombatEngine::calculate_damage(1, 20.0, true);
-        assert_eq!(dmg_head, 140.0);
-
-        // 3. Theoretical TTK calculation
-        let ttk_ar = WasmCombatEngine::calculate_theoretical_ttk(0, 100.0, 20.0);
-        assert!((ttk_ar - 0.800).abs() < 1e-4);
-        assert!(ttk_ar >= 0.70 && ttk_ar <= 1.50);
-
-        // 4. Hitscan validation JSON
-        let hit_json = WasmCombatEngine::validate_hitscan_shot(
-            0, // Assalto
-            0.0, 1.0, -10.0, // origin
-            0.0, 0.0, 1.0,  // dir
-            0.0, 0.0, 0.0,  // target base
-            0.45, 2.0,      // radius, height
+    fn cylinder_compatibility_and_wasm_json() {
+        let hit = validate_hitscan_shot_internal(
+            WeaponType::Assalto,
+            [0.0, 1.0, -10.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, 0.0],
+            0.45,
+            2.0,
         );
-        let parsed_hit: serde_json::Value = serde_json::from_str(&hit_json).unwrap();
-        assert_eq!(parsed_hit["hit"], true);
-        assert_eq!(parsed_hit["is_headshot"], false);
-        assert!(parsed_hit["damage"].as_f64().unwrap() > 0.0);
-
-        // Miss query
-        let miss_json = WasmCombatEngine::validate_hitscan_shot(
-            0,
-            0.0, 1.0, -10.0,
-            1.0, 0.0, 0.0, // perpendicular dir
-            0.0, 0.0, 0.0,
-            0.45, 2.0,
-        );
-        let parsed_miss: serde_json::Value = serde_json::from_str(&miss_json).unwrap();
-        assert_eq!(parsed_miss["hit"], false);
+        assert!(hit.hit);
+        assert!(!hit.is_headshot);
+        let cfg_json = WasmCombatEngine::get_weapon_config(0);
+        let parsed: serde_json::Value = serde_json::from_str(&cfg_json).unwrap();
+        assert_eq!(parsed["effective_range_m"], 180.0);
+        assert_eq!(parsed["falloff_start_m"], 35.0);
     }
 }

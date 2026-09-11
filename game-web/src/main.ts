@@ -2,11 +2,13 @@ import './style.css';
 import { bootstrap } from './gameplay/engine.ts';
 import { startAdvancedWeaponController } from './gameplay/advancedWeaponController.ts';
 import { startDynamicPrecisionReticle } from './gameplay/dynamicPrecisionReticle.ts';
+import { startPrecisionShotRuntime } from './gameplay/precisionShotRuntime.ts';
 import { startSpawnController } from './gameplay/spawnController.ts';
 import { startKillAmmoReset } from './gameplay/killAmmoReset.ts';
 import { startHostRemoteSync } from './net/hostRemoteSync.ts';
 import { startLobbyPresenceSync } from './net/lobbyPresenceSync.ts';
 import { startPvpTimingTuning } from './net/pvpTuning.ts';
+import { startPvpHardening } from './net/pvpHardening.ts';
 import { startNetworkStabilityFix } from './net/networkStabilityFix.ts';
 import { startRemoteShotPresentation } from './net/remoteShotPresentation.ts';
 import { startTracerPresentationFix } from './gameplay/tracerPresentationFix.ts';
@@ -14,13 +16,16 @@ import { startLiveMapOverlay } from './gameplay/liveMapOverlay.ts';
 import { startMusicSourceGain } from './audio/musicSourceGain.ts';
 import { startNaturalSunRays } from './world/naturalSunRays.ts';
 import { startPerformancePack } from './performance/performancePack.ts';
+import { startLocalTelemetry } from './performance/localTelemetry.ts';
 
 // Install lightweight runtime patches before any game/session objects are created.
 startNetworkStabilityFix();
+startPvpHardening();
 startTracerPresentationFix();
 startNaturalSunRays();
 
 bootstrap();
+startPrecisionShotRuntime();
 startAdvancedWeaponController();
 startDynamicPrecisionReticle();
 startLobbyPresenceSync();
@@ -32,3 +37,4 @@ startSpawnController();
 startLiveMapOverlay();
 startMusicSourceGain();
 startPerformancePack();
+startLocalTelemetry();

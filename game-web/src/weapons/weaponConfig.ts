@@ -25,13 +25,14 @@ export interface WeaponRuntimeConfig {
   adsRigZ: number;
   hipReticle: string;
   adsReticle: string;
+  spreadBaseRad: number;
+  spreadMaxRad: number;
 }
 
 /**
- * Runtime weapon contract shared by the browser combat validator and the
- * first-person weapon controller. Distances are metres, times are seconds.
- * The values intentionally give each weapon a useful envelope instead of the
- * previous almost-unlimited 1000 m client ray.
+ * Runtime weapon contract shared by browser combat validation, weapon UX and
+ * reticle-driven hitscan spread. Distances are metres, times are seconds and
+ * spread values are cone half-angles in radians.
  */
 export const WEAPON_RUNTIME: Record<WeaponKey, WeaponRuntimeConfig> = {
   assalto: {
@@ -58,6 +59,8 @@ export const WEAPON_RUNTIME: Record<WeaponKey, WeaponRuntimeConfig> = {
     adsRigZ: -0.035,
     hipReticle: 'cross',
     adsReticle: 'dot-ring',
+    spreadBaseRad: 0.0035,
+    spreadMaxRad: 0.045,
   },
   cecchino: {
     id: 1,
@@ -83,6 +86,8 @@ export const WEAPON_RUNTIME: Record<WeaponKey, WeaponRuntimeConfig> = {
     adsRigZ: -0.08,
     hipReticle: 'precision',
     adsReticle: 'scope',
+    spreadBaseRad: 0.00035,
+    spreadMaxRad: 0.075,
   },
   pompa: {
     id: 2,
@@ -108,6 +113,8 @@ export const WEAPON_RUNTIME: Record<WeaponKey, WeaponRuntimeConfig> = {
     adsRigZ: -0.025,
     hipReticle: 'shotgun',
     adsReticle: 'shotgun-tight',
+    spreadBaseRad: 0.045,
+    spreadMaxRad: 0.11,
   },
   mitraglietta: {
     id: 3,
@@ -133,6 +140,8 @@ export const WEAPON_RUNTIME: Record<WeaponKey, WeaponRuntimeConfig> = {
     adsRigZ: -0.02,
     hipReticle: 'smg',
     adsReticle: 'dot-ring',
+    spreadBaseRad: 0.008,
+    spreadMaxRad: 0.075,
   },
   coltello: {
     id: 4,
@@ -158,6 +167,8 @@ export const WEAPON_RUNTIME: Record<WeaponKey, WeaponRuntimeConfig> = {
     adsRigZ: 0.04,
     hipReticle: 'knife',
     adsReticle: 'knife',
+    spreadBaseRad: 0,
+    spreadMaxRad: 0,
   },
 };
 
@@ -194,4 +205,11 @@ export function calculateWeaponDamageAtDistance(
   }
 
   return Math.max(0, bodyDamage * (headshot ? cfg.headshotMultiplier : 1));
+}
+
+/** Map a normalized FPS reticle accuracy value to the weapon's real spread cone. */
+export function calculateWeaponSpreadAngle(weapon: string, accuracy: number): number {
+  const cfg = getWeaponRuntime(weapon);
+  const a = Number.isFinite(accuracy) ? Math.max(0, Math.min(1, accuracy)) : 1;
+  return cfg.spreadBaseRad + (1 - a) * Math.max(0, cfg.spreadMaxRad - cfg.spreadBaseRad);
 }

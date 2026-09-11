@@ -1,117 +1,111 @@
 # G.O.N.E. — AI engineering context
 
-Read this first. It is intentionally dense so an AI can work with minimal repo search/tool spend.
+Read this first. Dense project index intended to minimize repo search/tool spend.
 
 ## Owner constraints
 - Repo: `gernotfound/gone`.
-- Work directly on `main` unless owner explicitly changes this. Do not create branches by default.
-- Vercel free tier deploys per push: batch into one atomic commit/ref update. Prefer unreferenced Git blobs/tree/commit, inspect diff, then move `main` once.
-- Owner is nontechnical; do not ask them to edit/run code. They test in browsers (commonly Chrome host + Brave guest).
-- No paid/external multiplayer runtime services: no hosted signaling/relay/database/STUN/TURN/PeerJS cloud/Firebase/Supabase. Direct reachability still depends on LAN/NAT/IPv6; never claim universal Internet P2P.
+- Work directly on `main`; do not create branches unless owner explicitly changes this.
+- Vercel free tier deploys per push. Use unreferenced Git blobs/tree/commit, inspect diff, then move `main` once.
+- Owner is nontechnical: do not ask them to edit code or run commands. They test deployed Chrome/Brave gameplay.
+- No paid/external multiplayer runtime infrastructure: no hosted signaling/relay/database/STUN/TURN/PeerJS cloud/Firebase/Supabase.
+- Direct `iceServers: []` connectivity still depends on LAN/NAT/IPv6. Never claim universal Internet P2P.
 
 ## Stack / build
-- Browser FPS: TypeScript + Vite + Three.js in `game-web/`.
-- Core: Rust/WASM in `game-core/`; `game-web/pkg/game_core.js` is a functional JS fallback and must remain API-compatible.
-- Vercel web build: `game-web/build.sh` (wasm-pack + Vite). wasm-pack “newer version available” is only a warning unless build actually fails.
-- Main compile gate for direct-main work is Vercel status; historical rescue CI may not run on every direct `main` push.
+- Browser FPS: TypeScript + Vite + Three.js under `game-web/`.
+- Core: Rust/WASM under `game-core/`; `game-web/pkg/game_core.js` is a functional fallback but Vercel `game-web/build.sh` rebuilds Rust WASM before Vite.
+- Main direct-push compile gate is Vercel status. Historical rescue CI does not necessarily run on every `main` push.
 
 ## Runtime entry
-- `game-web/src/main.ts` should stay small; it boots focused controllers around legacy `gameplay/engine.ts`.
-- `engine.ts` owns scene/game loop, physics/camera, local viewmodel, base hitscan, remote registry and P2P bindings. Avoid rewriting it if a focused module can use `window.goneGame`.
+- `game-web/src/main.ts` boots focused controllers around legacy `gameplay/engine.ts`.
+- `engine.ts` owns physics/camera, scene loop, viewmodel, base hitscan, remote registry and P2P bindings. Prefer focused runtime modules over rewriting it.
 - `window.goneGame` exposes player, remotePlayers, VFX, weapon/fire helpers and active P2P host/client.
 
 ## Multiplayer / PvP
-- Native direct WebRTC: `net/directWebRtc.ts`; `RTCPeerConnection({ iceServers: [], bundlePolicy: 'max-bundle' })`.
-- Manual offer/answer signaling; star topology host↔guests. Browser host is authoritative.
-- Host/client/protocol: `net/p2pHost.ts`, `p2pClient.ts`, `binaryProtocol.ts`.
-- High-frequency packets are binary. Core opcodes: 0x01 CLIENT_STATE, 0x02 WORLD_SNAPSHOT, 0x03 FIRE_HITSCAN, 0x04 HIT_CONFIRMED. Do not introduce JSON in high-frequency traffic.
+- Native WebRTC only: `net/directWebRtc.ts`, `RTCPeerConnection({ iceServers: [], bundlePolicy: 'max-bundle' })`, manual offer/answer, star host↔guests.
+- Browser host is authoritative. Core binary opcodes: 0x01 CLIENT_STATE, 0x02 WORLD_SNAPSHOT, 0x03 FIRE_HITSCAN, 0x04 HIT_CONFIRMED.
 - State/snapshots ~30 Hz. `directWebRtc.ts` drops disposable state under backpressure.
-- `net/networkStabilityFix.ts`: broadcast must skip channels not `open`; `closing/closed` peers are cleaned instead of throwing/logging every snapshot tick.
-- `net/pvpTuning.ts`: normalize host timestamps to receiver-local `performance.now()` domain. Browser monotonic clocks do not share epochs.
-- `net/hostRemoteSync.ts`: host renders guest motion ~30 Hz and does not push duplicate unchanged sequence states.
-- Hitscan remains host-authoritative with lag compensation. Tracers are presentation only.
+- `net/networkStabilityFix.ts`: skip DataChannels not `open`; clean closing/closed peers instead of logging send failures every tick.
+- `net/pvpTuning.ts`: maps host `performance.now()` timestamps to receiver-local clock; browser monotonic clocks do not share epochs.
+- `net/hostRemoteSync.ts`: host renders guest state ~30 Hz and skips duplicate sequence transforms.
+- `net/pvpHardening.ts`: pre-validation for FIRE_HITSCAN. Guest weapon must match authoritative replicated weapon, duplicate/too-fast guest shots are dropped, direction must be finite/normalized, and shot origin X/Z is anchored to authoritative shooter state. It also replaces the emergency browser cylinder fallback with the same robot AABB hitbox used by SimpleLagCompensator.
+- Hardening cadence uses client monotonic deltas to reject obvious spam, not as cryptographic anti-cheat. Host itself remains trusted authority.
 
-## Lobby
-- UI: `ui/lobby.ts`.
-- Live name/color sync: `net/lobbyPresenceSync.ts`. Color remains host-validated by regular color protocol; never trust guest color from presence packets.
-- Required: Chrome↔Brave name/color changes appear without reconnect.
-- Player-name field is a public display name, not credentials. `ui/dom.ts` uses `setAttribute('autocomplete','nickname')` because TS DOM typings reject assigning `nickname` directly to `.autocomplete`.
+## Precision / hitscan
+- `gameplay/dynamicPrecisionReticle.ts` computes live FPS-style accuracy from movement, crouch, sprint, airborne state, ADS and firing bloom. It publishes normalized accuracy in `#dynamic-precision-reticle.dataset.accuracy`.
+- `gameplay/precisionShotRuntime.ts` makes that accuracy gameplay-real: immediately around `goneGame.fireWeapon()` it perturbs the camera aim ray inside the weapon spread cone, so local raycast, tracer and transmitted authoritative direction use one identical trajectory; camera orientation is restored before render.
+- Sniper scoped ADS uses near-perfect spread; knife has no ballistic spread.
+- Tracers remain visual only; damage remains host-authoritative hitscan.
 
 ## Robot / hitbox
-- Authored robot front is +Z; gameplay/camera yaw-0 forward is -Z. `models/orientedRobotBuilder.ts` applies a 180° visual adapter. Do not compensate again in physics.
-- Raw anatomy/socket: `models/robotBuilder.ts`; weapon geometry/viewmodels: `models/weaponBuilders.ts`.
-- Authoritative browser hitbox: `net/robotHitbox.ts` + `simpleLagCompensator.ts`.
-- Hitbox intentionally uses two cheap boxes only: torso/propulsor + head/visor. No invisible cylinder below the floating mannequin; arms/outside empty space should miss.
+- Authored robot faces +Z while gameplay yaw-0 faces -Z. `models/orientedRobotBuilder.ts` applies the visual 180° adapter; do not compensate again in physics.
+- Browser authoritative hitbox: `net/robotHitbox.ts` + `simpleLagCompensator.ts`.
+- Exactly two cheap AABBs: torso/propulsor + head/visor. No invisible volume below the floating mannequin; arms/outside empty space miss.
+- Rust `intersect_ray_cylinder` remains a legacy compatibility API for historical WASM/tests; live browser PvP hitbox is the two-box model.
 
 ## Weapons
-Canonical browser config: `weapons/weaponConfig.ts`.
-- AR: 30/120, 180 m.
-- Sniper: 5/25, 550 m.
-- Shotgun: 6/30, 42 m, shell reload.
-- SMG: 36/180, 90 m.
-- Knife: 2.6 m, no ammo.
-- Damage falloff/ranges are enforced by browser host lag validator; keep Rust weapon semantics aligned when shared balance changes.
-- `gameplay/advancedWeaponController.ts`: LMB semi/auto, RMB per-weapon ADS/FOV/sensitivity, R reload, ammo HUD, reticles/scope and reload/pump/bolt/slash viewmodel motion.
-- `gameplay/killAmmoReset.ts`: a locally earned fatal kill fully restores magazine + reserve for all weapons.
-- `gameplay/tracerPresentationFix.ts`: visual projectile beam grows from physical muzzle to projectile head, then fades at impact. It must not appear only in the final segment.
-- `net/remoteShotPresentation.ts`: enemy FIRE_HITSCAN presentation on host and guests; derives muzzle from actual third-person weapon socket/muzzle transform. Muzzle flash is copied once at the weapon tip; tracer moves separately; impact VFX stays at the terminal point.
-- Do not convert visual tracers into authoritative simulated projectiles unless networking is intentionally redesigned.
+Canonical browser balance: `game-web/src/weapons/weaponConfig.ts`; Rust/WASM counterpart: `game-core/src/weapons.rs`. Shared balance values must stay aligned.
+- AR: 30/120, 18 dmg, 180 m, falloff 35→140 to 10, head ×1.5, 6.25 rps.
+- Sniper: 5/25, 70 dmg, 550 m, falloff 180→450 to 50, head ×2, 1 rps.
+- Shotgun: 6/30, 64 dmg, 42 m, falloff 8→30 to 20, head ×1.25, 1.25 rps.
+- SMG: 36/180, 12 dmg, 90 m, falloff 15→65 to 7, head ×1.5, 10 rps.
+- Knife: 50 dmg, 2.6 m hard range, head ×1, no ammo.
+- Browser and Rust damage return 0 past hard range.
+- `gameplay/advancedWeaponController.ts`: semi/auto LMB, RMB ADS/FOV/sensitivity, R reload, ammo HUD, scope/reticle base UX and action animations.
+- `gameplay/killAmmoReset.ts`: locally earned fatal kill restores magazine + reserve for all weapons.
+
+## Shot presentation
+- `gameplay/tracerPresentationFix.ts`: visual beam grows from muzzle to projectile head, then fades at terminal point.
+- `net/remoteShotPresentation.ts`: enemy shot presentation on host/guests; derives actual third-person weapon muzzle transform.
+- Muzzle flash is copied once at weapon tip. Tracer movement and impact VFX are separate.
+
+## Lobby
+- UI: `ui/lobby.ts`; live identity reconciliation: `net/lobbyPresenceSync.ts`.
+- Colors remain host-authoritative through normal color protocol; never trust color from presence packet.
+- Player nickname is not credentials. `ui/dom.ts` uses `setAttribute('autocomplete','nickname')` because TS DOM typings reject direct assignment of `nickname`.
 
 ## Spawn / lifecycle
-- 100 HP; host authoritative. ~10 s spawn shield; ~5 s death phase.
-- Current spawn policy: center of south-east map quadrant: X=+1200, Z=+1200. This is also the giant SE crater center by design/request.
-- `gameplay/spawnController.ts` computes Y from procedural terrain + player height/float and applies it at first gameplay entry + every respawn. It also corrects authoritative host respawn records immediately.
-- Do not reintroduce old `(0,17.5,0)` as intended gameplay spawn.
+- 100 HP, ~10 s spawn shield, ~5 s death phase; host authoritative.
+- Spawn policy: X=+1200, Z=+1200 (center of south-east gameplay-map quadrant / giant crater).
+- `gameplay/spawnController.ts` computes terrain-correct Y at initial game entry and respawn and corrects host authoritative respawn records.
+- Do not reintroduce `(0,17.5,0)` as intended gameplay spawn.
 
-## World / global map
-- Terrain: `game-core/src/lib.rs`; JS fallback mirror: `game-web/pkg/game_core.js`.
-- Global gameplay map window: ±2400 m (4.8×4.8 km), while procedural terrain itself is mathematically unbounded.
-- Authored landmarks: NW massif around (-1500,-1500); giant SE crater + spawn around (+1200,+1200); origin (0,0).
-- `ui/minimap.ts`: cached topographic raster, low elevation dark / high elevation light, relief + contours.
-- `gameplay/liveMapOverlay.ts`: M is a non-blocking overlay; pointer lock/movement/aim/fire continue. ESC closes map before pause. Player marker updates live without reopening. HUD shows X/Z, terrain altitude, flight height, heading/cardinal, quadrant, distance to spawn, map size, scale and landmark markers.
-- Keep map background static/cached; only marker/telemetry should update frequently.
+## World / map
+- Terrain: `game-core/src/lib.rs`; JS fallback: `game-web/pkg/game_core.js`.
+- Global gameplay map window is ±2400 m (4.8×4.8 km); procedural terrain itself is unbounded.
+- `ui/minimap.ts`: cached topographic raster. `gameplay/liveMapOverlay.ts`: M overlay does not stop movement/fire; ESC closes map first; marker/coordinates/altitude/heading update live.
+- Landmark regions: NW massif ~(-1500,-1500), origin, SE crater/spawn ~(+1200,+1200).
+- `world/chunkManager.ts`: chunk set changes only after crossing a 400 m boundary; rocks sample footprint terrain and unsupported rocks are culled.
+- `world/naturalSunRays.ts`: cheap irregular terrain-anchored crepuscular beams.
 
-## Chunks / rocks / sun rays
-- `world/chunkManager.ts`: nearby chunks only; chunk set changes only after crossing 400 m chunk boundary.
-- Rocks sample multiple terrain points under footprint, use limited tilt and are culled when unsupported; never return to one center sample + arbitrary 3-axis rotation.
-- `world/naturalSunRays.ts`: keeps god rays cheap (shared low-poly geometry) but deforms the cone silhouette into irregular crepuscular beams. Each ray is terrain-anchored and extends from actual ground toward cloud altitude; no fixed zero-level truncation.
-
-## Rendering / performance
-- `rendering/scene.ts`: antialias off, DPR capped ~1.25, dynamic shadow map off, high-performance GPU preference.
-- Do not re-enable 2× DPR + 2048² dynamic shadows without measurement.
-- VFX pooling: `vfx/tracerPool.ts`, impacts etc. Damage vignette is DOM/CSS.
-- Separate GPU FPS problems from network latency. Avoid per-RAF expensive terrain/chunk/map regeneration.
+## Rendering / local diagnostics
+- `rendering/scene.ts`: antialias off, DPR ≤1.25, shadows off, high-performance GPU preference.
+- `performance/localTelemetry.ts`: F3 toggles local-only diagnostics: FPS/frame avg+p95+max, long tasks, draw calls/triangles/resources, chunk-boundary hitch, DataChannel buffered bytes/peer count, rejected guest shots and heap when browser exposes it. No telemetry leaves the browser.
+- `performance/performancePack.ts`: home “PRECARICA DATI” button warms/caches models, current build assets, audio and WASM before realtime play; service worker is same-origin and cache HTML/navigation must not pin stale app versions.
+- Treat network latency and render FPS as separate bottlenecks.
 
 ## Audio
-- Sliders remain normal UI percentages.
-- `audio/musicSourceGain.ts` applies source gain 0.25 (50% quieter than previous 0.50 source multiplier) after master×music sliders; do not “fix” this by changing displayed slider percentages.
+- `audio/musicSourceGain.ts` applies source multiplier 0.25 after master×music sliders: 50% quieter than previous 0.50 source level without falsifying displayed slider percentages.
 
-## Key file map
+## High-value files
 - Boot: `game-web/src/main.ts`
-- Engine: `game-web/src/gameplay/engine.ts`
+- Engine: `gameplay/engine.ts`
 - Weapon UX: `gameplay/advancedWeaponController.ts`
-- Spawn: `gameplay/spawnController.ts`
-- Ammo kill reward: `gameplay/killAmmoReset.ts`
-- Live map: `gameplay/liveMapOverlay.ts`, `ui/minimap.ts`
-- Weapon balance: `weapons/weaponConfig.ts`
-- Host/client: `net/p2pHost.ts`, `p2pClient.ts`
+- Precision UI/shot: `gameplay/dynamicPrecisionReticle.ts`, `gameplay/precisionShotRuntime.ts`
+- Balance: `weapons/weaponConfig.ts`, `game-core/src/weapons.rs`
+- Host/client: `net/p2pHost.ts`, `net/p2pClient.ts`
+- PvP hardening/timing: `net/pvpHardening.ts`, `net/pvpTuning.ts`
 - Direct RTC: `net/directWebRtc.ts`
-- Lag/hitbox: `net/simpleLagCompensator.ts`, `net/robotHitbox.ts`
+- Hitbox/lag: `net/simpleLagCompensator.ts`, `net/robotHitbox.ts`, `game-core/src/lag_compensation.rs`
 - Remote shots: `net/remoteShotPresentation.ts`
-- Network send stability: `net/networkStabilityFix.ts`
-- PvP timing: `net/pvpTuning.ts`
-- Host remote rendering: `net/hostRemoteSync.ts`
-- Lobby sync: `net/lobbyPresenceSync.ts`
-- Map terrain/chunks: `world/chunkManager.ts`, `game-core/src/lib.rs`
-- Sun rays: `world/naturalSunRays.ts`
-- Scene/perf: `rendering/scene.ts`
-- Audio source gain: `audio/musicSourceGain.ts`
+- Network stability: `net/networkStabilityFix.ts`
+- Performance: `performance/localTelemetry.ts`, `performance/performancePack.ts`
+- Spawn/map/world: `gameplay/spawnController.ts`, `gameplay/liveMapOverlay.ts`, `ui/minimap.ts`, `world/chunkManager.ts`
 
 ## Change discipline
 1. Read this file, then only relevant high-value files.
-2. Preserve host authority and no-external-service networking.
+2. Preserve host authority and zero-external-service networking.
 3. Prefer focused modules over large `engine.ts` rewrites.
-4. Keep per-frame allocations/work low; reuse pooled Three.js resources.
-5. When only GitHub API is available: blobs → tree → off-ref commit → compare → one `main` ref update → monitor Vercel.
-6. Do not spend deploys on experiments. Build green ≠ visually verified on owner hardware.
-7. Update this file only when an architectural invariant changes; keep it compact.
+4. Keep expensive work out of per-frame paths; reuse/pool Three resources.
+5. When only GitHub API is available: create blobs → tree → off-ref commit → compare → one `main` ref update → monitor Vercel.
+6. Never use contents API for intermediate file creation when deploy count matters; it commits immediately.
+7. Build green ≠ visually verified on owner hardware. Report that distinction precisely.
