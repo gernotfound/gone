@@ -1,5 +1,6 @@
 import { inputState, resetInputState } from '../controls/playerInput.ts';
 import { isSmartphoneDevice } from './smartphoneProfile.ts';
+import { getTouchPreferences } from './touchPreferences.ts';
 
 type MobileControlsApi = {
   enabled?: boolean;
@@ -153,7 +154,10 @@ function bindLook(): void {
     const dy = event.clientY - state.lookY;
     state.lookX = event.clientX;
     state.lookY = event.clientY;
-    const sensitivity = inputState.aim ? 0.003 : 0.0042;
+    const preferences = getTouchPreferences();
+    const sensitivity = inputState.aim
+      ? 0.003 * preferences.adsSensitivity
+      : 0.0042 * preferences.lookSensitivity;
     inputState.yaw -= dx * sensitivity;
     inputState.pitch -= dy * sensitivity;
     inputState.pitch = Math.max(-Math.PI / 2 + 0.05, Math.min(Math.PI / 2 - 0.05, inputState.pitch));
