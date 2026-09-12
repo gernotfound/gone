@@ -1,0 +1,57 @@
+/* PUBG-like mobile interaction: a large right fire control that doubles as a
+ * camera-drag surface. The existing joystick/action layout remains intact. */
+#gone-mobile-controls #mc-fire {
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  touch-action: none;
+  border-width: 2px;
+  box-shadow: 0 0 0 1px rgba(251,113,133,.14), 0 8px 22px rgba(0,0,0,.3);
+}
+
+#gone-mobile-controls #mc-fire::before {
+  content: '◎';
+  position: absolute;
+  top: 7px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 15px;
+  line-height: 1;
+  opacity: .72;
+  pointer-events: none;
+}
+
+#gone-mobile-controls #mc-fire.is-fire-aiming {
+  border-color: rgba(253,164,175,.95);
+  box-shadow: 0 0 0 3px rgba(244,63,94,.14), 0 0 24px rgba(244,63,94,.25);
+}
+
+#gone-mobile-controls #mc-fire.is-fire-dragging {
+  outline: 2px solid rgba(103,232,249,.38);
+  outline-offset: 4px;
+}
+
+#gone-mobile-controls.pubg-fire-aim-active #mobile-look-pad {
+  pointer-events: auto;
+}
+
+/* Give the aiming thumb a wider free-look surface, like modern mobile shooters. */
+html.gone-smartphone:not(.gone-touch-left-handed) #mobile-look-pad {
+  left: 32% !important;
+}
+html.gone-smartphone.gone-touch-left-handed #mobile-look-pad {
+  left: 0 !important;
+  right: 32% !important;
+}
+
+html.gone-smartphone #gone-mobile-controls #mc-fire {
+  width: 82px !important;
+  height: 82px !important;
+}
+
+@media (max-height: 430px) and (orientation: landscape) {
+  html.gone-smartphone #gone-mobile-controls #mc-fire {
+    width: 76px !important;
+    height: 76px !important;
+  }
+}
