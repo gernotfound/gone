@@ -1,11 +1,12 @@
 html,body,#app,#game-canvas{overscroll-behavior:none;-webkit-overflow-scrolling:touch}
 body{touch-action:manipulation;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+:root{--gone-touch-scale:1;--gone-touch-opacity:1}
 #gone-mobile-controls{position:fixed;inset:0;z-index:70;pointer-events:none;touch-action:none;font-family:ui-sans-serif,system-ui,sans-serif}
 #gone-mobile-controls:not(.hidden){display:block}
 #mobile-look-pad{position:absolute;z-index:71;left:42%;right:0;top:0;bottom:0;pointer-events:auto;touch-action:none}
-#mobile-stick{position:absolute;z-index:75;left:max(20px,calc(env(safe-area-inset-left) + 12px));bottom:max(22px,calc(env(safe-area-inset-bottom) + 12px));width:142px;height:142px;border:2px solid rgba(103,232,249,.34);border-radius:50%;background:radial-gradient(circle,rgba(15,23,42,.24),rgba(2,6,23,.48));box-shadow:inset 0 0 28px rgba(34,211,238,.12);pointer-events:auto;touch-action:none}
+#mobile-stick{position:absolute;z-index:75;left:max(20px,calc(env(safe-area-inset-left) + 12px));bottom:max(22px,calc(env(safe-area-inset-bottom) + 12px));width:142px;height:142px;border:2px solid rgba(103,232,249,.34);border-radius:50%;background:radial-gradient(circle,rgba(15,23,42,.24),rgba(2,6,23,.48));box-shadow:inset 0 0 28px rgba(34,211,238,.12);pointer-events:auto;touch-action:none;scale:var(--gone-touch-scale);opacity:var(--gone-touch-opacity);transform-origin:center}
 #mobile-stick-knob{position:absolute;left:50%;top:50%;width:62px;height:62px;transform:translate(-50%,-50%);border-radius:50%;border:2px solid rgba(165,243,252,.75);background:rgba(8,145,178,.38);box-shadow:0 0 20px rgba(34,211,238,.25);pointer-events:none}
-#gone-mobile-controls button{position:absolute;z-index:80;display:flex;align-items:center;justify-content:center;min-width:50px;min-height:50px;padding:0;border:1px solid rgba(148,163,184,.5);border-radius:16px;background:rgba(15,23,42,.63);backdrop-filter:blur(7px);color:#f8fafc;font-size:11px;font-weight:950;letter-spacing:.04em;box-shadow:0 6px 18px rgba(0,0,0,.24);pointer-events:auto;touch-action:none;-webkit-tap-highlight-color:transparent}
+#gone-mobile-controls button{position:absolute;z-index:80;display:flex;align-items:center;justify-content:center;min-width:50px;min-height:50px;padding:0;border:1px solid rgba(148,163,184,.5);border-radius:16px;background:rgba(15,23,42,.63);backdrop-filter:blur(7px);color:#f8fafc;font-size:11px;font-weight:950;letter-spacing:.04em;box-shadow:0 6px 18px rgba(0,0,0,.24);pointer-events:auto;touch-action:none;-webkit-tap-highlight-color:transparent;scale:var(--gone-touch-scale);opacity:var(--gone-touch-opacity);transform-origin:center}
 #gone-mobile-controls button.is-held,#gone-mobile-controls button:active{transform:scale(.94);background:rgba(8,145,178,.78);border-color:rgba(103,232,249,.9)}
 #gone-mobile-controls .mc-action{width:66px;height:66px;border-radius:50%}
 #gone-mobile-controls .mc-fire{right:max(22px,calc(env(safe-area-inset-right) + 14px));bottom:max(26px,calc(env(safe-area-inset-bottom) + 16px));width:78px;height:78px;border-color:rgba(251,113,133,.72);background:rgba(159,18,57,.56);font-size:12px}
@@ -18,9 +19,26 @@ body{touch-action:manipulation;-webkit-touch-callout:none;-webkit-user-select:no
 #mc-map{right:max(14px,calc(env(safe-area-inset-right) + 8px));top:max(72px,calc(env(safe-area-inset-top) + 66px));font-size:10px}
 #mc-weapon-switcher{position:absolute;z-index:80;left:50%;top:max(12px,calc(env(safe-area-inset-top) + 8px));transform:translateX(-50%);display:flex;align-items:center;gap:7px;height:50px;pointer-events:auto}
 #mc-weapon-switcher button{position:relative;inset:auto;min-width:48px;min-height:48px;font-size:26px}
-#mc-weapon-name{min-width:76px;padding:7px 10px;border:1px solid rgba(103,232,249,.35);border-radius:12px;background:rgba(2,6,23,.62);backdrop-filter:blur(7px);color:#a5f3fc;text-align:center;font-size:11px;font-weight:950;letter-spacing:.08em}
+#mc-weapon-name{min-width:76px;padding:7px 10px;border:1px solid rgba(103,232,249,.35);border-radius:12px;background:rgba(2,6,23,.62);backdrop-filter:blur(7px);color:#a5f3fc;text-align:center;font-size:11px;font-weight:950;letter-spacing:.08em;opacity:var(--gone-touch-opacity)}
 #gone-mobile-controls.map-open>*{display:none!important}#gone-mobile-controls.map-open #mc-map{display:flex!important;top:max(12px,calc(env(safe-area-inset-top) + 8px));background:rgba(15,118,110,.9);font-size:9px}#gone-mobile-controls.map-open #mc-map::after{content:' CLOSE'}
 #gone-rotate-phone{display:none;position:fixed;z-index:999;left:50%;top:50%;transform:translate(-50%,-50%);width:min(84vw,360px);padding:18px 20px;border:1px solid rgba(103,232,249,.5);border-radius:18px;background:rgba(2,6,23,.9);color:#e2e8f0;text-align:center;font:800 14px/1.4 ui-sans-serif,system-ui,sans-serif;pointer-events:none;backdrop-filter:blur(10px)}
+
+/* Left-handed layout mirrors the two-thumb interaction zones while keeping the
+ * weapon switcher centered. !important is intentional because smartphone.css
+ * contains device-specific positional overrides. */
+html.gone-touch-left-handed #mobile-look-pad{left:0!important;right:36%!important}
+html.gone-touch-left-handed #mobile-stick{left:auto!important;right:max(14px,calc(env(safe-area-inset-right) + 10px))!important}
+html.gone-touch-left-handed #mc-sprint{left:auto!important;right:max(104px,calc(env(safe-area-inset-right) + 96px))!important}
+html.gone-touch-left-handed #gone-mobile-controls .mc-fire{right:auto!important;left:max(15px,calc(env(safe-area-inset-left) + 10px))!important}
+html.gone-touch-left-handed #gone-mobile-controls .mc-aim{right:auto!important;left:max(98px,calc(env(safe-area-inset-left) + 90px))!important}
+html.gone-touch-left-handed #mc-jump{right:auto!important;left:max(98px,calc(env(safe-area-inset-left) + 90px))!important}
+html.gone-touch-left-handed #mc-reload{right:auto!important;left:max(15px,calc(env(safe-area-inset-left) + 10px))!important}
+html.gone-touch-left-handed #mc-crouch{right:auto!important;left:max(15px,calc(env(safe-area-inset-left) + 10px))!important}
+html.gone-touch-left-handed #mc-menu{left:auto!important;right:max(8px,calc(env(safe-area-inset-right) + 6px))!important}
+html.gone-touch-left-handed #mc-map{right:auto!important;left:max(8px,calc(env(safe-area-inset-left) + 6px))!important}
+html.gone-smartphone.gone-touch-left-handed #health-hud{left:auto!important;right:max(8px,calc(env(safe-area-inset-right) + 6px))!important;transform-origin:bottom right!important}
+html.gone-smartphone.gone-touch-left-handed #advanced-weapon-hud{right:auto!important;left:max(8px,calc(env(safe-area-inset-left) + 6px))!important;transform-origin:bottom left!important}
+
 @media (orientation:portrait) and (max-width:760px){#gone-rotate-phone.is-active{display:block}}
 @media (pointer:coarse){
   #main-menu,#settings-menu,#multiplayer-lobby{max-width:min(94vw,560px)!important;max-height:calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 18px)!important;padding:clamp(18px,4vw,34px)!important;border-radius:22px!important}
@@ -40,6 +58,8 @@ body{touch-action:manipulation;-webkit-touch-callout:none;-webkit-user-select:no
   #mobile-stick{width:126px;height:126px}#mobile-stick-knob{width:54px;height:54px}
   #gone-mobile-controls .mc-action{width:58px;height:58px;min-width:58px;min-height:58px}#gone-mobile-controls .mc-fire{width:70px;height:70px}
   #mc-aim{right:max(100px,calc(env(safe-area-inset-right) + 92px));bottom:max(78px,calc(env(safe-area-inset-bottom) + 70px))}#mc-jump{right:max(100px,calc(env(safe-area-inset-right) + 92px))}#mc-reload{bottom:max(104px,calc(env(safe-area-inset-bottom) + 96px))}#mc-crouch{bottom:max(160px,calc(env(safe-area-inset-bottom) + 152px))}#mc-sprint{bottom:max(132px,calc(env(safe-area-inset-bottom) + 124px))}
+  html.gone-touch-left-handed #mc-aim{right:auto!important;left:max(100px,calc(env(safe-area-inset-left) + 92px))!important}
+  html.gone-touch-left-handed #mc-jump{right:auto!important;left:max(100px,calc(env(safe-area-inset-left) + 92px))!important}
   #health-hud{bottom:max(142px,calc(env(safe-area-inset-bottom) + 134px))!important}
   #advanced-weapon-hud{bottom:max(166px,calc(env(safe-area-inset-bottom) + 158px))!important}
 }
