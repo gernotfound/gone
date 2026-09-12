@@ -53,6 +53,50 @@ function updateVolumes() {
     soundSynth.setSfxVolume(volumes.sfx);
 }
 
+function musicEnabled(): boolean {
+    return DOM.musicStatus.textContent !== 'OFF' && volumes.master > 0 && volumes.music > 0;
+}
+
+function resumeAudioFromGesture(): void {
+    // Safari/iOS requires media playback and AudioContext resume to originate
+    // directly from a user gesture. Keep this synchronous up to play()/unlock().
+    void soundSynth.unlock().catch(() => {});
+    if (!musicEnabled() || !DOM.bgMusic.paused) return;
+    const playback = DOM.bgMusic.play();
+    setIsMusicPlaying(true);
+    void playback.catch(() => {
+        setIsMusicPlaying(false);
+    });
+}
+
+function installAudioLifecycle(): void {
+    DOM.bgMusic.preload = 'auto';
+    DOM.bgMusic.setAttribute('playsinline', '');
+
+    // Do not consume this listener after the first touch: iOS can suspend audio
+    // after backgrounding, so the next real gesture must be able to resume it.
+    document.addEventListener('pointerdown', resumeAudioFromGesture, { capture: true, passive: true });
+    document.addEventListener('keydown', resumeAudioFromGesture, { capture: true });
+
+    DOM.bgMusic.addEventListener('play', () => setIsMusicPlaying(true));
+    DOM.bgMusic.addEventListener('pause', () => setIsMusicPlaying(false));
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState !== 'visible') return;
+        void soundSynth.unlock().catch(() => {});
+        if (musicEnabled() && DOM.bgMusic.paused) {
+            void DOM.bgMusic.play().then(() => setIsMusicPlaying(true)).catch(() => {
+                // A resumed iOS tab may still require one more user gesture;
+                // the persistent pointerdown listener above handles that path.
+            });
+        }
+    });
+    window.addEventListener('pageshow', () => {
+        if (musicEnabled() && DOM.bgMusic.paused) {
+            void DOM.bgMusic.play().catch(() => {});
+        }
+    });
+}
+
 function openJoinLobby(directOfferCode: string, onPlayMultiplayer: () => void) {
     DOM.mainMenu.classList.add('hidden');
     DOM.multiplayerLobby.classList.remove('hidden');
@@ -74,6 +118,7 @@ export function setupMenu(callbacks: {
     onExit: () => void;
 }) {
     keepMenusAboveGameplayOverlays();
+    installAudioLifecycle();
     initLobbyEvents();
     window.addEventListener('online', updateNetworkStatus);
     window.addEventListener('offline', updateNetworkStatus);
@@ -97,11 +142,16 @@ export function setupMenu(callbacks: {
             DOM.musicStatus.className = 'text-red-400';
             soundSynth.setMasterVolume(0);
         } else {
-            DOM.bgMusic.play().catch(e => console.error(e));
+            const playback = DOM.bgMusic.play();
             isMusicPlaying = true;
             DOM.musicStatus.textContent = 'ON';
             DOM.musicStatus.className = 'text-emerald-400';
             soundSynth.setMasterVolume(volumes.master);
+            void soundSynth.unlock().catch(() => {});
+            void playback.catch((error) => {
+                isMusicPlaying = false;
+                console.error('[Audio] Music playback blocked:', error);
+            });
         }
     });
 
@@ -146,7 +196,7 @@ export function setupMenu(callbacks: {
     DOM.btnPlayMultiplayer.addEventListener('click', async (e) => {
         e.stopPropagation();
         if (DOM.btnPlayMultiplayer.disabled) return;
-        soundSynth.unlock().catch(() => {});
+        resumeAudioFromGesture();
         callbacks.onPlayMultiplayer();
     });
 
