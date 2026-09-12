@@ -1,169 +1,232 @@
 # G.O.N.E. browser architecture
 
-This document describes both the current ownership boundaries and the direction future refactors should follow. The objective is not to maximize the number of files: it is to make each behavior have one obvious owner, keep runtime composition explicit, and avoid hidden patch layers that make the executed code differ from the code an engineer or AI reads.
+This document describes current ownership boundaries and the direction future refactors should follow. The objective is not to maximize file count: it is to give each behavior one obvious owner, keep composition explicit, and avoid hidden patch layers.
 
 ## Core rule: one behavior, one owner
 
-When a bug belongs to a module, fix that module. Do not add a second startup module that monkey-patches the first one unless backward compatibility makes that unavoidable.
+When a bug belongs to a module, fix that module. Do not add a second startup module that monkey-patches the first one unless a real compatibility boundary requires it.
 
 Avoid new code that:
 
 - patches `THREE.*.prototype` at runtime;
 - replaces another module's methods after startup;
 - polls every animation frame only to repair state written incorrectly elsewhere;
-- duplicates canonical weapon, spawn, protocol or lifecycle constants;
-- adds another `window.goneGame` consumer when a typed import/callback is practical.
+- duplicates canonical weapon/spawn/protocol/lifecycle constants;
+- adds a new global facade dependency when a typed import/event/context is practical.
 
-Compatibility adapters are allowed, but their filename and comments must identify them as compatibility code and they should sit at the boundary they adapt.
+Compatibility adapters are allowed, but their filename/comments must make that role explicit.
 
-## Composition root
+## Composition roots
 
-`game-web/src/main.ts` is intentionally tiny. Browser startup is owned by:
+`game-web/src/main.ts` is intentionally small. It owns device/PWA composition that must surround the game runtime:
 
-- `game-web/src/runtime/startClientRuntime.ts`
+- smartphone profile;
+- explicit input mode;
+- touch preferences;
+- PWA runtime;
+- client runtime;
+- smartphone fallback controls;
+- PUBG-like touch actions;
+- draggable touch layout;
+- mobile session resume.
 
-That module defines explicit startup phases: pre-bootstrap guards, network runtime, gameplay runtime, presentation/diagnostics. If a feature must run before another feature, encode the ordering there rather than relying on import side effects.
-
-`startClientRuntime.ts` may compose modules; it should not contain gameplay algorithms.
+The game/browser runtime itself is owned by `game-web/src/runtime/startClientRuntime.ts`. It defines explicit phases: diagnostics/guards, bootstrap, gameplay systems, mobile runtime, networking, presentation/diagnostics. Ordering belongs there instead of import side effects.
 
 ## Browser layers and ownership
 
 ### 1. UI (`game-web/src/ui/`)
 
-Owns menus, HUD, lobby DOM, minimap UI and user-facing overlays. UI should translate state into DOM/canvas output and emit user intent. It should not own terrain math, hit validation or network authority.
+Owns menus, HUD, lobby DOM, minimap UI and user-facing overlays. UI translates state into DOM/canvas output and emits intent; it should not own terrain math, hit validation or network authority.
 
-The lobby is still a secondary refactor target: `ui/lobby.ts` contains both UI rendering and direct-WebRTC session orchestration. Future work should extract session orchestration into a typed session controller while keeping DOM rendering in `ui/`.
+`ui/menu.ts` also owns HTML media lifecycle because the BGM element is a menu-level DOM resource. Its iOS gesture-unlock path must keep `HTMLAudioElement.play()` and Web Audio unlock close to a real user gesture. Source gain itself remains in `audio/musicSourceGain.ts`.
 
-### 2. Input (`game-web/src/controls/`)
+The lobby is still a secondary refactor target: `ui/lobby.ts` mixes DOM rendering and direct-WebRTC orchestration. Future work can extract session orchestration into a typed session controller while leaving rendering in UI.
 
-Owns keyboard/mouse capture and normalized input state. Raw browser events should be converted to intent here or in a focused controller. Gameplay rules do not belong in the low-level input collector.
+### 2. Input and mobile controls (`game-web/src/controls/`, `game-web/src/mobile/`)
+
+Low-level keyboard/mouse state belongs in `controls/`. Device-specific gesture translation belongs in focused mobile controllers.
+
+Ownership:
+
+- `mobile/mobileRuntime.ts`: generic touch movement/look/actions, virtual pointer-lock compatibility, wake/orientation/fullscreen best effort, mobile render-DPR guard;
+- `mobile/smartphoneControlsGuard.ts`: fallback control tree if the primary touch runtime is unavailable or heuristics fail;
+- `mobile/inputMode.ts`: persistent explicit `keyboard` vs `screen` choice; explicit screen mode is authoritative over detection;
+- `mobile/smartphoneProfile.ts` + `smartphone.css`: phone-specific presentation/HUD compaction;
+- `mobile/touchPreferences.ts`: persistent user tuning (look/ADS sensitivity, FIRE dead-zone, gyro, scale/opacity, handedness, secondary FIRE);
+- `mobile/pubgTouchControls.ts`: PUBG-like combat gestures and iOS-safe capture-phase action buttons;
+- `mobile/touchLayoutEditor.ts`: persistent draggable control offsets;
+- `mobile/mobileSessionResume.ts`: background/offline input release and foreground/online session cadence repair.
+
+The PUBG touch layer intentionally intercepts the primary FIRE button before the legacy mobile handler. This is not a general monkey-patch: it is the device-input boundary required to route sustained touch fire into `advancedWeaponController` without setting the legacy continuous `inputState.fire` path that can bypass finite ammo accounting.
 
 ### 3. Gameplay (`game-web/src/gameplay/`)
 
-Owns local player flow and feature controllers. `engine.ts` remains the compatibility/game-loop facade, but it is no longer the intended home for every new feature.
+Owns local player flow and feature controllers. `engine.ts` remains the compatibility/game-loop facade, but is no longer the intended home for every new feature.
 
-Focused ownership introduced by the refactor:
+Focused ownership includes:
 
-- `spawnPolicy.ts`: deterministic spawn points and terrain-correct spawn height;
-- `networkBindings.ts`: bridge between P2P callbacks and gameplay state, including installation of the host per-slot respawn resolver;
-- `spawnController.ts`: manual/debug spawn diagnostics compatibility only, with no polling or host-state repair;
-- `remotePlayerRegistry.ts`: remote model lifecycle, interpolation presentation and remote shield presentation;
-- `networkBindings.ts`: bridge between P2P callbacks and gameplay state;
-- `advancedWeaponController.ts`: ammo/reload/ADS/action UX;
-- `precisionShotRuntime.ts`: accuracy/spread adaptation around the local shot path.
+- `spawnPolicy.ts`: deterministic spawns and terrain-correct height;
+- `networkBindings.ts`: P2P callback ↔ gameplay bridge and host per-slot respawn resolver;
+- `spawnController.ts`: manual/debug spawn compatibility only;
+- `remotePlayerRegistry.ts`: remote model lifecycle/interpolation/shield presentation;
+- `advancedWeaponController.ts`: trigger interception, finite ammo/reload, ADS/FOV, ammo HUD/action UX;
+- `precisionShotRuntime.ts`: accuracy/spread adaptation around local shot path.
 
-`engine.ts` should trend toward a coordinator that owns the local game loop, local physics/camera and the compatibility facade. New remote-player, network, UI or world systems should not be added directly to it.
+### Ammo authority invariant
+
+`advancedWeaponController.ts` is the authoritative browser owner of local magazine/reserve/reload state. `engine.ts` still contains a legacy direct-fire compatibility path keyed from `inputState.fire`; new touch code must not use that path for sustained FIRE. Successful ranged shots must decrement magazine exactly once and no shot may be produced after magazine reaches zero until reload succeeds.
+
+This invariant applies regardless of desktop/mobile presentation. Desktop mouse interception already routes through the advanced weapon controller; mobile controls must preserve the same contract.
 
 ### 4. Weapons (`game-web/src/weapons/`)
 
-`weaponConfig.ts` is the canonical browser gameplay contract for weapon identity, cadence, damage/range, ammunition, reload, ADS and spread.
+`weaponConfig.ts` is the canonical browser gameplay contract for identity, cadence, damage/range, ammunition, reload, ADS and spread. `game-core/src/weapons.rs` is the Rust counterpart for shared authoritative calculations.
 
-`weaponCombatStats.ts` derives weapon id/name/fire cadence from that canonical config and owns only camera/viewmodel recoil tuning. Do not duplicate id, display name or fire rate in the engine.
-
-If a new weapon property changes gameplay semantics, add it to `weaponConfig.ts` and keep the Rust counterpart aligned where applicable.
+`weaponCombatStats.ts` derives shared identity/cadence from canonical config and owns camera/viewmodel recoil tuning. Do not duplicate those values in the engine.
 
 ### 5. Networking (`game-web/src/net/`)
 
-Owns binary protocol, transport, WebRTC session behavior, host authority, lag compensation and network-specific presentation adapters.
+Owns binary protocol, transport, WebRTC session behavior, host authority, lag compensation and network presentation adapters.
 
-The host remains authoritative for PvP. Browser presentation code must never turn a visual ray/tracer into damage authority.
+The browser host remains authoritative for PvP. Visual rays/tracers never become damage authority.
 
-`legacyRemoteShotPresentation.ts` exists only for the older JSON `FIRE_HITSCAN` callback. Current binary enemy-shot presentation is owned by `remoteShotPresentation.ts`. Compatibility code should not grow new gameplay behavior.
+Direct WebRTC (`directWebRtc.ts`) intentionally uses no external ICE servers. `NativeRtcDataChannel` owns transport resilience:
 
-### 6. World / rendering / models / VFX
+- 3 s heartbeat cadence;
+- 15 s heartbeat expiry;
+- 6 s grace for transient `disconnected` state;
+- deterministic teardown on failed/expired connection.
 
-- `world/`: chunk lifecycle, terrain sampling and world ambience. `worldConfig.ts` owns the centered chunk grid; `chunkManager.ts` owns priority streaming; terrain pooling and rock construction live in focused helpers so the manager remains a coordinator;
-- `rendering/`: renderer/scene resources. Shared sun-ray geometry/material is created directly by `naturalSunRayResources.ts`, not installed later through a runtime patch;
+`mobileSessionResume.ts` can restart state/snapshot cadence after the same RTC connection survives a background/network transition. It cannot recreate a terminally closed direct RTC session without a new SDP negotiation; `gone-reconnect-requested` is an intent/event boundary for that situation.
+
+`legacyRemoteShotPresentation.ts` exists only for older JSON FIRE_HITSCAN callbacks. Current binary enemy-shot presentation is `remoteShotPresentation.ts`.
+
+### 6. PWA (`game-web/src/pwa/`, `game-web/public/`)
+
+`pwa/pwaRuntime.ts` owns install guidance, build-version polling and safe update application. Build identity is generated before build into both the client module and `/version.json`.
+
+Service-worker caches are build-aware. Updates may be prepared during a live match, but forced page reload belongs at a safe menu/lobby boundary, not mid-PvP.
+
+### 7. World / rendering / models / VFX
+
+- `world/`: chunk lifecycle, terrain sampling, world ambience;
+- `rendering/`: renderer/scene resources;
 - `models/`: model construction/loading/socket attachment;
-- `vfx/`: pooled runtime visual effects.
+- `vfx/`: pooled runtime effects.
 
-Visual behavior should live in the object that executes it. For example, tracer travel/fade is implemented directly in `vfx/tracerPool.ts`; there is no separate startup patch replacing `TracerPool.update()`.
+Visual behavior should live in the object that executes it. Tracer travel/fade is directly in `vfx/tracerPool.ts`; there is no separate update patch.
 
-### 7. Rust/WASM (`game-core/`)
+### 8. Performance (`game-web/src/performance/`)
 
-Owns performance-sensitive/pure mathematical systems such as procedural terrain and physics plus shared authoritative calculations. Keep browser/DOM/Three.js dependencies out of Rust core logic.
+World/runtime performance favors frame-time stability over synchronous throughput.
+
+- `adaptiveRenderScale.ts` owns render-scale adaptation. Do not create a competing mobile-only quality governor without first extending this owner.
+- `localTelemetry.ts` is local F3 diagnostics only and must remain non-uploading.
+- `performancePack.ts` owns explicit asset/model/audio/WASM warming/cache.
+- `cacheIntegrity.ts` owns cached-pack integrity checks.
+
+### 9. Observability (`game-web/src/observability/`, `game-web/api/`)
+
+`observability/clientDiagnostics.ts` is the owner of bounded privacy-safe client failure reporting. It is intentionally separate from local performance telemetry.
+
+The client may report coarse failure context only: event kind, build ID, error message/stack, pathname, coarse device class, input mode, standalone/online/visibility. It must not upload continuous FPS, coordinates, lobby/session codes, identity, raw UA or URL query strings.
+
+`api/client-telemetry.js` is the Vercel function boundary that validates/sanitizes payload size and event kind, then emits structured runtime logs. Reporting must be capped, deduplicated and fail-open so observability can never break gameplay.
+
+### 10. Deployment / browser security (`game-web/vercel.json`)
+
+`vercel.json` owns both main-only Git deployment and response security headers. Current policy includes CSP, frame denial, nosniff, referrer policy and permissions policy. Gyroscope/accelerometer remain self-only because touch gyro is an optional first-party feature.
+
+Header changes require two levels of validation:
+
+1. local/build/browser tests for application compatibility;
+2. actual Vercel production response verification after the single merge to `main`, because Vite preview does not reproduce Vercel response headers.
+
+### 11. Rust/WASM (`game-core/`)
+
+Owns performance-sensitive/pure mathematical systems such as procedural terrain, physics and shared authoritative calculations. Browser/DOM/Three dependencies do not belong in Rust core logic.
 
 ## World streaming performance model
 
-World streaming is designed for frame-time stability rather than maximum synchronous throughput:
+World streaming is designed for stable frame times:
 
-- procedural terrain height is evaluated once per vertex in Rust/WASM; slope colors use cached-grid finite differences instead of two additional full terrain evaluations;
-- missing chunks are priority-sorted by distance and at most one expensive terrain/detail task is executed per animation frame;
-- stale chunks stay resident only while replacement chunks stream in, preventing holes; a hard radius bounds transient memory;
-- terrain `PlaneGeometry` objects are pooled and rewritten instead of allocated/disposed at every cell crossing;
-- rocks remain one instanced draw per detailed chunk and are created lazily only inside the near-detail radius;
-- shared sun-ray resources are created once, while each ray is grounded/configured exactly once when its chunk is built;
-- terrain bounds are recomputed after height injection so GPU frustum culling remains correct on high relief.
+- terrain height is evaluated once per vertex in Rust/WASM; slope colors reuse cached-grid finite differences;
+- missing chunks are distance-prioritized and expensive work is bounded per frame;
+- stale chunks remain while replacements stream, with a hard radius bounding memory;
+- terrain geometry is pooled/re-written rather than repeatedly allocated;
+- rocks use instancing and near-detail lazy creation;
+- shared sun-ray GPU resources are allocated once and rays are grounded/configured at chunk creation;
+- terrain bounds are recomputed after height injection for correct frustum culling.
 
-Do not add naive per-chunk LOD with mismatched edge tessellation: it creates T-junction cracks. If terrain LOD becomes necessary, use stitched edges/skirts or a clipmap/quadtree design and measure it against the existing fog-limited draw distance.
+Do not introduce naive mismatched-edge terrain LOD; use stitched edges/skirts or a clipmap/quadtree if LOD is later justified by measurement.
 
-## Compatibility facade: `window.goneGame`
+## Compatibility facades
 
-`window.goneGame` is retained because UI/network adapters and browser smoke tests use it. Treat it as a compatibility facade, not the default dependency-injection mechanism.
+Globals such as `window.goneGame`, `window.goneWeapons`, `window.goneMobileControls`, `window.gonePubgTouchControls`, `window.goneTouchPreferences`, `window.goneTouchLayout`, `window.gonePwa` and `window.goneDiagnostics` exist because UI/device adapters and browser smokes need stable inspection/action surfaces.
 
-Rules for future work:
+Rules:
 
-1. Existing public members should remain stable unless all consumers/tests are migrated in the same change.
-2. New internal modules should prefer typed imports and explicit callbacks/context objects.
-3. If the facade becomes large again, move its construction to a dedicated adapter module rather than distributing global writes around the repository.
+1. Keep existing public members stable unless all consumers/tests migrate together.
+2. Prefer typed imports/events/context objects for new internal dependencies.
+3. Do not use a facade merely to repair another owner's incorrect state per frame.
 
-## Files that are large but not automatically wrong
+## Structural targets
 
-File size alone is not a refactor criterion. Some large files are dense, cohesive definitions:
+Recommended future refactor order remains:
 
-- `net/binaryProtocol.ts` is a protocol contract and benefits from keeping wire layout close together;
-- procedural weapon model builders are data/geometry-heavy and can be split per weapon later, but they are less dangerous than a cross-domain god object;
-- sound synthesis may be large while still having one clear responsibility.
+1. **Lobby/session split** — extract direct-WebRTC/session orchestration from `ui/lobby.ts`.
+2. **Engine lifecycle split** — move local death/respawn/shield lifecycle into a focused controller.
+3. **Weapon model builders** — split model construction per weapon behind stable exports.
+4. **Host internals** — if `p2pHost.ts` grows further, separate peer bookkeeping from authoritative combat while preserving one host authority boundary.
+5. **Global facade migration** — gradually replace new global lookups with typed services/events.
 
-Split a large file when it owns multiple lifecycles, has unrelated reasons to change, or requires readers to understand distant subsystems to make a local edit.
-
-## Next structural targets
-
-The recommended order for future refactoring is:
-
-1. **Lobby/session split** — extract direct-WebRTC/session orchestration from `ui/lobby.ts` into `net/sessionController.ts` (or equivalent), leaving DOM rendering in UI.
-2. **Engine lifecycle split** — move local death/respawn/shield state into a focused local-player lifecycle controller with explicit dependencies.
-3. **Weapon model builders** — split `models/weaponBuilders.ts` into per-weapon builders behind the existing barrel export, without changing call sites.
-4. **Host internals** — if `p2pHost.ts` keeps growing, separate peer/session bookkeeping from authoritative combat processing while preserving one host authority boundary.
-5. **Global facade migration** — progressively replace new `window.goneGame` lookups with typed services/events; keep the facade as a thin compatibility layer.
-
-Do not perform these splits purely for line-count targets. Preserve stable APIs and do them when a change can be verified end-to-end.
+Do not perform these splits only for line-count goals.
 
 ## Data flow
 
 ```text
-Browser events
-   -> controls / focused input controller
-   -> gameplay coordinator
+Browser / touch / sensor events
+   -> controls + focused mobile input controller
+   -> gameplay controllers
       -> WASM physics / terrain math
-      -> weapon runtime contract
+      -> weapon runtime + finite ammo controller
       -> P2P gameplay bindings
          -> host-authoritative networking
       -> scene/world/VFX presentation
       -> UI state presentation
+
+Client failures
+   -> observability/clientDiagnostics
+   -> bounded POST /api/client-telemetry
+   -> Vercel structured runtime logs
 ```
 
-Startup is separate from this data flow:
+Startup is separate:
 
 ```text
 main.ts
+  -> device/input/PWA setup
   -> runtime/startClientRuntime.ts
-       -> install guards
+       -> diagnostics + guards
        -> bootstrap engine/menu
-       -> network features
-       -> gameplay features
-       -> presentation + diagnostics
+       -> gameplay + mobile runtime
+       -> network runtime
+       -> presentation/diagnostics
+  -> fallback/PUBG/layout/resume device layers
 ```
 
-## Refactor checklist
+## Refactor / release checklist
 
-Before merging a structural change:
+Before merging a structural or browser-runtime change:
 
-- identify the single canonical owner of each constant and behavior touched;
-- search for runtime patches/wrappers that become redundant after the owner is fixed;
-- search for files with zero import/reference consumers before deleting them;
-- preserve `window.goneGame` compatibility where browser scripts depend on it;
-- keep host authority and binary protocol behavior unchanged unless the task explicitly changes networking semantics;
+- identify the canonical owner of every behavior/constant touched;
+- decide whether a physical-iPhone report is device-specific or a global contract bug;
+- preserve host authority and finite-ammo semantics;
+- search for redundant patches/wrappers and dynamic/global consumers;
+- preserve compatibility facade members used by browser smokes;
 - keep expensive work out of per-frame paths;
-- update this document and `AGENTS.md` when high-value file ownership changes;
-- create Git objects off-ref, inspect the diff, and move `main` once because Vercel free-tier builds are push-sensitive.
+- update this document and `AGENTS.md` when ownership changes;
+- add deterministic Tier tests plus browser interaction smoke where applicable;
+- run full CI on the branch;
+- squash once to `main`;
+- then verify the real Vercel deployment SHA/build ID/security headers/runtime state independently.
