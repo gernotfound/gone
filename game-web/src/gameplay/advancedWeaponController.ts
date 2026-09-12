@@ -5,6 +5,7 @@ import {
   type WeaponKey,
   type WeaponRuntimeConfig,
 } from '../weapons/weaponConfig.ts';
+import { inputState } from '../controls/playerInput.ts';
 
 type AmmoState = { magazine: number; reserve: number };
 type GoneGameApi = {
@@ -93,6 +94,7 @@ function startReload(): void {
 
   triggerHeld = false;
   adsHeld = false;
+  inputState.aim = false;
   reloadActive = true;
   reloadWeapon = currentWeapon;
   reloadStartedAt = performance.now();
@@ -172,6 +174,19 @@ function attemptFire(): void {
   actionImpulse = 1;
   refreshHud(true);
   if (cfg.magazineSize > 0 && state.magazine === 0 && state.reserve > 0) scheduleEmptyReload(currentWeapon);
+}
+
+/** Fully refills the magazine and reserve for one ranged weapon. */
+export function refillWeaponAmmo(weapon: WeaponKey): boolean {
+  const cfg = WEAPON_RUNTIME[weapon];
+  if (!cfg || cfg.reloadStyle === 'none' || cfg.magazineSize <= 0) return false;
+  const state = ammo[weapon];
+  const alreadyFull = state.magazine >= cfg.magazineSize && state.reserve >= cfg.reserveAmmo;
+  state.magazine = cfg.magazineSize;
+  state.reserve = cfg.reserveAmmo;
+  if (reloadActive && reloadWeapon === weapon) cancelReload();
+  if (weapon === currentWeapon) refreshHud(true);
+  return !alreadyFull;
 }
 
 function ensureRig(): void {
@@ -344,6 +359,7 @@ function updateWeaponSelection(): void {
   cancelReload();
   triggerHeld = false;
   adsHeld = false;
+  inputState.aim = false;
   refreshHud(true);
 }
 
@@ -375,6 +391,7 @@ function installInputOverrides(): void {
     } else if (event.button === 2) {
       event.preventDefault();
       adsHeld = true;
+      inputState.aim = true;
     }
   }, true);
 
@@ -384,6 +401,7 @@ function installInputOverrides(): void {
       triggerHeld = false;
     } else if (event.button === 2) {
       adsHeld = false;
+      inputState.aim = false;
     }
   }, true);
 
@@ -412,6 +430,7 @@ function installInputOverrides(): void {
   window.addEventListener('blur', () => {
     triggerHeld = false;
     adsHeld = false;
+    inputState.aim = false;
   });
   window.addEventListener('contextmenu', (event) => {
     if (document.pointerLockElement === document.body) event.preventDefault();
@@ -427,6 +446,7 @@ export function startAdvancedWeaponController(): void {
   (window as any).goneWeapons = {
     ammo,
     reload: startReload,
+    refillWeaponAmmo,
     isReloading: () => reloadActive,
     isAiming: () => adsHeld,
     config: WEAPON_RUNTIME,

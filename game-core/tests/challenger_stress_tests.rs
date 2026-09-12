@@ -96,12 +96,17 @@ fn challenger_weapon_ttk_matches_browser_balance() {
         (WeaponType::Cecchino, 20.0, 1.0),
         (WeaponType::Pompa, 20.0, 1.6),
         (WeaponType::Mitraglietta, 20.0, 0.8),
-        (WeaponType::Coltello, 2.0, 0.8),
+        (WeaponType::Coltello, 2.0, 0.0),
     ];
     for (weapon, distance, expected) in cases {
         let ttk = calculate_theoretical_ttk(weapon, 100.0, distance);
         assert!((ttk - expected).abs() < 1e-4, "{:?}: {} != {}", weapon, ttk, expected);
-        assert!(calculate_damage(weapon, distance, false) < 100.0);
+        let damage = calculate_damage(weapon, distance, false);
+        if weapon == WeaponType::Coltello {
+            assert_eq!(damage, 999.0);
+        } else {
+            assert!(damage < 100.0);
+        }
     }
 }
 
@@ -144,9 +149,9 @@ fn challenger_weapon_damage_falloff_and_hard_ranges() {
 fn challenger_knife_strict_2_6m_cutoff() {
     let cfg = get_weapon_config(WeaponType::Coltello);
     assert_eq!(cfg.effective_range_m, 2.6);
-    assert_eq!(calculate_damage(WeaponType::Coltello, 2.6, false), 50.0);
+    assert_eq!(calculate_damage(WeaponType::Coltello, 2.6, false), 999.0);
     assert_eq!(calculate_damage(WeaponType::Coltello, 2.6001, false), 0.0);
-    assert_eq!(calculate_damage(WeaponType::Coltello, 2.0, true), 50.0);
+    assert_eq!(calculate_damage(WeaponType::Coltello, 2.0, true), 999.0);
 
     // Cylinder surface distance exactly inside/outside the canonical melee range.
     let hit = validate_hitscan_shot_internal(
@@ -177,7 +182,7 @@ fn challenger_headshot_multipliers_and_cylinder_boundaries() {
     assert_eq!(calculate_damage(WeaponType::Cecchino, 0.0, true), 140.0);
     assert_eq!(calculate_damage(WeaponType::Pompa, 0.0, true), 80.0);
     assert_eq!(calculate_damage(WeaponType::Mitraglietta, 0.0, true), 18.0);
-    assert_eq!(calculate_damage(WeaponType::Coltello, 2.0, true), 50.0);
+    assert_eq!(calculate_damage(WeaponType::Coltello, 2.0, true), 999.0);
 
     let target = [0.0, 0.0, 0.0];
     let dir = [0.0, 0.0, 1.0];

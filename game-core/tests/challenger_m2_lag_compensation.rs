@@ -478,7 +478,7 @@ fn test_challenger_m2_weapons_damage_and_range_during_rewind() {
         [0.0, 0.0, 1.0],
     );
     assert!(knife_near.hit, "Knife must hit target at 1.55m");
-    assert_eq!(knife_near.damage, 50.0);
+    assert_eq!(knife_near.damage, 999.0);
 }
 
 /// 8. WASM API: Invalid weapon types and unknown players

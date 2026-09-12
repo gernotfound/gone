@@ -28,6 +28,7 @@ import {
   type FireHitscanData,
   type PlayerSnapshotEntry,
 } from './binaryProtocol.ts';
+import { CLIENT_STATE_EXT_FLAGS, HEALTH_PICKUP_AUTHORITY } from './clientStateExtensions.ts';
 import type { WasmLagCompensator } from '../../pkg/game_core.js';
 import { calculateWeaponDamageAtDistance, getWeaponRuntimeById, WEAPON_KEYS } from '../weapons/weaponConfig.ts';
 import { intersectRobotHitbox } from './robotHitbox.ts';
@@ -304,6 +305,7 @@ export class P2PHost {
   private snapshotSeq: number = 0;
   private respawnPositionResolver: RespawnPositionResolver | null = null;
   private authoritativeRespawnCount = 0;
+  private readonly lastHealthPickupAt = new Map<string, number>();
   public readonly __gonePvpHardeningState: CombatValidationStats = createCombatValidationStats();
 
   constructor(options: P2PHostOptions) {
@@ -376,6 +378,7 @@ export class P2PHost {
       this.slotToPlayerId.delete(slot);
       this.playerIdToSlot.delete(playerId);
     }
+    this.lastHealthPickupAt.delete(playerId);
     return slot;
   }
 
@@ -443,6 +446,21 @@ export class P2PHost {
     record.lastClientTimestamp = state.timestamp;
 
     const now = performance.now();
+    if ((state.flags & CLIENT_STATE_EXT_FLAGS.HEALTH_PICKUP_REQUEST) !== 0 && record.hp < 100) {
+      const craterDistance = Math.hypot(
+        state.x - HEALTH_PICKUP_AUTHORITY.centerX,
+        state.z - HEALTH_PICKUP_AUTHORITY.centerZ,
+      );
+      const previousPickupAt = this.lastHealthPickupAt.get(peerId) ?? -Infinity;
+      if (
+        craterDistance <= HEALTH_PICKUP_AUTHORITY.maxRadius
+        && now - previousPickupAt >= HEALTH_PICKUP_AUTHORITY.cooldownMs
+      ) {
+        record.hp = 100;
+        this.lastHealthPickupAt.set(peerId, now);
+      }
+    }
+
     if (this.lagCompensator) {
       this.lagCompensator.record_player_position(record.slot, now, state.x, state.y, state.z, 0.45, 2.0);
     }
@@ -1006,6 +1024,7 @@ export class P2PHost {
     this.slotManager.reset();
     this.slotToPlayerId.clear();
     this.playerIdToSlot.clear();
+    this.lastHealthPickupAt.clear();
     this.__gonePvpHardeningState.lastClientShotTime.clear();
     this.__gonePvpHardeningState.lastShotSeq.clear();
   }

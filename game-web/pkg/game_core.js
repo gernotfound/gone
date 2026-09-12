@@ -7,6 +7,11 @@ export default async function init() {
 }
 
 const TAU = Math.PI * 2;
+let runtimeMovementScale = 1;
+
+export function set_movement_scale(scale) {
+  runtimeMovementScale = Number.isFinite(scale) ? Math.max(0.25, Math.min(1.25, scale)) : 1;
+}
 
 function fract(v) {
   return v - Math.floor(v);
@@ -174,8 +179,6 @@ export function generate_chunk(cx, cz, offsetX, offsetZ, size, resolution) {
 
   // Color pass derives slope from neighboring cached vertices instead of
   // recomputing terrain multiple times.
-  const dark = [2 / 255, 6 / 255, 15 / 255];
-  const light = [30 / 255, 41 / 255, 59 / 255];
   const cell = size / res;
   for (let row = 0; row < verts; row += 1) {
     for (let col = 0; col < verts; col += 1) {
@@ -287,7 +290,14 @@ export function step_physics(input) {
     dz = worldZ;
   }
 
-  const speed = 12 * (input.crouch ? 0.6 : (input.sprint ? 2 : 1));
+  let speed = 12 * (input.crouch ? 0.6 : (input.sprint ? 2 : 1)) * runtimeMovementScale;
+  if (grounded && len > 0) {
+    const probe = 0.8;
+    const forwardHeight = get_height_at(x + dx * probe, z + dz * probe);
+    const backwardHeight = get_height_at(x - dx * probe, z - dz * probe);
+    const directionalSlope = (forwardHeight - backwardHeight) / (2 * probe);
+    speed /= Math.sqrt(1 + directionalSlope * directionalSlope);
+  }
   x += dx * speed * dt;
   z += dz * speed * dt;
 
@@ -329,7 +339,7 @@ const WEAPON_DAMAGE = {
   1: { body: 90, head: 140, range: 400 },
   2: { body: 80, head: 100, range: 24 },
   3: { body: 20, head: 30, range: 75 },
-  4: { body: 50, head: 50, range: 2.5 },
+  4: { body: 999, head: 999, range: 2.6 },
 };
 
 function rayCylinder(origin, dir, snap, maxRange) {

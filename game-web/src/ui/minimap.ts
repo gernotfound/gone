@@ -112,14 +112,8 @@ function drawMapChrome(ctx: CanvasRenderingContext2D, width: number, height: num
         ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
     }
 
-    ctx.fillStyle = 'rgba(2,6,23,0.72)';
-    ctx.fillRect(12, 12, 196, 42);
-    ctx.fillStyle = '#cffafe';
-    ctx.fillText('MAPPA GLOBALE // 4.8 KM', 22, 30);
-    ctx.fillStyle = '#94a3b8';
-    ctx.fillText('ALTO = CHIARO · BASSO = SCURO', 22, 46);
-
-    ctx.fillStyle = 'rgba(207,250,254,0.8)';
+    // Keep only unobtrusive cardinal references. Opaque legend boxes are
+    // intentionally omitted so the terrain remains fully readable.
     ctx.textAlign = 'center';
     ctx.fillText('N', width / 2, 18);
     ctx.fillText('S', width / 2, height - 10);

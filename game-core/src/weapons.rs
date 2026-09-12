@@ -126,13 +126,13 @@ pub fn get_weapon_config(weapon_type: WeaponType) -> WeaponConfig {
             recoil_recovery_rate: 10.0,
         },
         WeaponType::Coltello => WeaponConfig {
-            base_damage: 50.0,
+            base_damage: 999.0,
             fire_rate_rps: 1.25,
             pellets: 1,
             effective_range_m: 2.6,
             falloff_start_m: 2.6,
             falloff_end_m: 2.6,
-            min_damage: 0.0,
+            min_damage: 999.0,
             headshot_multiplier: 1.0,
             spread_base_rad: 0.0,
             spread_bloom_rad: 0.0,
@@ -536,7 +536,7 @@ mod tests {
         let smg = get_weapon_config(WeaponType::Mitraglietta);
         assert_eq!((smg.effective_range_m, smg.falloff_start_m, smg.falloff_end_m, smg.min_damage), (90.0, 15.0, 65.0, 7.0));
         let knife = get_weapon_config(WeaponType::Coltello);
-        assert_eq!((knife.effective_range_m, knife.headshot_multiplier), (2.6, 1.0));
+        assert_eq!((knife.base_damage, knife.min_damage, knife.effective_range_m, knife.headshot_multiplier), (999.0, 999.0, 2.6, 1.0));
     }
 
     #[test]
@@ -550,7 +550,7 @@ mod tests {
         assert_eq!(calculate_damage(WeaponType::Pompa, 42.1, false), 0.0);
         assert!((calculate_damage(WeaponType::Mitraglietta, 40.0, false) - 9.5).abs() < 1e-9);
         assert_eq!(calculate_damage(WeaponType::Mitraglietta, 90.1, false), 0.0);
-        assert_eq!(calculate_damage(WeaponType::Coltello, 2.6, true), 50.0);
+        assert_eq!(calculate_damage(WeaponType::Coltello, 2.6, true), 999.0);
         assert_eq!(calculate_damage(WeaponType::Coltello, 2.61, false), 0.0);
     }
 
@@ -560,7 +560,7 @@ mod tests {
         assert!((calculate_theoretical_ttk(WeaponType::Cecchino, 100.0, 20.0) - 1.0).abs() < 1e-6);
         assert!((calculate_theoretical_ttk(WeaponType::Pompa, 100.0, 20.0) - 1.6).abs() < 1e-6);
         assert!((calculate_theoretical_ttk(WeaponType::Mitraglietta, 100.0, 20.0) - 0.8).abs() < 1e-6);
-        assert!((calculate_theoretical_ttk(WeaponType::Coltello, 100.0, 2.0) - 0.8).abs() < 1e-6);
+        assert_eq!(calculate_theoretical_ttk(WeaponType::Coltello, 100.0, 2.0), 0.0);
     }
 
     #[test]

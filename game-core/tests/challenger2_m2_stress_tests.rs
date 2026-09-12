@@ -3,7 +3,7 @@
 //! Adversarially challenges:
 //! 1. Backtracking exploit prevention: clamping at max_unlag_ms and server max_history_ms.
 //! 2. Self-damage prevention: shooter_id == victim_id across all weapon types, boundary IDs, and WASM bindings.
-//! 3. Melee weapon range cutoff: strict 2.5m knife cutoff during temporal rewind, even with spoofed max_range.
+//! 3. Melee weapon range cutoff: strict 2.6m knife cutoff during temporal rewind, even with spoofed max_range.
 //! 4. Headshot vertical boundaries, elevated targets, and top cap intersections during rewind.
 //! 5. Ring buffer robustness: extreme timestamps (NaN, Inf), non-monotonic packet rejections, saturation.
 
@@ -330,7 +330,7 @@ fn challenger2_melee_knife_strict_2_6m_range_cutoff_during_rewind() {
     engine.record_position(victim_id, 1100.0, 0.0, 0.0, 3.50, 0.45, 2.0);
 
     // 1. Rewind to t = 1000ms (Target at surface distance 2.49m)
-    // MUST register a HIT with 50.0 damage
+    // MUST register a HIT with 999.0 damage
     let knife_hit_rewind = engine.validate_rewind_hitscan_full(
         shooter_id,
         victim_id,
@@ -346,7 +346,7 @@ fn challenger2_melee_knife_strict_2_6m_range_cutoff_during_rewind() {
         "Melee knife within 2.6m range (2.49m) at rewound time MUST HIT!"
     );
     assert!((knife_hit_rewind.distance - 2.49).abs() < EPSILON);
-    assert_eq!(knife_hit_rewind.damage, 50.0);
+    assert_eq!(knife_hit_rewind.damage, 999.0);
 
     // 2. Current time t = 1100ms (Target at surface distance 3.05m)
     // MUST register a MISS with 0.0 damage
@@ -386,7 +386,7 @@ fn challenger2_melee_knife_strict_2_6m_range_cutoff_during_rewind() {
         knife_boundary_hit.hit,
         "Knife at exact boundary 2.600m must HIT"
     );
-    assert_eq!(knife_boundary_hit.damage, 50.0);
+    assert_eq!(knife_boundary_hit.damage, 999.0);
 
     // Surface distance = 3.0501 - 0.45 = 2.6001m
     let victim_over = 90;
