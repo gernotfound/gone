@@ -1,5 +1,5 @@
-/* PUBG-like mobile interaction: a large right fire control that doubles as a
- * camera-drag surface. The existing joystick/action layout remains intact. */
+/* PUBG-like mobile interaction: the primary right fire control doubles as a
+ * camera-drag surface. A second claw FIRE button supports index-finger play. */
 #gone-mobile-controls #mc-fire {
   width: 84px;
   height: 84px;
@@ -35,6 +35,30 @@
   pointer-events: auto;
 }
 
+#gone-mobile-controls #mc-fire-left {
+  display: none;
+  left: max(16px, calc(env(safe-area-inset-left) + 10px));
+  top: max(84px, calc(env(safe-area-inset-top) + 76px));
+  width: 58px;
+  height: 58px;
+  min-width: 58px;
+  min-height: 58px;
+  border-radius: 50%;
+  border: 2px solid rgba(251,113,133,.62);
+  background: rgba(159,18,57,.42);
+  font-size: 10px;
+  touch-action: none;
+}
+
+html.gone-touch-secondary-fire #gone-mobile-controls #mc-fire-left {
+  display: flex;
+}
+
+html.gone-touch-left-handed #gone-mobile-controls #mc-fire-left {
+  left: auto !important;
+  right: max(16px, calc(env(safe-area-inset-right) + 10px)) !important;
+}
+
 /* Give the aiming thumb a wider free-look surface, like modern mobile shooters. */
 html.gone-smartphone:not(.gone-touch-left-handed) #mobile-look-pad {
   left: 32% !important;
@@ -49,9 +73,23 @@ html.gone-smartphone #gone-mobile-controls #mc-fire {
   height: 82px !important;
 }
 
+html.gone-smartphone #gone-mobile-controls #mc-fire-left {
+  width: 56px !important;
+  height: 56px !important;
+  min-width: 56px !important;
+  min-height: 56px !important;
+}
+
 @media (max-height: 430px) and (orientation: landscape) {
   html.gone-smartphone #gone-mobile-controls #mc-fire {
     width: 76px !important;
     height: 76px !important;
+  }
+  html.gone-smartphone #gone-mobile-controls #mc-fire-left {
+    top: max(66px, calc(env(safe-area-inset-top) + 60px)) !important;
+    width: 52px !important;
+    height: 52px !important;
+    min-width: 52px !important;
+    min-height: 52px !important;
   }
 }
