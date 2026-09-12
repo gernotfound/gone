@@ -68,6 +68,10 @@ try {
       worker: registration.active?.scriptURL || '',
       viewport,
       touchControlsPresent: Boolean(document.getElementById('gone-mobile-controls')),
+      smartphoneProfile: document.documentElement.classList.contains('gone-smartphone'),
+      deviceProfile: document.documentElement.dataset.goneDevice,
+      inputMode: document.documentElement.dataset.goneInputMode,
+      touchPreferences: Boolean(window.goneTouchPreferences?.snapshot),
     };
   });
   assert(boot.pwa, 'PWA runtime not initialized');
@@ -75,7 +79,50 @@ try {
   assert(boot.worker.includes('/gone-cache-sw.js'), 'service worker not active');
   assert(boot.viewport.includes('viewport-fit=cover'), 'safe-area viewport missing');
   assert(boot.mobile?.shimInstalled, 'virtual pointer lock shim missing');
+  assert(boot.smartphoneProfile && boot.deviceProfile === 'smartphone', 'smartphone presentation profile must activate on phone context');
+  assert(boot.inputMode === 'screen', 'smartphone default input mode must be on-screen controls');
+  assert(boot.touchPreferences, 'touch preference API must initialize');
 
+  await page.locator('#btn-settings').click();
+  await waitFor(page, () => page.evaluate(() => !document.getElementById('settings-menu').classList.contains('hidden')), 'settings open');
+  assert(await page.locator('#input-mode-setting').isVisible(), 'input mode setting must be visible');
+  assert(await page.locator('#touch-control-settings').isVisible(), 'touch customization panel must be visible in screen-control mode');
+
+  await page.locator('#touch-look-sensitivity').evaluate((el) => {
+    el.value = '1.5';
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await page.locator('#touch-ads-sensitivity').evaluate((el) => {
+    el.value = '0.8';
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await page.locator('#touch-button-scale').evaluate((el) => {
+    el.value = '1.2';
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await page.locator('#touch-button-opacity').evaluate((el) => {
+    el.value = '0.7';
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await page.locator('#touch-handedness-left').click();
+
+  const preferences = await page.evaluate(() => ({
+    snapshot: window.goneTouchPreferences.snapshot(),
+    leftClass: document.documentElement.classList.contains('gone-touch-left-handed'),
+    scale: document.documentElement.style.getPropertyValue('--gone-touch-scale'),
+    opacity: document.documentElement.style.getPropertyValue('--gone-touch-opacity'),
+    stored: localStorage.getItem('gone-touch-preferences-v1') || '',
+  }));
+  assert(preferences.snapshot.lookSensitivity === 1.5, 'look sensitivity setting did not apply');
+  assert(preferences.snapshot.adsSensitivity === 0.8, 'ADS sensitivity setting did not apply');
+  assert(preferences.snapshot.buttonScale === 1.2, 'button scale setting did not apply');
+  assert(preferences.snapshot.buttonOpacity === 0.7, 'button opacity setting did not apply');
+  assert(preferences.snapshot.handedness === 'left' && preferences.leftClass, 'left-handed layout setting did not apply');
+  assert(preferences.scale === '1.2' && preferences.opacity === '0.7', 'touch CSS variables did not update');
+  assert(preferences.stored.includes('"handedness":"left"'), 'touch preferences were not persisted');
+
+  await page.locator('#btn-back').click();
+  await waitFor(page, () => page.evaluate(() => !document.getElementById('main-menu').classList.contains('hidden')), 'settings close');
   await page.locator('#btn-enter').click();
   await waitFor(page, () => page.evaluate(() => {
     const ui = document.getElementById('game-ui');
@@ -85,6 +132,31 @@ try {
   const active = await page.evaluate(() => window.goneMobileControls.snapshot());
   assert(active.virtualPointerLock, 'mobile gameplay must satisfy pointer-lock compatibility guard');
   assert(active.dpr === null || active.dpr <= 1.001, `mobile DPR should be <= 1, got ${active.dpr}`);
+
+  const hud = await page.evaluate(() => ['gone-p2p-quality-hud', 'gone-local-telemetry', 'gone-kill-feed'].map((id) => {
+    const el = document.getElementById(id);
+    return { id, exists: Boolean(el), display: el ? getComputedStyle(el).display : null };
+  }));
+  for (const item of hud) {
+    assert(item.exists, `${item.id} must exist so smartphone hiding is browser-verified`);
+    assert(item.display === 'none', `${item.id} must be hidden on smartphone, got ${item.display}`);
+  }
+
+  const layout = await page.evaluate(() => {
+    const stick = document.getElementById('mobile-stick').getBoundingClientRect();
+    const fire = document.getElementById('mc-fire').getBoundingClientRect();
+    const look = document.getElementById('mobile-look-pad').getBoundingClientRect();
+    return {
+      width: window.innerWidth,
+      stickCenter: stick.left + stick.width / 2,
+      fireCenter: fire.left + fire.width / 2,
+      lookLeft: look.left,
+      lookRight: look.right,
+    };
+  });
+  assert(layout.stickCenter > layout.width / 2, 'left-handed layout must move joystick to right half');
+  assert(layout.fireCenter < layout.width / 2, 'left-handed layout must move fire control to left half');
+  assert(layout.lookLeft <= 1 && layout.lookRight < layout.width * 0.75, 'left-handed look pad must occupy the left interaction zone');
 
   const sizes = await page.evaluate(() => ['mc-fire', 'mc-aim', 'mc-jump', 'mc-reload', 'mc-map'].map((id) => {
     const rect = document.getElementById(id).getBoundingClientRect();
@@ -158,7 +230,7 @@ try {
   assert(!paused.gameplayActive, 'mobile pause should deactivate gameplay controls');
 
   if (failures.length) throw new Error(failures.join('\n'));
-  console.log('[mobile-pwa] PASS: manifest, service worker, touch movement/look/fire/map/pause, safe areas and DPR profile verified.');
+  console.log('[mobile-pwa] PASS: smartphone profile/HUD, configurable controls, left-handed layout, movement/look/fire/map/pause, safe areas and DPR verified.');
   await context.close();
 } finally {
   await browser.close();
