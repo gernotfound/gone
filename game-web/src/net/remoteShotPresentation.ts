@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { getChunkMeshes } from '../world/chunkManager.ts';
+import { sceneManager } from '../rendering/scene.ts';
 import { vfxManager } from '../vfx/vfxManager.ts';
 import { soundSynth } from '../audio/index.ts';
 import {
@@ -39,7 +40,6 @@ function exactRemoteMuzzle(shooterId: string, weapon: WeaponModelType, fallback?
       return localMuzzle.copy(authoredMuzzle).applyMatrix4(weaponMesh.matrixWorld);
     }
 
-    // Safe visual fallback: robot center + a short forward/up offset.
     fallbackMuzzle.set(0, 0.45, -0.9).applyMatrix4(group.matrixWorld);
     return fallbackMuzzle;
   }
@@ -51,6 +51,15 @@ function exactRemoteMuzzle(shooterId: string, weapon: WeaponModelType, fallback?
 
   fallbackMuzzle.set(0, 0, 0);
   return fallbackMuzzle;
+}
+
+function remoteAudioGain(start: THREE.Vector3): number {
+  const camera = sceneManager.camera;
+  if (!camera?.position) return 0.32;
+  const distance = camera.position.distanceTo(start);
+  // Strong nearby weapon identity, but distant firefights no longer sound as if
+  // they originate directly beside the listener.
+  return Math.max(0.08, Math.min(0.52, 0.08 + 0.44 / (1 + distance / 90)));
 }
 
 function presentRemoteShot(shooterId: string, shot: FireHitscanData): void {
@@ -84,11 +93,10 @@ function presentRemoteShot(shooterId: string, shot: FireHitscanData): void {
     hitPoint.copy(start).addScaledVector(direction, cfg.maxRange);
   }
 
-  // Flash is copied once at the physical muzzle and never follows the projectile.
   vfxManager.spawnMuzzleFlash(start, weapon);
   vfxManager.spawnTracer(start, hitPoint, weapon);
   if (hitNormal) vfxManager.spawnImpact(hitPoint, hitNormal, weapon);
-  soundSynth.playWeaponSound(weapon, 0.45);
+  soundSynth.playWeaponSound(weapon, remoteAudioGain(start));
 }
 
 function attachHost(host: any): void {
@@ -107,8 +115,6 @@ function attachClient(client: any): void {
   if (!client?.config || client[CLIENT_MARKER]) return;
   client[CLIENT_MARKER] = true;
 
-  // FIRE_HITSCAN is presentation-only on guests. Replace the legacy callback
-  // rather than chaining it, otherwise one packet would draw two tracers.
   client.config.onBinaryHitscanFired = (shot: FireHitscanData) => {
     const shooterId = client.slotToPlayerId?.get?.(shot.shooterSlot) ?? `peer_slot_${shot.shooterSlot}`;
     if (shooterId === client.playerId) return;
