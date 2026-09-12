@@ -73,6 +73,7 @@ Canonical browser gameplay balance is `game-web/src/weapons/weaponConfig.ts`; Ru
 - `gameplay/networkBindings.ts` owns P2P callback ↔ gameplay-state wiring.
 - `engine.ts` re-exports the legacy/public remote-player API for `window.goneGame`, but remote registry implementation does not belong in the engine.
 - Browser authoritative hitbox: `net/robotHitbox.ts` + `simpleLagCompensator.ts` using two cheap AABBs (torso/propulsor + head/visor).
+- `net/p2pHost.ts` owns shot sanity/cadence/origin validation and fallback damage/hitbox logic directly; do not reintroduce prototype monkey-patches for combat authority.
 
 ## Multiplayer / PvP
 

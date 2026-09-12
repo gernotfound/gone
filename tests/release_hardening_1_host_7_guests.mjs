@@ -6,7 +6,6 @@
  */
 import { P2PHost } from '../game-web/src/net/p2pHost.ts';
 import { P2PClient } from '../game-web/src/net/p2pClient.ts';
-import { startPvpHardening } from '../game-web/src/net/pvpHardening.ts';
 import { DEFAULT_NEON_HEX_LIST } from '../game-web/src/net/protocol.ts';
 import {
   DEATHMATCH_TARGET_KILLS,
@@ -47,8 +46,6 @@ function pair(label) {
 async function flush(rounds = 4) {
   for (let i = 0; i < rounds; i++) await new Promise((resolve) => setTimeout(resolve, 0));
 }
-
-startPvpHardening();
 
 const scorePacket = encodeDeathmatchSnapshot({
   round: 7,

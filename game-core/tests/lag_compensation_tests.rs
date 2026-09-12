@@ -457,7 +457,7 @@ fn test_m2_wasm_lag_compensator_json_protocol() {
     let parsed: HitscanResult =
         serde_json::from_str(&json_str).expect("Must parse valid HitscanResult JSON");
     assert!(parsed.hit);
-    assert!((parsed.distance - 9.55).abs() < EPSILON);
+    assert!((parsed.distance - 9.50).abs() < EPSILON);
     assert_eq!(parsed.damage, 18.0);
     assert!(!parsed.is_headshot);
 

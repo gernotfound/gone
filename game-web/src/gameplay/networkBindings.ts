@@ -83,6 +83,12 @@ export function bindClientGameplayNetworking(client: P2PClient, context: Gamepla
               Math.max(0.1, state.timerRemainingMs / 1000),
             );
           }
+        } else {
+          player.isInvulnerable = false;
+          player.shieldExpiresAt = 0;
+          if (shieldVfxController.hasShield(context.localShieldAnchor)) {
+            shieldVfxController.detachShield(context.localShieldAnchor);
+          }
         }
         continue;
       }

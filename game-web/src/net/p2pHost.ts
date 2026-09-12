@@ -29,6 +29,8 @@ import {
   type PlayerSnapshotEntry,
 } from './binaryProtocol.ts';
 import type { WasmLagCompensator } from '../../pkg/game_core.js';
+import { calculateWeaponDamageAtDistance, getWeaponRuntimeById, WEAPON_KEYS } from '../weapons/weaponConfig.ts';
+import { intersectRobotHitbox } from './robotHitbox.ts';
 
 export interface IWasmLagCompensator {
   record_player_position(
@@ -56,17 +58,6 @@ export interface IWasmLagCompensator {
   ): string;
   clear_player(player_id: number): void;
 }
-
-// Browser fallback balance mirrors game-core/src/weapons.rs. Keeping this table
-// here makes the emergency geometric path obey the same TTK as the normal lag
-// compensated path instead of reverting to the old 3-hit AR / 5-hit SMG tuning.
-const FALLBACK_WEAPON_DAMAGE: Record<number, { body: number; head: number }> = {
-  0: { body: 18, head: 27 },
-  1: { body: 70, head: 140 },
-  2: { body: 64, head: 96 },
-  3: { body: 12, head: 18 },
-  4: { body: 50, head: 50 },
-};
 
 // Approximate world-space muzzle offset of the third-person robot after the
 // authored +Z model has been adapted to gameplay -Z forward and scaled by 0.67.
@@ -272,6 +263,28 @@ interface PeerConnectionRecord {
   info: SessionPlayerInfo;
 }
 
+export interface CombatValidationStats {
+  lastClientShotTime: Map<string, number>;
+  lastShotSeq: Map<string, number>;
+  accepted: number;
+  rejected: number;
+  rejectedCadence: number;
+  rejectedWeapon: number;
+  rejectedDirection: number;
+}
+
+function createCombatValidationStats(): CombatValidationStats {
+  return {
+    lastClientShotTime: new Map(),
+    lastShotSeq: new Map(),
+    accepted: 0,
+    rejected: 0,
+    rejectedCadence: 0,
+    rejectedWeapon: 0,
+    rejectedDirection: 0,
+  };
+}
+
 export class P2PHost {
   public readonly hostPlayer: SessionPlayerInfo;
   public readonly colorRegistry: IColorRegistry;
@@ -287,6 +300,7 @@ export class P2PHost {
 
   private snapshotTickTimer: ReturnType<typeof setInterval> | null = null;
   private snapshotSeq: number = 0;
+  public readonly __gonePvpHardeningState: CombatValidationStats = createCombatValidationStats();
 
   constructor(options: P2PHostOptions) {
     this.options = options;
@@ -423,9 +437,99 @@ export class P2PHost {
     ];
   }
 
+  private rejectShot(reason: 'cadence' | 'weapon' | 'direction'): void {
+    const state = this.__gonePvpHardeningState;
+    state.rejected += 1;
+    if (reason === 'cadence') state.rejectedCadence += 1;
+    else if (reason === 'weapon') state.rejectedWeapon += 1;
+    else state.rejectedDirection += 1;
+  }
+
+  private validateAndAnchorShot(
+    shooterId: string,
+    shooter: PlayerCombatRecord,
+    shot: FireHitscanData,
+  ): boolean {
+    const weaponType = Number(shot.weaponType);
+    if (!Number.isInteger(weaponType) || weaponType < 0 || weaponType >= WEAPON_KEYS.length) {
+      this.rejectShot('weapon');
+      return false;
+    }
+
+    const dx = Number(shot.dirX);
+    const dy = Number(shot.dirY);
+    const dz = Number(shot.dirZ);
+    if (![dx, dy, dz].every(Number.isFinite)) {
+      this.rejectShot('direction');
+      return false;
+    }
+    const directionLength = Math.hypot(dx, dy, dz);
+    if (!Number.isFinite(directionLength) || directionLength < 1e-5) {
+      this.rejectShot('direction');
+      return false;
+    }
+    const nx = dx / directionLength;
+    const ny = dy / directionLength;
+    const nz = dz / directionLength;
+    shot.dirX = nx;
+    shot.dirY = ny;
+    shot.dirZ = nz;
+    shot.direction = [nx, ny, nz];
+
+    if (shooterId !== this.hostPlayer.id) {
+      if (Number(shooter.activeWeapon) !== weaponType) {
+        this.rejectShot('weapon');
+        return false;
+      }
+
+      const state = this.__gonePvpHardeningState;
+      const cfg = getWeaponRuntimeById(weaponType);
+      const clientTime = Number(shot.clientTimestamp);
+      const effectiveTime = Number.isFinite(clientTime) ? clientTime : performance.now();
+      const previousTime = state.lastClientShotTime.get(shooterId);
+      if (previousTime !== undefined) {
+        const elapsed = effectiveTime - previousTime;
+        const minimumCadenceMs = (1000 / Math.max(0.1, cfg.fireRateRps)) * 0.68;
+        if (elapsed < 0 || elapsed < minimumCadenceMs) {
+          this.rejectShot('cadence');
+          return false;
+        }
+      }
+
+      const seq = Number(shot.shotSeq) & 0xff;
+      const previousSeq = state.lastShotSeq.get(shooterId);
+      if (previousSeq !== undefined && seq === previousSeq) {
+        this.rejectShot('cadence');
+        return false;
+      }
+      state.lastShotSeq.set(shooterId, seq);
+      state.lastClientShotTime.set(shooterId, effectiveTime);
+    }
+
+    // The client sends the camera/crosshair origin. Horizontal coordinates are
+    // host-authoritative; vertical origin is accepted only inside the eye band.
+    const playerY = Number(shooter.position.y);
+    const suppliedY = Number(shot.originY);
+    const minEyeY = playerY - 1.35;
+    const maxEyeY = playerY + 0.25;
+    const originY = Number.isFinite(suppliedY) && suppliedY >= minEyeY && suppliedY <= maxEyeY
+      ? suppliedY
+      : playerY - 0.2;
+    const originX = Number(shooter.position.x);
+    const originZ = Number(shooter.position.z);
+    shot.originX = originX;
+    shot.originY = originY;
+    shot.originZ = originZ;
+    shot.origin = [originX, originY, originZ];
+
+    this.__gonePvpHardeningState.accepted += 1;
+    return true;
+  }
+
   private processFireHitscan(shooterId: string, shot: FireHitscanData): void {
     const shooter = this.playerRecords.get(shooterId);
     if (!shooter || !shooter.isAlive) return;
+    if (!this.validateAndAnchorShot(shooterId, shooter, shot)) return;
 
     // Relay only the visual tracer with the third-person weapon muzzle as start.
     // Authoritative validation below still uses the original camera/aim ray.
@@ -463,14 +567,18 @@ export class P2PHost {
             shot.dirX,
             shot.dirY,
             shot.dirZ,
-            1000.0
+            getWeaponRuntimeById(shot.weaponType).maxRange
           );
           const res = JSON.parse(resultJson);
           if (res.hit) {
-            hitConfirmed = true;
-            damage = res.damage ?? (FALLBACK_WEAPON_DAMAGE[shot.weaponType]?.body ?? 18);
             isHeadshot = !!res.is_headshot;
-            const dist = res.distance ?? 10.0;
+            const parsedDistance = Number(res.distance);
+            const dist = Number.isFinite(parsedDistance) ? parsedDistance : 0;
+            const parsedDamage = Number(res.damage);
+            damage = Number.isFinite(parsedDamage)
+              ? parsedDamage
+              : calculateWeaponDamageAtDistance(shot.weaponType, dist, isHeadshot);
+            hitConfirmed = damage > 0;
             hitX = shot.originX + shot.dirX * dist;
             hitY = shot.originY + shot.dirY * dist;
             hitZ = shot.originZ + shot.dirZ * dist;
@@ -605,6 +713,7 @@ export class P2PHost {
     record.position = { x: 0, y: 17.5, z: 0 };
     record.shieldExpiresAt = now + 10000;
     record.stateFlags = STATE_FLAGS.ALIVE | STATE_FLAGS.SHIELD_ACTIVE;
+    this.lagCompensator?.clear_player(record.slot);
     this.options.onPlayerRespawned?.(record.id);
     return true;
   }
@@ -613,46 +722,32 @@ export class P2PHost {
     shot: FireHitscanData,
     targetPos: { x: number; y: number; z: number }
   ): { hit: boolean; damage: number; isHeadshot: boolean; hitX: number; hitY: number; hitZ: number } {
-    const radius = 0.45;
-    const height = 2.0;
-    const dx = targetPos.x - shot.originX;
-    const dz = targetPos.z - shot.originZ;
-
-    const dirLenSq = shot.dirX * shot.dirX + shot.dirZ * shot.dirZ;
-    if (dirLenSq < 1e-6) {
+    // Method name is retained for compatibility with older tests/callers, but
+    // authoritative geometry now matches the visible robot AABBs.
+    const cfg = getWeaponRuntimeById(shot.weaponType);
+    const hit = intersectRobotHitbox(
+      [shot.originX, shot.originY, shot.originZ],
+      [shot.dirX, shot.dirY, shot.dirZ],
+      targetPos,
+      cfg.maxRange,
+    );
+    if (!hit) {
       return { hit: false, damage: 0, isHeadshot: false, hitX: 0, hitY: 0, hitZ: 0 };
     }
 
-    const tProj = (dx * shot.dirX + dz * shot.dirZ) / dirLenSq;
-    if (tProj < 0) {
+    const damage = calculateWeaponDamageAtDistance(shot.weaponType, hit.distance, hit.isHeadshot);
+    if (damage <= 0) {
       return { hit: false, damage: 0, isHeadshot: false, hitX: 0, hitY: 0, hitZ: 0 };
     }
 
-    const closestX = shot.originX + shot.dirX * tProj;
-    const closestZ = shot.originZ + shot.dirZ * tProj;
-    const distSq = (closestX - targetPos.x) ** 2 + (closestZ - targetPos.z) ** 2;
-
-    if (distSq <= radius * radius) {
-      const hitY = shot.originY + shot.dirY * tProj;
-      const baseY = targetPos.y - height;
-      const topY = targetPos.y;
-      if (hitY >= baseY && hitY <= topY) {
-        const isHeadshot = hitY >= baseY + height * 0.78;
-        const damageConfig = FALLBACK_WEAPON_DAMAGE[shot.weaponType] ?? FALLBACK_WEAPON_DAMAGE[0];
-        const baseDmg = isHeadshot ? damageConfig.head : damageConfig.body;
-
-        return {
-          hit: true,
-          damage: baseDmg,
-          isHeadshot,
-          hitX: closestX,
-          hitY,
-          hitZ: closestZ,
-        };
-      }
-    }
-
-    return { hit: false, damage: 0, isHeadshot: false, hitX: 0, hitY: 0, hitZ: 0 };
+    return {
+      hit: true,
+      damage,
+      isHeadshot: hit.isHeadshot,
+      hitX: shot.originX + shot.dirX * hit.distance,
+      hitY: shot.originY + shot.dirY * hit.distance,
+      hitZ: shot.originZ + shot.dirZ * hit.distance,
+    };
   }
 
   public startSnapshotTick(tickRateHz: number = 30): void {
@@ -678,6 +773,7 @@ export class P2PHost {
         record.deathTime = 0;
         record.position = { x: 0, y: 17.5, z: 0 };
         record.shieldExpiresAt = now + 10000;
+        this.lagCompensator?.clear_player(record.slot);
         this.options.onPlayerRespawned?.(record.id);
       }
 
@@ -817,6 +913,8 @@ export class P2PHost {
     this.peers.delete(peerId);
     this.releaseSlot(peerId);
     this.playerRecords.delete(peerId);
+    this.__gonePvpHardeningState.lastClientShotTime.delete(peerId);
+    this.__gonePvpHardeningState.lastShotSeq.delete(peerId);
 
     if (this.lagCompensator && peer.info.slot !== undefined) {
       this.lagCompensator.clear_player(peer.info.slot);
@@ -853,5 +951,7 @@ export class P2PHost {
     this.slotManager.reset();
     this.slotToPlayerId.clear();
     this.playerIdToSlot.clear();
+    this.__gonePvpHardeningState.lastClientShotTime.clear();
+    this.__gonePvpHardeningState.lastShotSeq.clear();
   }
 }
