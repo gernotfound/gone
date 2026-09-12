@@ -45,7 +45,8 @@ Owns local player flow and feature controllers. `engine.ts` remains the compatib
 Focused ownership introduced by the refactor:
 
 - `spawnPolicy.ts`: deterministic spawn points and terrain-correct spawn height;
-- `spawnController.ts`: host-authoritative respawn adapter plus manual diagnostics, not a per-frame corrective teleport;
+- `networkBindings.ts`: bridge between P2P callbacks and gameplay state, including installation of the host per-slot respawn resolver;
+- `spawnController.ts`: manual/debug spawn diagnostics compatibility only, with no polling or host-state repair;
 - `remotePlayerRegistry.ts`: remote model lifecycle, interpolation presentation and remote shield presentation;
 - `networkBindings.ts`: bridge between P2P callbacks and gameplay state;
 - `advancedWeaponController.ts`: ammo/reload/ADS/action UX;
