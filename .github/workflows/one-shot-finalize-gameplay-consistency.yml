@@ -6,6 +6,7 @@ on:
       - chore/vercel-main-only-deploys
     paths:
       - scripts/one_shot_finalize_gameplay_consistency.py
+      - scripts/one_shot_finalize_gameplay_consistency_v2.py
       - .github/workflows/one-shot-finalize-gameplay-consistency.yml
 
 permissions:
@@ -23,7 +24,7 @@ jobs:
           fetch-depth: 0
 
       - name: Apply consistency patch
-        run: python3 scripts/one_shot_finalize_gameplay_consistency.py
+        run: python3 scripts/one_shot_finalize_gameplay_consistency_v2.py
 
       - name: Diff integrity
         run: git diff --check
@@ -59,6 +60,7 @@ jobs:
         shell: bash
         run: |
           rm -f scripts/one_shot_finalize_gameplay_consistency.py
+          rm -f scripts/one_shot_finalize_gameplay_consistency_v2.py
           rm -f .github/workflows/one-shot-finalize-gameplay-consistency.yml
           git diff --check
           git config user.name "github-actions[bot]"
