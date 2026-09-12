@@ -63,6 +63,34 @@ try {
     return Boolean(ui && !ui.classList.contains('hidden') && window.goneGame && window.goneMobileControls?.snapshot?.().gameplayActive);
   }), 'gameplay start', 90_000);
 
+  const hudLayout = await page.evaluate(() => {
+    const health = document.getElementById('health-hud')?.getBoundingClientRect();
+    const switcher = document.getElementById('mc-weapon-switcher')?.getBoundingClientRect();
+    if (!health || !switcher) return null;
+    const healthCenter = health.left + health.width / 2;
+    const switcherCenter = switcher.left + switcher.width / 2;
+    const overlap = !(
+      health.right <= switcher.left ||
+      health.left >= switcher.right ||
+      health.bottom <= switcher.top ||
+      health.top >= switcher.bottom
+    );
+    return {
+      viewportCenter: window.innerWidth / 2,
+      healthCenter,
+      healthBottomGap: window.innerHeight - health.bottom,
+      switcherCenter,
+      switcherTop: switcher.top,
+      overlap,
+    };
+  });
+  assert(hudLayout, 'health HUD and weapon switcher must exist');
+  assert(Math.abs(hudLayout.healthCenter - hudLayout.viewportCenter) <= 2, `health HUD must be horizontally centered (${hudLayout.healthCenter} vs ${hudLayout.viewportCenter})`);
+  assert(hudLayout.healthBottomGap >= 0 && hudLayout.healthBottomGap <= 24, `health HUD must stay in the bottom FPS scan zone, gap=${hudLayout.healthBottomGap}`);
+  assert(Math.abs(hudLayout.switcherCenter - hudLayout.viewportCenter) <= 2, 'weapon switcher must remain centered');
+  assert(hudLayout.switcherTop < 80, `weapon switcher must stay in the upper band, top=${hudLayout.switcherTop}`);
+  assert(!hudLayout.overlap, 'health HUD and weapon switcher must never overlap');
+
   await page.evaluate(async () => {
     await window.goneGame.switchWeapon(0);
     const key = window.goneGame.getActiveWeapon();
@@ -132,7 +160,7 @@ try {
   await waitFor(page, () => page.evaluate(() => document.getElementById('map-ui').classList.contains('hidden')), 'live map close');
 
   assert(failures.length === 0, `Browser exceptions detected:\n${failures.join('\n')}`);
-  console.log('[competitive-mobile] PASS', JSON.stringify({ ammoBefore, ammoAfter, mapBackground: mapState.mapBackground }));
+  console.log('[competitive-mobile] PASS', JSON.stringify({ ammoBefore, ammoAfter, mapBackground: mapState.mapBackground, hudLayout }));
   await context.close();
 } finally {
   await browser.close();
