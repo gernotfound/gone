@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 use crate::weapons::{
-    calculate_damage, get_weapon_config, intersect_ray_cylinder, HitscanResult, WeaponType,
+    calculate_damage, get_weapon_config, intersect_ray_cylinder, intersect_ray_robot_hitbox, HitscanResult, WeaponType,
 };
 
 /// Maximum capacity of the circular history buffer (power of two: 2^7 = 128).
@@ -466,6 +466,125 @@ impl LagCompensationEngine {
             }
         }
     }
+
+    /// Validate rewind against the visible floating-robot torso/head hitboxes.
+    #[allow(clippy::too_many_arguments)]
+    pub fn validate_rewind_robot_hitscan_full(
+        &self,
+        shooter_id: u32,
+        victim_id: u32,
+        weapon_type: u32,
+        shot_time_ms: f64,
+        max_unlag_ms: f64,
+        origin_x: f64,
+        origin_y: f64,
+        origin_z: f64,
+        dir_x: f64,
+        dir_y: f64,
+        dir_z: f64,
+        max_range: f64,
+    ) -> HitscanResult {
+        // Disallow self-damage
+        if shooter_id == victim_id {
+            return HitscanResult {
+                hit: false,
+                damage: 0.0,
+                is_headshot: false,
+                distance: 0.0,
+            };
+        }
+
+        let wt = match WeaponType::from_u32(weapon_type) {
+            Some(wt) => wt,
+            None => {
+                return HitscanResult {
+                    hit: false,
+                    damage: 0.0,
+                    is_headshot: false,
+                    distance: 0.0,
+                };
+            }
+        };
+
+        let buffer = match self.players.get(&victim_id) {
+            Some(b) => b,
+            None => {
+                return HitscanResult {
+                    hit: false,
+                    damage: 0.0,
+                    is_headshot: false,
+                    distance: 0.0,
+                };
+            }
+        };
+
+        let newest_ts = match buffer.newest_timestamp() {
+            Some(ts) => ts,
+            None => {
+                return HitscanResult {
+                    hit: false,
+                    damage: 0.0,
+                    is_headshot: false,
+                    distance: 0.0,
+                };
+            }
+        };
+
+        // Enforce maximum unlag window
+        let unlag_window = if max_unlag_ms > 0.0 {
+            max_unlag_ms.min(self.max_history_ms)
+        } else {
+            self.max_history_ms
+        };
+
+        let min_allowed_ts = newest_ts - unlag_window;
+        let clamped_ts = shot_time_ms.max(min_allowed_ts).min(newest_ts);
+
+        let snapshot = match buffer.sample_at(clamped_ts) {
+            Some(s) => s,
+            None => {
+                return HitscanResult {
+                    hit: false,
+                    damage: 0.0,
+                    is_headshot: false,
+                    distance: 0.0,
+                };
+            }
+        };
+
+        let cfg = get_weapon_config(wt);
+        let effective_range = if max_range > 0.0 {
+            max_range.min(cfg.effective_range_m)
+        } else {
+            cfg.effective_range_m
+        };
+
+        let origin = [origin_x, origin_y, origin_z];
+        let direction = [dir_x, dir_y, dir_z];
+        let target_base = [snapshot.x, snapshot.y, snapshot.z];
+
+        if let Some((distance, is_headshot)) = intersect_ray_robot_hitbox(
+            origin,
+            direction,
+            target_base,
+            effective_range,
+        ) {
+            let damage = calculate_damage(wt, distance, is_headshot);
+            HitscanResult {
+                hit: true,
+                damage,
+                is_headshot,
+                distance,
+            }
+        } else {
+            HitscanResult {
+                hit: false,
+                damage: 0.0,
+                is_headshot: false,
+                distance: 0.0,
+            }
+        }
+    }
 }
 
 impl Default for LagCompensationEngine {
@@ -505,7 +624,7 @@ impl WasmLagCompensator {
             .record_player_position(player_id, timestamp_ms, x, y, z, radius, height);
     }
 
-    /// Authoritatively validate a rewound hitscan shot against victim historical cylinder.
+    /// Authoritatively validate a rewound hitscan shot against victim historical visible robot hitboxes.
     /// Returns a JSON string of HitscanResult: { hit, damage, is_headshot, distance }
     #[allow(clippy::too_many_arguments)]
     pub fn validate_rewind_hitscan(
@@ -523,7 +642,7 @@ impl WasmLagCompensator {
         dir_z: f64,
         max_range: f64,
     ) -> String {
-        let result = self.engine.validate_rewind_hitscan_full(
+        let result = self.engine.validate_rewind_robot_hitscan_full(
             shooter_id,
             victim_id,
             weapon_type,

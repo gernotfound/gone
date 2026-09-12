@@ -337,13 +337,13 @@ function fireWeapon(): void {
     activeP2PHost.fireHitscan(
       activeP2PHost.hostPlayer.id,
       stats.id,
-      [muzzleWorldPos.x, muzzleWorldPos.y, muzzleWorldPos.z],
+      [rayOrigin.x, rayOrigin.y, rayOrigin.z],
       [rayDirection.x, rayDirection.y, rayDirection.z],
     );
   } else if (activeP2PClient?.status === 'connected') {
     activeP2PClient.fireHitscan(
       stats.id,
-      [muzzleWorldPos.x, muzzleWorldPos.y, muzzleWorldPos.z],
+      [rayOrigin.x, rayOrigin.y, rayOrigin.z],
       [rayDirection.x, rayDirection.y, rayDirection.z],
     );
   }
@@ -527,6 +527,8 @@ function updatePhysics(delta: number): void {
     moveDirection.applyAxisAngle(UP_VECTOR, inputState.yaw);
   }
 
+  const previousX = player.position.x;
+  const previousZ = player.position.z;
   const input = new PhysicsInput(
     player.position.x,
     player.position.y,
@@ -545,7 +547,10 @@ function updatePhysics(delta: number): void {
   );
   const state = step_physics(input);
   player.position.set(state.x, state.y, state.z);
+  const invDelta = delta > 1e-6 ? 1 / delta : 0;
+  player.velocity.x = (state.x - previousX) * invDelta;
   player.velocity.y = state.vel_y;
+  player.velocity.z = (state.z - previousZ) * invDelta;
   player.isGrounded = state.is_grounded;
   input.free();
   state.free();
@@ -631,7 +636,9 @@ function animate(timestamp?: number): void {
       healthHud.updateDeathCountdown(player.deathTimer);
       camera.position.copy(deathCameraPos);
       camera.rotation.set(deathCameraPitch, deathCameraYaw, 0, 'YXZ');
-      if (player.deathTimer <= 0) handleLocalPlayerRespawn();
+      if (player.deathTimer <= 0 && !activeP2PHost && !activeP2PClient) {
+        handleLocalPlayerRespawn();
+      }
     }
 
     const enemiesEnabled = !activeP2PHost && !activeP2PClient;

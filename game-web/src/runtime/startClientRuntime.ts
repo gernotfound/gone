@@ -13,7 +13,6 @@ import { startMapSpawnMarkers } from '../gameplay/mapSpawnMarkers.ts';
 import { startHostRemoteSync } from '../net/hostRemoteSync.ts';
 import { startLobbyPresenceSync } from '../net/lobbyPresenceSync.ts';
 import { startPvpTimingTuning } from '../net/pvpTuning.ts';
-import { startPvpHardening } from '../net/pvpHardening.ts';
 import { startNetworkStabilityFix } from '../net/networkStabilityFix.ts';
 import { startAdaptiveSnapshotRate } from '../net/adaptiveSnapshotRate.ts';
 import { startCombatEventBridge } from '../net/combatEventBridge.ts';
@@ -31,7 +30,6 @@ import { startP2PQualityHud } from '../ui/p2pQualityHud.ts';
 
 function installPreBootstrapGuards(): void {
   startNetworkStabilityFix();
-  startPvpHardening();
   startCombatEventBridge();
   startDeathmatchAuthority();
 }

@@ -325,6 +325,116 @@ pub fn intersect_ray_cylinder(
     }
 }
 
+
+#[derive(Clone, Copy)]
+struct RobotAabb {
+    min_x: f64,
+    max_x: f64,
+    min_y: f64,
+    max_y: f64,
+    min_z: f64,
+    max_z: f64,
+}
+
+const ROBOT_BODY_HITBOX: RobotAabb = RobotAabb {
+    min_x: -0.58,
+    max_x: 0.58,
+    min_y: -0.48,
+    max_y: 1.08,
+    min_z: -0.50,
+    max_z: 0.50,
+};
+
+const ROBOT_HEAD_HITBOX: RobotAabb = RobotAabb {
+    min_x: -0.31,
+    max_x: 0.31,
+    min_y: 1.05,
+    max_y: 1.52,
+    min_z: -0.34,
+    max_z: 0.34,
+};
+
+fn intersect_ray_aabb(
+    origin: [f64; 3],
+    direction: [f64; 3],
+    anchor: [f64; 3],
+    bounds: RobotAabb,
+    max_range: f64,
+) -> Option<f64> {
+    let magnitude = (direction[0] * direction[0]
+        + direction[1] * direction[1]
+        + direction[2] * direction[2])
+        .sqrt();
+    if magnitude < 1e-9 || max_range <= 0.0 {
+        return None;
+    }
+    let dir = [
+        direction[0] / magnitude,
+        direction[1] / magnitude,
+        direction[2] / magnitude,
+    ];
+    let mins = [
+        anchor[0] + bounds.min_x,
+        anchor[1] + bounds.min_y,
+        anchor[2] + bounds.min_z,
+    ];
+    let maxs = [
+        anchor[0] + bounds.max_x,
+        anchor[1] + bounds.max_y,
+        anchor[2] + bounds.max_z,
+    ];
+
+    let mut t_min: f64 = 0.0;
+    let mut t_max = max_range;
+    for axis in 0..3 {
+        if dir[axis].abs() < 1e-9 {
+            if origin[axis] < mins[axis] || origin[axis] > maxs[axis] {
+                return None;
+            }
+            continue;
+        }
+        let inv = 1.0 / dir[axis];
+        let mut near = (mins[axis] - origin[axis]) * inv;
+        let mut far = (maxs[axis] - origin[axis]) * inv;
+        if near > far {
+            std::mem::swap(&mut near, &mut far);
+        }
+        t_min = t_min.max(near);
+        t_max = t_max.min(far);
+        if t_min > t_max {
+            return None;
+        }
+    }
+
+    if t_max < 0.0 || t_min > max_range {
+        None
+    } else {
+        Some(t_min.max(0.0))
+    }
+}
+
+/// Authoritative visible-player hitbox shared semantically with
+/// game-web/src/net/robotHitbox.ts. The legacy cylinder API remains available
+/// for compatibility tests and non-player callers.
+pub fn intersect_ray_robot_hitbox(
+    origin: [f64; 3],
+    direction: [f64; 3],
+    anchor: [f64; 3],
+    max_range: f64,
+) -> Option<(f64, bool)> {
+    let body = intersect_ray_aabb(origin, direction, anchor, ROBOT_BODY_HITBOX, max_range);
+    let head = intersect_ray_aabb(origin, direction, anchor, ROBOT_HEAD_HITBOX, max_range);
+    match (body, head) {
+        (None, None) => None,
+        (Some(distance), None) => Some((distance, false)),
+        (None, Some(distance)) => Some((distance, true)),
+        (Some(body_distance), Some(head_distance)) if head_distance <= body_distance => {
+            Some((head_distance, true))
+        }
+        (Some(body_distance), Some(_)) => Some((body_distance, false)),
+    }
+}
+
 pub fn validate_hitscan_shot_internal(
     weapon_type: WeaponType,
     origin: [f64; 3],

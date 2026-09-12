@@ -190,7 +190,10 @@ export async function run(suite) {
     assertEqual(victim.isAlive, true);
     assertEqual(victim.hp, 100);
 
-    // Victim is at central platform [0, 17.5, 0]. Host is at [0, 17.5, -10] aiming +Z
+    // Victim is at central platform [0, 17.5, 0]. Move the authoritative host
+    // record to z=-10; supplied shot origins are no longer trusted for X/Z.
+    const shooter = host.playerRecords.get('host_01');
+    shooter.position = { x: 0, y: 17.5, z: -10 };
     const now = performance.now();
     assertGreaterThan(victim.shieldExpiresAt, now + 8000, 'Shield must be active for ~10s');
 
@@ -199,11 +202,11 @@ export async function run(suite) {
     host.fireHitscan(
       'host_01',
       1, // cecchino
-      [0, 17.0, -10], // origin 10m south at valid fallback-collider body height
+      [0, 17.3, -10], // camera/eye origin 10m south inside visible torso height
       [0, 0, 1]        // direction north towards [0, 17.5, 0]
     );
 
-    assert(confirmedHitEvent !== null, 'Hitscan must confirm ray-cylinder intersection with victim');
+    assert(confirmedHitEvent !== null, 'Hitscan must confirm visible robot hitbox intersection with victim');
     assertEqual(confirmedHitEvent.isShieldBlocked, true, 'Hit must be flagged as shield blocked');
     assertEqual(confirmedHitEvent.damage, 0, 'Damage must be strictly 0 HP');
     assertEqual(confirmedHitEvent.newHp, 100, 'Victim HP must remain at 100 HP');
@@ -211,7 +214,7 @@ export async function run(suite) {
 
     // Fire 5 more assault rifle shots
     for (let i = 0; i < 5; i++) {
-      host.fireHitscan('host_01', 0, [0, 17.0, -10], [0, 0, 1]);
+      host.fireHitscan('host_01', 0, [0, 17.3, -10], [0, 0, 1]);
     }
     assertEqual(victim.hp, 100, 'Victim HP must remain 100 after multiple shots during shield');
 
@@ -237,6 +240,8 @@ export async function run(suite) {
 
     const victim = host.playerRecords.get('victim_peer');
     host.respawnPlayer('victim_peer');
+    const shooter = host.playerRecords.get('host_01');
+    shooter.position = { x: 0, y: 17.5, z: -10 };
 
     // Fast-forward time past the 10.0s shield expiration
     victim.shieldExpiresAt = performance.now() - 100;
@@ -250,7 +255,7 @@ export async function run(suite) {
     host.fireHitscan(
       'host_01',
       0, // assalto
-      [0, 17.0, -10],
+      [0, 17.3, -10],
       [0, 0, 1]
     );
 
