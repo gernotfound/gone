@@ -60,11 +60,20 @@ function openJoinLobby(directOfferCode: string, onPlayMultiplayer: () => void) {
     setupLobby(false, directOfferCode, onPlayMultiplayer);
 }
 
+function keepMenusAboveGameplayOverlays(): void {
+    // Death/map overlays are intentionally below menus. ESC must always expose a
+    // usable menu even while the elimination overlay is still visible.
+    for (const layer of [DOM.mainMenu, DOM.settingsMenu, DOM.multiplayerLobby]) {
+        layer.style.zIndex = '100';
+    }
+}
+
 export function setupMenu(callbacks: {
     onPlayMultiplayer: () => void;
     onEnter: (e: MouseEvent) => void;
     onExit: () => void;
 }) {
+    keepMenusAboveGameplayOverlays();
     initLobbyEvents();
     window.addEventListener('online', updateNetworkStatus);
     window.addEventListener('offline', updateNetworkStatus);
