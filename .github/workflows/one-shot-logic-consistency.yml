@@ -21,6 +21,9 @@ jobs:
       - name: Apply audited gameplay fixes
         run: python3 tools/one_shot_logic_consistency.py
 
+      - name: Align lifecycle test fixture
+        run: python3 tools/one_shot_logic_consistency_followup.py
+
       - name: Diff sanity
         run: git diff --check
 
@@ -54,7 +57,7 @@ jobs:
       - name: Commit verified gameplay fixes and remove one-shot tooling
         shell: bash
         run: |
-          rm -f tools/one_shot_logic_consistency.py .github/workflows/one-shot-logic-consistency.yml
+          rm -f tools/one_shot_logic_consistency.py tools/one_shot_logic_consistency_followup.py .github/workflows/one-shot-logic-consistency.yml
           git add -A
           git diff --cached --check
           git config user.name "github-actions[bot]"
