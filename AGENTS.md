@@ -43,6 +43,7 @@ Read this first. Dense project index intended to minimize repo search/tool spend
 - `engine.ts` performs normal initial spawn and local respawn directly with terrain-correct Y.
 - `gameplay/spawnController.ts` adapts host authoritative respawn records and exposes diagnostics; it must not reintroduce per-frame corrective teleports.
 - Never reintroduce `(0,17.5,0)` as intended gameplay spawn.
+- Solo PvE bionic spiders are owned by `gameplay/bionicSpiderEnemies.ts`; their procedural rig lives in `models/bionicSpider.ts`. They spawn from deterministic crater centers, use terrain-aware eight-leg gait/IK, and are intentionally disabled in P2P until enemy state/combat is host-authoritatively represented in the binary protocol. Do not enable divergent per-client enemy simulation in multiplayer.
 
 ## Weapons / local shots
 

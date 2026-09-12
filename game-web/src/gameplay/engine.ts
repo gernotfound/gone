@@ -36,6 +36,7 @@ import { initMinimap, drawMinimap } from '../ui/minimap.ts';
 import { getWeaponRuntime } from '../weapons/weaponConfig.ts';
 import { WEAPON_COMBAT_STATS } from '../weapons/weaponCombatStats.ts';
 import { getPlayerSpawnY, getSpawnPointForSlot } from './spawnPolicy.ts';
+import { bionicSpiderEnemies } from './bionicSpiderEnemies.ts';
 import {
   addOrUpdateRemotePlayer,
   remotePlayers,
@@ -313,6 +314,7 @@ function fireWeapon(): void {
 
   const targets: THREE.Object3D[] = [...getChunkMeshes()];
   for (const remote of remotePlayers.values()) targets.push(remote.group);
+  for (const enemyTarget of bionicSpiderEnemies.getRaycastTargets()) targets.push(enemyTarget);
 
   const intersections = raycaster.intersectObjects(targets, true);
   const hitPoint = new THREE.Vector3();
@@ -323,6 +325,7 @@ function fireWeapon(): void {
     hitNormal = hit.face
       ? hit.face.normal.clone().transformDirection(hit.object.matrixWorld)
       : rayDirection.clone().negate();
+    bionicSpiderEnemies.applyRaycastHit(hit, stats.id, rayDirection);
   } else {
     hitPoint.copy(rayOrigin).addScaledVector(rayDirection, Math.min(runtime.maxRange, 300));
   }
@@ -445,6 +448,10 @@ function initGame(): void {
   camera.add(viewmodelRoot);
   switchWeapon(0);
   vfxManager.init(scene, camera);
+  bionicSpiderEnemies.init(scene, getTerrainHeightAt, (damage) => {
+    if (!player.isAlive || player.isInvulnerable) return;
+    handleLocalPlayerDamage(player.hp - damage);
+  });
   healthHud.init();
 
   localShieldAnchor.position.set(player.position.x, player.position.y - player.height + 0.9, player.position.z);
@@ -627,6 +634,10 @@ function animate(timestamp?: number): void {
       if (player.deathTimer <= 0) handleLocalPlayerRespawn();
     }
 
+    const enemiesEnabled = !activeP2PHost && !activeP2PClient;
+    const enemiesPaused = !DOM.mainMenu.classList.contains('hidden') || isMapOpen;
+    bionicSpiderEnemies.update(delta, player.position, player.isAlive, enemiesEnabled, enemiesPaused);
+
     updateChunks(player.position);
     vfxManager.update(delta);
     updateRemotePlayerPresentation(performance.now() - 90);
@@ -683,6 +694,7 @@ export function bindP2PHostNetworking(host: P2PHost): void {
   viewmodelRoot,
   recoilContainer,
   player,
+  bionicSpiderEnemies,
   healthHud,
   shieldVfxController,
   localShieldAnchor,
