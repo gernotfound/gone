@@ -169,7 +169,10 @@ function installPointerLockBridge(): void {
     Object.defineProperty(document, 'pointerLockElement', {
       configurable: true,
       get() {
-        if (useOnScreenControls() && gameplayActive()) return document.body;
+        // The base mobile runtime already owns virtual pointer lock during normal
+        // gameplay, including its forced-unlock pause path. We only bridge the
+        // map-open gap so AdvancedWeaponController can keep processing combat.
+        if (useOnScreenControls() && gameplayActive() && mapOpen()) return document.body;
         return previous?.call(document) ?? nativePointerLockGetter?.call(document) ?? null;
       },
     });
