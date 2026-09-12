@@ -1,6 +1,7 @@
 import { bootstrap } from '../gameplay/engine.ts';
 import { startAdvancedWeaponController } from '../gameplay/advancedWeaponController.ts';
 import { startDynamicPrecisionReticle } from '../gameplay/dynamicPrecisionReticle.ts';
+import { startLocalMuzzleFlashBinding } from '../gameplay/localMuzzleFlashBinding.ts';
 import { startPrecisionShotRuntime } from '../gameplay/precisionShotRuntime.ts';
 import { startSpawnController } from '../gameplay/spawnController.ts';
 import { startKillAmmoReset } from '../gameplay/killAmmoReset.ts';
@@ -40,6 +41,7 @@ function installPreBootstrapGuards(): void {
 function startCoreGameplayRuntime(): void {
   startSessionLifecycleHardening();
   startPrecisionShotRuntime();
+  startLocalMuzzleFlashBinding();
   startAdvancedWeaponController();
   startDynamicPrecisionReticle();
 }

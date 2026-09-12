@@ -14,5 +14,95 @@
 body {
   margin: 0;
   overflow: hidden;
-  background-color: #020617; /* slate-950 */
+  background-color: #020617;
+}
+
+/*
+ * Gameplay HUD safe areas.
+ * Persistent overlays own distinct screen bands instead of choosing independent
+ * absolute coordinates that can collide as new UI is added.
+ */
+#health-hud {
+  left: clamp(12px, 2vw, 32px) !important;
+  bottom: clamp(12px, 2vh, 24px) !important;
+}
+
+#weapon-hud {
+  right: clamp(12px, 2vw, 32px) !important;
+  bottom: clamp(12px, 2vh, 24px) !important;
+  max-width: calc(100vw - 64px);
+  white-space: nowrap;
+}
+
+#advanced-weapon-hud {
+  right: clamp(12px, 2vw, 32px) !important;
+  bottom: clamp(90px, 11vh, 112px) !important;
+  max-width: min(360px, calc(100vw - 64px));
+  box-sizing: border-box;
+}
+
+/* Network quality leaves bottom-left to health/shield. */
+#gone-p2p-quality-hud {
+  left: 14px !important;
+  top: 14px !important;
+  bottom: auto !important;
+}
+
+/* F3 diagnostics stack below the always-on P2P panel. */
+#gone-local-telemetry {
+  left: 12px !important;
+  top: 78px !important;
+  bottom: auto !important;
+  max-width: calc(100vw - 24px);
+  box-sizing: border-box;
+}
+
+/* Top-right stack: built-in FPS/network -> deathmatch summary -> kill feed. */
+#gone-dm-compact {
+  right: 16px !important;
+  top: 84px !important;
+}
+
+#gone-kill-feed {
+  right: 16px !important;
+  top: 168px !important;
+}
+
+/* The dynamic/weapon reticles are canonical; hide the legacy static center dot. */
+#game-ui > .absolute.inset-0.flex.items-center.justify-center {
+  display: none !important;
+}
+
+@media (max-width: 720px) {
+  #health-hud {
+    transform: scale(0.84);
+    transform-origin: bottom left;
+  }
+
+  #weapon-hud,
+  #advanced-weapon-hud {
+    transform: scale(0.84);
+    transform-origin: bottom right;
+  }
+
+  #gone-p2p-quality-hud,
+  #gone-dm-compact,
+  #gone-kill-feed {
+    transform: scale(0.88);
+  }
+
+  #gone-p2p-quality-hud {
+    transform-origin: top left;
+  }
+
+  #gone-dm-compact,
+  #gone-kill-feed {
+    transform-origin: top right;
+  }
+
+  #gone-local-telemetry {
+    top: 72px !important;
+    transform: scale(0.88);
+    transform-origin: top left;
+  }
 }
