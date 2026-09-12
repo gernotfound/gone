@@ -24,6 +24,10 @@ function gameplayVisible(): boolean {
   return !!gameUi && !gameUi.classList.contains('hidden');
 }
 
+function roundLocked(): boolean {
+  return (window as any).__goneDeathmatchRoundLocked === true;
+}
+
 function exactRemoteMuzzle(shooterId: string, weapon: WeaponModelType, fallback?: readonly number[]): THREE.Vector3 {
   const api = (window as any).goneGame;
   const remote = api?.remotePlayers?.get?.(shooterId);
@@ -57,13 +61,11 @@ function remoteAudioGain(start: THREE.Vector3): number {
   const camera = sceneManager.camera;
   if (!camera?.position) return 0.32;
   const distance = camera.position.distanceTo(start);
-  // Strong nearby weapon identity, but distant firefights no longer sound as if
-  // they originate directly beside the listener.
   return Math.max(0.08, Math.min(0.52, 0.08 + 0.44 / (1 + distance / 90)));
 }
 
 function presentRemoteShot(shooterId: string, shot: FireHitscanData): void {
-  if (!gameplayVisible() || !vfxManager.isReady()) return;
+  if (roundLocked() || !gameplayVisible() || !vfxManager.isReady()) return;
 
   const cfg = getWeaponRuntimeById(shot.weaponType);
   const weapon = cfg.key as WeaponModelType;
@@ -106,6 +108,7 @@ function attachHost(host: any): void {
 
   host[HOST_MARKER] = true;
   host.processFireHitscan = function(shooterId: string, shot: FireHitscanData) {
+    if (this.__goneDeathmatchRoundLocked === true) return original.call(this, shooterId, shot);
     if (shooterId !== this.hostPlayer?.id) presentRemoteShot(shooterId, shot);
     return original.call(this, shooterId, shot);
   };
@@ -116,6 +119,7 @@ function attachClient(client: any): void {
   client[CLIENT_MARKER] = true;
 
   client.config.onBinaryHitscanFired = (shot: FireHitscanData) => {
+    if (roundLocked()) return;
     const shooterId = client.slotToPlayerId?.get?.(shot.shooterSlot) ?? `peer_slot_${shot.shooterSlot}`;
     if (shooterId === client.playerId) return;
     presentRemoteShot(shooterId, shot);

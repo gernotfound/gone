@@ -39,6 +39,8 @@ function render(): void {
   const cache = (window as any).goneCacheIntegrity?.snapshot?.() ?? {};
   const lifecycle = (window as any).goneLifecycle?.snapshot?.() ?? {};
   const dm = (window as any).goneDeathmatch?.snapshot?.() ?? {};
+  const dmAuthority = (window as any).goneDeathmatchAuthority?.stats?.() ?? {};
+  const round = (window as any).goneRoundLifecycle?.snapshot?.() ?? {};
   const range = game?.getLocalHitscanRangeStats?.() ?? {};
   const events = (window as any).goneCombatEvents?.snapshot?.() ?? {};
   const feedback = (window as any).goneCombatFeedback?.snapshot?.() ?? {};
@@ -50,7 +52,8 @@ function render(): void {
     `render DPR ${Number(renderScale.dpr ?? 0).toFixed(2)} · ${String(renderScale.lastReason ?? 'n/a')}`,
     `arma ${weapon.key} · range ${weapon.maxRange}m · precisione ${(accuracy * 100).toFixed(0)}% · spread ${(spread * 1000).toFixed(1)}mrad`,
     `combat evt ${Number(events.sequence ?? 0)} · hit ${Number(feedback.hitCount ?? 0)} · kill ${Number(feedback.killCount ?? 0)} · guard ${Number(range.clampedRaycasts ?? 0)}/${Number(range.clampedTracers ?? 0)}`,
-    `DM ${Number(localRow?.kills ?? 0)}K/${Number(localRow?.deaths ?? 0)}D · spawn ${String(spawn.current?.id ?? '—')} · lifecycle gen ${Number(lifecycle.generation ?? 0)} mut ${Number(lifecycle.callbackMutations ?? 0)} repair ${Number(lifecycle.repairs ?? 0)}`,
+    `DM ${Number(localRow?.kills ?? 0)}K/${Number(localRow?.deaths ?? 0)}D · round ${Number(round.round ?? dm.round ?? 0)} · ${round.locked ? 'LOCKED' : 'LIVE'} · reset ${Number(dmAuthority.roundResets ?? 0)} · shot-block ${Number(dmAuthority.blockedRoundShots ?? 0)}/${Number(round.blockedLocalShots ?? 0)}`,
+    `spawn ${String(spawn.current?.id ?? '—')} · lifecycle gen ${Number(lifecycle.generation ?? 0)} mut ${Number(lifecycle.callbackMutations ?? 0)} repair ${Number(lifecycle.repairs ?? 0)}`,
     `cache ${String(cache.status ?? 'n/a')} · ${Number(cache.cached ?? 0)}/${Number(cache.expected ?? 0)} · missing ${Array.isArray(cache.missing) ? cache.missing.length : 0}`,
   ].join('\n');
 }

@@ -19,7 +19,6 @@ export const SPAWN_POINTS: readonly SpawnPoint[] = [
   { id: 'S8', label: 'ANELLO NORD', x: -250, z: -1650 },
 ] as const;
 
-// Backward-compatible primary spawn exports used by the map HUD.
 export const PLAYER_SPAWN_X = SPAWN_POINTS[0].x;
 export const PLAYER_SPAWN_Z = SPAWN_POINTS[0].z;
 
@@ -52,16 +51,17 @@ function localSlot(api: any): number {
   return Number.isInteger(slot) ? Number(slot) : 0;
 }
 
-function teleportLocalPlayer(point?: SpawnPoint): void {
+function teleportLocalPlayer(point?: SpawnPoint): SpawnPoint | null {
   const api = gameApi();
   const player = api?.player;
-  if (!player?.position) return;
+  if (!player?.position) return null;
   const selected = point ?? getSpawnPointForSlot(localSlot(api));
 
   player.position.set(selected.x, getPlayerSpawnY(player, selected), selected.z);
   player.velocity?.set?.(0, 0, 0);
   currentSpawn = selected;
   localSpawnCount += 1;
+  return selected;
 }
 
 function attachAuthoritativeRespawn(host: any): void {
@@ -122,6 +122,10 @@ export function startSpawnController(): void {
 
   (window as any).goneSpawnPolicy = {
     points: SPAWN_POINTS,
+    respawnNow: () => {
+      const selected = teleportLocalPlayer();
+      return selected ? { ...selected } : null;
+    },
     snapshot: () => ({
       slot: localSlot(gameApi()),
       current: { ...currentSpawn },

@@ -26,6 +26,7 @@ type HostState = {
 };
 
 const CLIENT_MARKER = '__goneDeathmatchAuthorityClient';
+const ROUND_GUARD_MARKER = '__goneDeathmatchRoundGuard';
 const ROUND_RESET_DELAY_MS = 7000;
 const RECOVERY_BROADCAST_MS = 1000;
 const CHECK_INTERVAL_MS = 250;
@@ -33,6 +34,8 @@ let hostState: HostState | null = null;
 let lastClientSnapshot: DeathmatchSnapshot | null = null;
 let packetsSent = 0;
 let packetsReceived = 0;
+let roundResets = 0;
+let blockedRoundShots = 0;
 let queuedBroadcast = false;
 
 function gameApi(): any {
@@ -51,6 +54,24 @@ function emit(source: 'host' | 'client', snapshot: DeathmatchSnapshot): void {
   window.dispatchEvent(new CustomEvent<DeathmatchSyncEventDetail>('gone-deathmatch-sync', {
     detail: { source, snapshot: cloneSnapshot(snapshot), at: performance.now() },
   }));
+}
+
+function setRoundLock(host: any, value: boolean): void {
+  if (host) host.__goneDeathmatchRoundLocked = value;
+}
+
+function attachRoundGuard(host: any): void {
+  if (!host || host[ROUND_GUARD_MARKER]) return;
+  const original = host.processFireHitscan;
+  if (typeof original !== 'function') return;
+  host[ROUND_GUARD_MARKER] = true;
+  host.processFireHitscan = function(shooterId: string, shot: unknown) {
+    if (this.__goneDeathmatchRoundLocked === true) {
+      blockedRoundShots += 1;
+      return;
+    }
+    return original.call(this, shooterId, shot);
+  };
 }
 
 function roster(host: any): Array<{ slot: number; id: string }> {
@@ -131,14 +152,24 @@ function scheduleBroadcast(): void {
   });
 }
 
+function resetHostPlayers(state: HostState): void {
+  const ids = [...(state.host?.playerRecords?.keys?.() ?? [])] as string[];
+  for (const id of ids) state.host?.respawnPlayer?.(id);
+}
+
 function resetRound(state: HostState): void {
   state.round = state.round >= 0xffff ? 1 : state.round + 1;
   state.winnerSlot = null;
   state.resetAt = 0;
+  setRoundLock(state.host, false);
   for (const slot of state.rows.keys()) state.rows.set(slot, emptyRow(slot));
+  resetHostPlayers(state);
+  roundResets += 1;
 }
 
 function createHostState(host: any): HostState {
+  attachRoundGuard(host);
+  setRoundLock(host, false);
   const state: HostState = {
     host,
     round: 1,
@@ -174,6 +205,7 @@ function ingestHostHit(detail: CombatHitEventDetail): void {
     if (shooter.kills >= DEATHMATCH_TARGET_KILLS) {
       state.winnerSlot = shooter.slot;
       state.resetAt = performance.now() + ROUND_RESET_DELAY_MS;
+      setRoundLock(state.host, true);
     }
   }
   scheduleBroadcast();
@@ -211,6 +243,7 @@ function tick(): void {
     return;
   }
 
+  attachRoundGuard(host);
   const state = hostState;
   const rosterChanged = syncRoster(state);
   if (state.winnerSlot !== null && performance.now() >= state.resetAt) {
@@ -243,6 +276,12 @@ export function startDeathmatchAuthority(): void {
       broadcast(hostState);
       return true;
     },
-    stats: () => ({ packetsSent, packetsReceived }),
+    stats: () => ({
+      packetsSent,
+      packetsReceived,
+      roundResets,
+      blockedRoundShots,
+      locked: hostState?.winnerSlot !== null,
+    }),
   };
 }
