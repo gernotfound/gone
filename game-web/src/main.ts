@@ -29,6 +29,7 @@ import { startCacheIntegrity } from './performance/cacheIntegrity.ts';
 import { startLocalTelemetry } from './performance/localTelemetry.ts';
 import { startAdaptiveRenderScale } from './performance/adaptiveRenderScale.ts';
 import { startTelemetryDetails } from './performance/telemetryDetails.ts';
+import { startP2PQualityHud } from './ui/p2pQualityHud.ts';
 
 // Install lightweight protocol/runtime patches before any game/session objects are created.
 startNetworkStabilityFix();
@@ -48,6 +49,7 @@ startLobbyPresenceSync();
 startPvpTimingTuning();
 startHostRemoteSync();
 startAdaptiveSnapshotRate();
+startP2PQualityHud();
 startRemoteShotPresentation();
 startRemoteRobotMotion();
 startKillAmmoReset();
