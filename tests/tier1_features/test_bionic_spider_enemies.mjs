@@ -15,10 +15,10 @@ import {
 import { assert, assertCloseTo, assertEqual, assertGreaterThan } from '../helpers/assertions.mjs';
 
 export async function run(suite) {
-  suite.test('Bionic spider model is ~3m tall with eight articulated two-bone legs', () => {
+  suite.test('Bionic spider juggernaut is exactly 4x the old silhouette with eight articulated two-bone legs', () => {
     const model = createBionicSpiderModel(42);
     assertEqual(model.legs.length, 8, 'Spider must have exactly eight legs');
-    assert(BIONIC_SPIDER_APPROX_HEIGHT >= 2.7 && BIONIC_SPIDER_APPROX_HEIGHT <= 3.2, 'Silhouette must stay around 3m');
+    assertCloseTo(BIONIC_SPIDER_APPROX_HEIGHT, 2.95 * 4, 1e-6, 'Juggernaut silhouette must be 4x the original ~2.95m spider');
     for (const leg of model.legs) {
       assert(leg.upper.isMesh && leg.lower.isMesh, 'Each leg must expose articulated upper/lower segments');
       assertEqual(leg.upper.userData.bionicSpiderHitRegion, 'limb');
@@ -32,7 +32,7 @@ export async function run(suite) {
   suite.test('Enemy balance follows the requested HP and mean walk/run speed', () => {
     assertEqual(BIONIC_SPIDER_MAX_HP, 100);
     assertCloseTo(BIONIC_SPIDER_MOVE_SPEED, (12 + 24) / 2, 1e-6, 'Speed must be mean of 12m/s walk and 24m/s sprint');
-    assertGreaterThan(BIONIC_SPIDER_CONTACT_RADIUS, 1.5, 'Contact radius must match a large 3m spider body');
+    assertGreaterThan(BIONIC_SPIDER_CONTACT_RADIUS, 8, 'Contact radius must scale with the 4x juggernaut body');
   });
 
   suite.test('Procedural enemy spawn centers reproduce deterministic crater cells', () => {
