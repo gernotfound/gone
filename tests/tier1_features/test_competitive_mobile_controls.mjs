@@ -42,10 +42,10 @@ export async function run(suite) {
     assert(runtime.includes('existing ammo-authoritative PUBG layer owns FIRE during normal play'), 'normal FIRE must stay delegated to the magazine-aware controller');
   });
 
-  suite.test('Pointer-lock bridge preserves native desktop behavior outside screen controls', () => {
+  suite.test('Pointer-lock bridge preserves desktop and mobile pause behavior', () => {
     assert(runtime.includes("Object.getOwnPropertyDescriptor(Document.prototype, 'pointerLockElement')"), 'bridge must retain the native Document pointer-lock getter');
-    assert(runtime.includes('previous?.call(document) ?? nativePointerLockGetter?.call(document) ?? null'), 'keyboard/desktop mode must delegate to the previous or native pointer lock getter');
-    assert(runtime.includes('if (useOnScreenControls() && gameplayActive()) return document.body'), 'virtual body lock must be limited to active on-screen controls');
+    assert(runtime.includes('previous?.call(document) ?? nativePointerLockGetter?.call(document) ?? null'), 'desktop and base-mobile behavior must delegate to the previous or native pointer lock getter');
+    assert(runtime.includes('if (useOnScreenControls() && gameplayActive() && mapOpen()) return document.body'), 'extra virtual body lock must exist only while the live map is open');
   });
 
   suite.test('Competitive layer starts after primary and PUBG touch ownership', () => {
