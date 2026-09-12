@@ -100,7 +100,11 @@ Canonical browser gameplay balance is `game-web/src/weapons/weaponConfig.ts`; Ru
 
 - Terrain: `game-core/src/lib.rs`; JS fallback: `game-web/pkg/game_core.js`.
 - Global gameplay map window is ±2400 m (4.8×4.8 km); procedural terrain itself is unbounded.
-- `world/chunkManager.ts` owns chunk generation; `world/naturalSunRays.ts` owns terrain-anchored crepuscular rays.
+- `world/worldConfig.ts` owns chunk-grid geometry and streaming constants.
+- `world/chunkManager.ts` owns progressive chunk lifecycle/priority streaming; it must keep expensive world work to one task per frame.
+- `world/terrainGeometryPool.ts` reuses terrain GPU geometry; `world/rockInstances.ts` owns grounded instanced rock construction.
+- `world/naturalSunRays.ts` creates terrain-anchored rays at chunk creation; `rendering/naturalSunRayResources.ts` owns their shared GPU resources. No polling/monkey-patch layer is required.
+- Chunk coordinates are centered on `cx * CHUNK_SIZE`; use `worldToChunkCoord()` instead of `floor(world / size)`.
 - `rendering/scene.ts`: antialias off, DPR ≤1.25, shadows off, high-performance GPU preference.
 - `performance/localTelemetry.ts`: F3 local-only diagnostics. No telemetry leaves the browser.
 - `performance/performancePack.ts`: home PRECARICA DATI warms/caches models, assets, audio and WASM before realtime play.

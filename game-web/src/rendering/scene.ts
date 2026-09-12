@@ -1,8 +1,7 @@
 import * as THREE from 'three';
 import { DOM } from '../ui/menu.ts';
-
-const CHUNK_SIZE = 400;
-const CHUNK_RADIUS = 2;
+import { createNaturalSunRayGeometry, createNaturalSunRayMaterial } from './naturalSunRayResources.ts';
+import { WORLD_FOG_FAR, WORLD_FOG_NEAR } from '../world/worldConfig.ts';
 
 export class SceneManager {
     public scene!: THREE.Scene;
@@ -22,44 +21,13 @@ export class SceneManager {
 
         const fogColor = 0x1e293b;
         this.scene.background = new THREE.Color(fogColor);
+        this.scene.fog = new THREE.Fog(fogColor, WORLD_FOG_NEAR, WORLD_FOG_FAR);
 
-        const fogNear = CHUNK_SIZE * (CHUNK_RADIUS - 1.6);
-        const fogFar = CHUNK_SIZE * (CHUNK_RADIUS - 0.7);
-        this.scene.fog = new THREE.Fog(fogColor, fogNear, fogFar);
-
-        this.rayGeo = new THREE.CylinderGeometry(0, 45, 800, 12, 1, true);
-        this.rayGeo.translate(0, 400, 0);
-        this.rayMat = new THREE.MeshBasicMaterial({
-            color: 0xfef08a,
-            transparent: true,
-            opacity: 0.03,
-            blending: THREE.AdditiveBlending,
-            depthWrite: false,
-            side: THREE.DoubleSide,
-            fog: true
-        });
-
-        this.rayMat.onBeforeCompile = (shader) => {
-            shader.fragmentShader = shader.fragmentShader.replace(
-                `#include <fog_fragment>`,
-                `
-                #ifdef USE_FOG
-                    #ifdef FOG_EXP2
-                        float fogFactor = 1.0 - exp( - fogDensity * fogDensity * vFogDepth * vFogDepth );
-                    #else
-                        float fogFactor = smoothstep( fogNear, fogFar, vFogDepth );
-                    #endif
-                    gl_FragColor.rgb = mix( gl_FragColor.rgb, vec3(0.0), fogFactor );
-                #endif
-                `
-            );
-        };
+        this.rayGeo = createNaturalSunRayGeometry();
+        this.rayMat = createNaturalSunRayMaterial();
 
         this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.01, 3000);
 
-        // Prioritize stable frame pacing over expensive desktop-style rendering.
-        // At devicePixelRatio 2 the old path rendered 4x as many pixels and also
-        // performed a full 2048² shadow pass, which was a major cost on laptops.
         this.renderer = new THREE.WebGLRenderer({
             canvas: DOM.gameCanvas,
             antialias: false,
@@ -127,11 +95,8 @@ export class SceneManager {
                     const disposeMat = (mat: THREE.Material) => {
                         if (!mat.userData?.sharedAsset) mat.dispose();
                     };
-                    if (Array.isArray(child.material)) {
-                        child.material.forEach(disposeMat);
-                    } else {
-                        disposeMat(child.material);
-                    }
+                    if (Array.isArray(child.material)) child.material.forEach(disposeMat);
+                    else disposeMat(child.material);
                 }
             }
         });

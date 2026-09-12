@@ -1,5 +1,6 @@
 import { sceneManager } from '../rendering/scene.ts';
-import { activeChunks, CHUNK_SIZE } from '../world/chunkManager.ts';
+import { activeChunks, getChunkStreamingStats } from '../world/chunkManager.ts';
+import { worldToChunkCoord } from '../world/worldConfig.ts';
 
 type TelemetrySnapshot = {
   fps: number;
@@ -14,6 +15,10 @@ type TelemetrySnapshot = {
   textures: number;
   activeChunks: number;
   chunkBoundaryFrameMs: number;
+  chunkQueue: number;
+  chunkDetailQueue: number;
+  chunkBuildMs: number;
+  terrainPool: number;
   networkBufferedBytes: number;
   peerCount: number;
   rejectedShots: number;
@@ -70,7 +75,7 @@ function networkStats(): { bufferedBytes: number; peerCount: number; rejectedSho
 
 function classify(snapshot: Omit<TelemetrySnapshot, 'bottleneck'>): string {
   if (snapshot.networkBufferedBytes > 128 * 1024) return 'RETE / BACKPRESSURE';
-  if (snapshot.chunkBoundaryFrameMs > 35) return 'CHUNK / TERRAIN';
+  if (snapshot.chunkBuildMs > 24 || snapshot.chunkBoundaryFrameMs > 35) return 'CHUNK / TERRAIN';
   if (snapshot.longTaskMs > 80 && snapshot.frameP95Ms > 25) return 'CPU / MAIN THREAD';
   if (snapshot.frameP95Ms > 25 && (snapshot.drawCalls > 180 || snapshot.triangles > 450_000)) return 'RENDER / GPU';
   if (snapshot.frameP95Ms > 25) return 'FRAME TIME';
@@ -84,6 +89,7 @@ function collect(): TelemetrySnapshot {
   const max = frameSamples.reduce((value, sample) => Math.max(value, sample), 0);
   const info = sceneManager.renderer?.info;
   const network = networkStats();
+  const streaming = getChunkStreamingStats();
   const memory = (performance as any).memory;
   const memoryMb = Number.isFinite(memory?.usedJSHeapSize)
     ? memory.usedJSHeapSize / (1024 * 1024)
@@ -102,6 +108,10 @@ function collect(): TelemetrySnapshot {
     textures: Number(info?.memory?.textures ?? 0),
     activeChunks: activeChunks.size,
     chunkBoundaryFrameMs: lastChunkBoundaryFrameMs,
+    chunkQueue: streaming.queuedTerrain,
+    chunkDetailQueue: streaming.queuedDetails,
+    chunkBuildMs: streaming.lastBuildMs,
+    terrainPool: streaming.pooledGeometries,
     networkBufferedBytes: network.bufferedBytes,
     peerCount: network.peerCount,
     rejectedShots: network.rejectedShots,
@@ -134,7 +144,8 @@ function render(snapshot: TelemetrySnapshot): void {
     'G.O.N.E. DIAGNOSTICA LOCALE · F3',
     `FPS ${snapshot.fps.toFixed(0)}   frame ${snapshot.frameAvgMs.toFixed(1)}ms   p95 ${snapshot.frameP95Ms.toFixed(1)}ms   max ${snapshot.frameMaxMs.toFixed(1)}ms`,
     `render calls ${snapshot.drawCalls}   tri ${Math.round(snapshot.triangles / 1000)}k   geo ${snapshot.geometries}   tex ${snapshot.textures}`,
-    `chunk ${snapshot.activeChunks}   ultimo hitch ${snapshot.chunkBoundaryFrameMs.toFixed(1)}ms`,
+    `chunk ${snapshot.activeChunks}   queue ${snapshot.chunkQueue}/${snapshot.chunkDetailQueue}   build ${snapshot.chunkBuildMs.toFixed(1)}ms   pool ${snapshot.terrainPool}`,
+    `ultimo boundary frame ${snapshot.chunkBoundaryFrameMs.toFixed(1)}ms`,
     `rete peer ${snapshot.peerCount}   buffer ${(snapshot.networkBufferedBytes / 1024).toFixed(1)}KB   colpi rifiutati ${snapshot.rejectedShots}`,
     `long task ${snapshot.longTasks} / ${snapshot.longTaskMs.toFixed(0)}ms   heap ${memory}`,
     `diagnosi: ${snapshot.bottleneck}`,
@@ -146,8 +157,8 @@ function detectChunkBoundary(frameMs: number): void {
   const x = Number(player?.position?.x);
   const z = Number(player?.position?.z);
   if (!Number.isFinite(x) || !Number.isFinite(z)) return;
-  const chunkX = Math.floor(x / CHUNK_SIZE);
-  const chunkZ = Math.floor(z / CHUNK_SIZE);
+  const chunkX = worldToChunkCoord(x);
+  const chunkZ = worldToChunkCoord(z);
   if (lastChunkX !== null && (chunkX !== lastChunkX || chunkZ !== lastChunkZ)) {
     lastChunkBoundaryFrameMs = frameMs;
   }

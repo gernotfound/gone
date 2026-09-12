@@ -71,8 +71,8 @@ The host remains authoritative for PvP. Browser presentation code must never tur
 
 ### 6. World / rendering / models / VFX
 
-- `world/`: chunk lifecycle, terrain sampling and world ambience;
-- `rendering/`: renderer/scene resources;
+- `world/`: chunk lifecycle, terrain sampling and world ambience. `worldConfig.ts` owns the centered chunk grid; `chunkManager.ts` owns priority streaming; terrain pooling and rock construction live in focused helpers so the manager remains a coordinator;
+- `rendering/`: renderer/scene resources. Shared sun-ray geometry/material is created directly by `naturalSunRayResources.ts`, not installed later through a runtime patch;
 - `models/`: model construction/loading/socket attachment;
 - `vfx/`: pooled runtime visual effects.
 
@@ -81,6 +81,20 @@ Visual behavior should live in the object that executes it. For example, tracer 
 ### 7. Rust/WASM (`game-core/`)
 
 Owns performance-sensitive/pure mathematical systems such as procedural terrain and physics plus shared authoritative calculations. Keep browser/DOM/Three.js dependencies out of Rust core logic.
+
+## World streaming performance model
+
+World streaming is designed for frame-time stability rather than maximum synchronous throughput:
+
+- procedural terrain height is evaluated once per vertex in Rust/WASM; slope colors use cached-grid finite differences instead of two additional full terrain evaluations;
+- missing chunks are priority-sorted by distance and at most one expensive terrain/detail task is executed per animation frame;
+- stale chunks stay resident only while replacement chunks stream in, preventing holes; a hard radius bounds transient memory;
+- terrain `PlaneGeometry` objects are pooled and rewritten instead of allocated/disposed at every cell crossing;
+- rocks remain one instanced draw per detailed chunk and are created lazily only inside the near-detail radius;
+- shared sun-ray resources are created once, while each ray is grounded/configured exactly once when its chunk is built;
+- terrain bounds are recomputed after height injection so GPU frustum culling remains correct on high relief.
+
+Do not add naive per-chunk LOD with mismatched edge tessellation: it creates T-junction cracks. If terrain LOD becomes necessary, use stitched edges/skirts or a clipmap/quadtree design and measure it against the existing fog-limited draw distance.
 
 ## Compatibility facade: `window.goneGame`
 

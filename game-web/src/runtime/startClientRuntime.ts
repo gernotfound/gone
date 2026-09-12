@@ -22,7 +22,6 @@ import { startSessionLifecycleHardening } from '../net/sessionLifecycleHardening
 import { startRemoteShotPresentation } from '../net/remoteShotPresentation.ts';
 import { startLiveMapOverlay } from '../gameplay/liveMapOverlay.ts';
 import { startMusicSourceGain } from '../audio/musicSourceGain.ts';
-import { startNaturalSunRays } from '../world/naturalSunRays.ts';
 import { startPerformancePack } from '../performance/performancePack.ts';
 import { startCacheIntegrity } from '../performance/cacheIntegrity.ts';
 import { startLocalTelemetry } from '../performance/localTelemetry.ts';
@@ -35,7 +34,6 @@ function installPreBootstrapGuards(): void {
   startPvpHardening();
   startCombatEventBridge();
   startDeathmatchAuthority();
-  startNaturalSunRays();
 }
 
 function startCoreGameplayRuntime(): void {

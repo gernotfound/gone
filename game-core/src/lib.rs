@@ -234,7 +234,8 @@ fn get_terrain_height(x: f64, z: f64) -> f64 {
 #[wasm_bindgen]
 pub struct ChunkData {
     heights: Vec<f32>,
-    colors: Vec<f32>,
+    normals: Vec<f32>,
+    colors: Vec<u8>,
     rocks: Vec<f32>,
 }
 
@@ -244,8 +245,12 @@ impl ChunkData {
         js_sys::Float32Array::from(self.heights.as_slice())
     }
     
-    pub fn get_colors(&self) -> js_sys::Float32Array {
-        js_sys::Float32Array::from(self.colors.as_slice())
+    pub fn get_normals(&self) -> js_sys::Float32Array {
+        js_sys::Float32Array::from(self.normals.as_slice())
+    }
+
+    pub fn get_colors(&self) -> js_sys::Uint8Array {
+        js_sys::Uint8Array::from(self.colors.as_slice())
     }
     
     pub fn get_rocks(&self) -> js_sys::Float32Array {
@@ -260,96 +265,138 @@ pub fn get_height_at(x: f64, z: f64) -> f64 {
 
 #[wasm_bindgen]
 pub fn generate_chunk(cx: f64, cz: f64, offset_x: f64, offset_z: f64, size: f64, resolution: usize) -> ChunkData {
+    let resolution = resolution.max(2);
     let verts = resolution + 1;
     let count = verts * verts;
-    
+
     let mut heights = Vec::with_capacity(count);
+    let mut normals = Vec::with_capacity(count * 3);
     let mut colors = Vec::with_capacity(count * 3);
     let mut rocks = Vec::new();
-    
+
     let half = size / 2.0;
-    
-    for i in 0..verts {
-        for j in 0..verts {
-            let x = offset_x + (j as f64 / resolution as f64) * size - half;
-            let z = offset_z + (i as f64 / resolution as f64) * size - half;
-            
-            let h = get_terrain_height(x, z);
-            heights.push(h as f32);
-            
-            let h_right = get_terrain_height(x + 1.0, z);
-            let h_up = get_terrain_height(x, z + 1.0);
-            let nx = h - h_right;
-            let nz = h - h_up;
-            let slope = 1.0 / (nx*nx + 1.0 + nz*nz).sqrt();
-            
-            let mut t = (slope - 0.5) * 2.5;
-            t = t.clamp(0.0, 1.0);
-            
-            let r1 = 30.0/255.0; let g1 = 41.0/255.0; let b1 = 59.0/255.0;
-            let r2 = 2.0/255.0;  let g2 = 6.0/255.0;  let b2 = 15.0/255.0;
-            
-            colors.push((r2 + (r1 - r2) * t) as f32);
-            colors.push((g2 + (g1 - g2) * t) as f32);
-            colors.push((b2 + (b1 - b2) * t) as f32);
+    let cell = size / resolution as f64;
+
+    // Height pass: one expensive procedural lookup per terrain vertex.
+    // The previous implementation evaluated the complete terrain function
+    // three times per vertex just to estimate slope for vertex color.
+    for row in 0..verts {
+        for col in 0..verts {
+            let x = offset_x + (col as f64 / resolution as f64) * size - half;
+            let z = offset_z + (row as f64 / resolution as f64) * size - half;
+            heights.push(get_terrain_height(x, z) as f32);
         }
     }
-    
+
+    // Color/slope pass: derive the gradient from the height grid already in
+    // memory. Central differences preserve the same slope semantics while
+    // removing roughly two thirds of terrain evaluations during chunk builds.
+    for row in 0..verts {
+        for col in 0..verts {
+            let left_col = col.saturating_sub(1);
+            let right_col = (col + 1).min(resolution);
+            let down_row = row.saturating_sub(1);
+            let up_row = (row + 1).min(resolution);
+
+            let left = heights[row * verts + left_col] as f64;
+            let right = heights[row * verts + right_col] as f64;
+            let down = heights[down_row * verts + col] as f64;
+            let up = heights[up_row * verts + col] as f64;
+
+            let dx_span = ((right_col - left_col) as f64 * cell).max(0.001);
+            let dz_span = ((up_row - down_row) as f64 * cell).max(0.001);
+            let sx = (right - left) / dx_span;
+            let sz = (up - down) / dz_span;
+            let inv_len = 1.0 / (sx * sx + 1.0 + sz * sz).sqrt();
+
+            normals.push((-sx * inv_len) as f32);
+            normals.push(inv_len as f32);
+            normals.push((-sz * inv_len) as f32);
+
+            let mut t = (inv_len - 0.5) * 2.5;
+            t = t.clamp(0.0, 1.0);
+            colors.push((2.0 + (30.0 - 2.0) * t).round() as u8);
+            colors.push((6.0 + (41.0 - 6.0) * t).round() as u8);
+            colors.push((15.0 + (59.0 - 15.0) * t).round() as u8);
+        }
+    }
+
     let max_clusters = 8 + (pseudo_random(cx, cz) * 10.0) as i32;
     for c in 0..max_clusters {
         let local_x = (pseudo_random(cx + c as f64, cz) - 0.5) * size;
         let local_z = (pseudo_random(cx, cz + c as f64) - 0.5) * size;
         let world_x = offset_x + local_x;
         let world_z = offset_z + local_z;
-        
-        let dist_center = (world_x*world_x + world_z*world_z).sqrt();
-        if dist_center < 50.0 { continue; }
-        
+
+        let dist_center = (world_x * world_x + world_z * world_z).sqrt();
+        if dist_center < 50.0 {
+            continue;
+        }
+
         let h = get_terrain_height(world_x, world_z);
         let h_right = get_terrain_height(world_x + 1.0, world_z);
         let h_up = get_terrain_height(world_x, world_z + 1.0);
         let nx = h - h_right;
         let nz = h - h_up;
-        let slope = 1.0 / (nx*nx + 1.0 + nz*nz).sqrt();
-        
+        let slope = 1.0 / (nx * nx + 1.0 + nz * nz).sqrt();
+
         if slope > 0.85 {
             let sx = 1.0 + pseudo_random(world_x, world_z) * 4.0;
-            let sy = 0.5 + pseudo_random(world_x+1.0, world_z) * 3.5;
-            let sz = 1.0 + pseudo_random(world_x, world_z+1.0) * 4.0;
-            let rot_x = pseudo_random(world_x+2.0, world_z) * std::f64::consts::PI;
-            let rot_y = pseudo_random(world_x, world_z+2.0) * std::f64::consts::PI;
-            let rot_z = pseudo_random(world_x+2.0, world_z+2.0) * std::f64::consts::PI;
-            
-            rocks.push(local_x as f32); rocks.push(h as f32); rocks.push(local_z as f32);
-            rocks.push(sx as f32); rocks.push(sy as f32); rocks.push(sz as f32);
-            rocks.push(rot_x as f32); rocks.push(rot_y as f32); rocks.push(rot_z as f32);
-            
-            let debris_count = 4 + (pseudo_random(world_x*2.0, world_z*2.0) * 8.0) as i32;
+            let sy = 0.5 + pseudo_random(world_x + 1.0, world_z) * 3.5;
+            let sz = 1.0 + pseudo_random(world_x, world_z + 1.0) * 4.0;
+            let rot_x = pseudo_random(world_x + 2.0, world_z) * std::f64::consts::PI;
+            let rot_y = pseudo_random(world_x, world_z + 2.0) * std::f64::consts::PI;
+            let rot_z = pseudo_random(world_x + 2.0, world_z + 2.0) * std::f64::consts::PI;
+
+            rocks.push(local_x as f32);
+            rocks.push(h as f32);
+            rocks.push(local_z as f32);
+            rocks.push(sx as f32);
+            rocks.push(sy as f32);
+            rocks.push(sz as f32);
+            rocks.push(rot_x as f32);
+            rocks.push(rot_y as f32);
+            rocks.push(rot_z as f32);
+
+            let debris_count =
+                4 + (pseudo_random(world_x * 2.0, world_z * 2.0) * 8.0) as i32;
             for d in 0..debris_count {
-                let d_local_x = local_x + (pseudo_random(world_x+d as f64, world_z) - 0.5) * 12.0;
-                let d_local_z = local_z + (pseudo_random(world_x, world_z+d as f64) - 0.5) * 12.0;
+                let d_local_x =
+                    local_x + (pseudo_random(world_x + d as f64, world_z) - 0.5) * 12.0;
+                let d_local_z =
+                    local_z + (pseudo_random(world_x, world_z + d as f64) - 0.5) * 12.0;
                 let d_world_x = offset_x + d_local_x;
                 let d_world_z = offset_z + d_local_z;
 
                 let d_h = get_terrain_height(d_world_x, d_world_z);
                 let dsx = 0.2 + pseudo_random(d_world_x, d_world_z) * 1.5;
-                let dsy = 0.2 + pseudo_random(d_world_x+1.0, d_world_z) * 1.0;
-                let dsz = 0.2 + pseudo_random(d_world_x, d_world_z+1.0) * 1.5;
-                
-                let drx = pseudo_random(d_world_x+2.0, d_world_z) * std::f64::consts::PI;
-                let dry = pseudo_random(d_world_x, d_world_z+2.0) * std::f64::consts::PI;
-                let drz = pseudo_random(d_world_x+2.0, d_world_z+2.0) * std::f64::consts::PI;
+                let dsy = 0.2 + pseudo_random(d_world_x + 1.0, d_world_z) * 1.0;
+                let dsz = 0.2 + pseudo_random(d_world_x, d_world_z + 1.0) * 1.5;
 
-                rocks.push(d_local_x as f32); rocks.push(d_h as f32); rocks.push(d_local_z as f32);
-                rocks.push(dsx as f32); rocks.push(dsy as f32); rocks.push(dsz as f32);
-                rocks.push(drx as f32); rocks.push(dry as f32); rocks.push(drz as f32);
+                let drx =
+                    pseudo_random(d_world_x + 2.0, d_world_z) * std::f64::consts::PI;
+                let dry =
+                    pseudo_random(d_world_x, d_world_z + 2.0) * std::f64::consts::PI;
+                let drz = pseudo_random(d_world_x + 2.0, d_world_z + 2.0)
+                    * std::f64::consts::PI;
+
+                rocks.push(d_local_x as f32);
+                rocks.push(d_h as f32);
+                rocks.push(d_local_z as f32);
+                rocks.push(dsx as f32);
+                rocks.push(dsy as f32);
+                rocks.push(dsz as f32);
+                rocks.push(drx as f32);
+                rocks.push(dry as f32);
+                rocks.push(drz as f32);
             }
         }
     }
-    
+
     ChunkData {
         heights,
+        normals,
         colors,
-        rocks
+        rocks,
     }
 }

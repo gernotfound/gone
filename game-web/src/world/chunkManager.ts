@@ -1,201 +1,363 @@
 import * as THREE from 'three';
 import { generate_chunk, get_height_at } from '../../pkg/game_core.js';
 import { sceneManager } from '../rendering/scene.ts';
+import { createNaturalSunRay } from './naturalSunRays.ts';
+import { createGroundedRockInstances } from './rockInstances.ts';
+import {
+  acquireTerrainGeometry,
+  applyTerrainData,
+  getTerrainGeometryPoolSize,
+  releaseTerrainGeometry,
+} from './terrainGeometryPool.ts';
+import {
+  CHUNK_DATA_CACHE_LIMIT,
+  CHUNK_HARD_UNLOAD_RADIUS,
+  CHUNK_RADIUS,
+  CHUNK_RENDER_CULL_MARGIN,
+  CHUNK_RESOLUTION,
+  CHUNK_SIZE,
+  WORLD_FOG_FAR,
+  chunkCoordToWorld,
+  chunkDistanceSq,
+  isChunkInDetailRadius,
+  isChunkInLoadRadius,
+  worldToChunkCoord,
+} from './worldConfig.ts';
 
-export const activeChunks = new Map<string, any>();
-export const CHUNK_SIZE = 400;
-export const CHUNK_RESOLUTION = 64;
-export const CHUNK_RADIUS = 2;
+export { CHUNK_RADIUS, CHUNK_RESOLUTION, CHUNK_SIZE } from './worldConfig.ts';
 
+type ChunkPayload = {
+  heights: Float32Array;
+  normals: Float32Array;
+  colors: Uint8Array;
+  rocks: Float32Array;
+};
+
+export interface ChunkRecord {
+  id: string;
+  cx: number;
+  cz: number;
+  mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshStandardMaterial>;
+  rocks: THREE.InstancedMesh | null;
+  rockData: Float32Array | null;
+  heightData: Float32Array;
+  ray: THREE.Mesh | null;
+}
+
+type PendingChunk = {
+  id: string;
+  cx: number;
+  cz: number;
+  priority: number;
+};
+
+export type ChunkStreamingStats = {
+  active: number;
+  rendered: number;
+  queuedTerrain: number;
+  queuedDetails: number;
+  pooledGeometries: number;
+  cachedChunks: number;
+  cacheHits: number;
+  cacheMisses: number;
+  lastBuildMs: number;
+  lastBuildKind: 'terrain' | 'rocks' | 'none';
+};
+
+export const activeChunks = new Map<string, ChunkRecord>();
+
+const desiredChunkIds = new Set<string>();
+const pendingTerrainIds = new Set<string>();
+const pendingDetailIds = new Set<string>();
+const chunkDataCache = new Map<string, ChunkPayload>();
+
+let pendingTerrain: PendingChunk[] = [];
 let lastChunkX: number | null = null;
 let lastChunkZ: number | null = null;
+let lastBuildMs = 0;
+let lastBuildKind: ChunkStreamingStats['lastBuildKind'] = 'none';
+let cacheHits = 0;
+let cacheMisses = 0;
 
 export function getChunkMeshes(): THREE.Object3D[] {
-    const meshes: THREE.Object3D[] = [];
-    for (const chunkObj of activeChunks.values()) {
-        if (chunkObj.mesh) meshes.push(chunkObj.mesh);
-    }
-    return meshes;
+  const meshes: THREE.Object3D[] = [];
+  for (const chunk of activeChunks.values()) meshes.push(chunk.mesh);
+  return meshes;
 }
 
 export function getTerrainHeightAt(x: number, z: number): number {
-    return get_height_at(x, z);
+  return get_height_at(x, z);
 }
 
-function sampleRockFootprint(worldX: number, worldZ: number, footprint: number): {
-    min: number;
-    max: number;
-    center: number;
-} {
-    const center = get_height_at(worldX, worldZ);
-    const heights = [
-        center,
-        get_height_at(worldX + footprint, worldZ),
-        get_height_at(worldX - footprint, worldZ),
-        get_height_at(worldX, worldZ + footprint),
-        get_height_at(worldX, worldZ - footprint),
-    ];
-    return {
-        min: Math.min(...heights),
-        max: Math.max(...heights),
-        center,
+export function getChunkStreamingStats(): ChunkStreamingStats {
+  let rendered = 0;
+  for (const chunk of activeChunks.values()) {
+    if (chunk.mesh.visible) rendered += 1;
+  }
+  return {
+    active: activeChunks.size,
+    rendered,
+    queuedTerrain: pendingTerrainIds.size,
+    queuedDetails: pendingDetailIds.size,
+    pooledGeometries: getTerrainGeometryPoolSize(),
+    cachedChunks: chunkDataCache.size,
+    cacheHits,
+    cacheMisses,
+    lastBuildMs,
+    lastBuildKind,
+  };
+}
+
+function chunkId(cx: number, cz: number): string {
+  return `${cx},${cz}`;
+}
+
+function seededRandom(seed: number): number {
+  const value = Math.sin(seed) * 43758.5453;
+  return value - Math.floor(value);
+}
+
+function cachePayload(id: string, payload: ChunkPayload): void {
+  chunkDataCache.delete(id);
+  chunkDataCache.set(id, payload);
+  while (chunkDataCache.size > CHUNK_DATA_CACHE_LIMIT) {
+    const oldest = chunkDataCache.keys().next().value as string | undefined;
+    if (!oldest) break;
+    chunkDataCache.delete(oldest);
+  }
+}
+
+function loadChunkPayload(
+  id: string,
+  cx: number,
+  cz: number,
+  offsetX: number,
+  offsetZ: number,
+): ChunkPayload {
+  const cached = chunkDataCache.get(id);
+  if (cached) {
+    cacheHits += 1;
+    chunkDataCache.delete(id);
+    chunkDataCache.set(id, cached);
+    return cached;
+  }
+
+  cacheMisses += 1;
+  const chunkData = generate_chunk(
+    cx,
+    cz,
+    offsetX,
+    offsetZ,
+    CHUNK_SIZE,
+    CHUNK_RESOLUTION,
+  );
+  try {
+    const payload: ChunkPayload = {
+      heights: chunkData.get_heights(),
+      normals: chunkData.get_normals(),
+      colors: chunkData.get_colors(),
+      rocks: chunkData.get_rocks(),
     };
+    cachePayload(id, payload);
+    return payload;
+  } finally {
+    chunkData.free();
+  }
 }
 
-function createGroundedRocks(
-    rocks: Float32Array,
-    offsetX: number,
-    offsetZ: number,
-): THREE.InstancedMesh | null {
-    if (rocks.length < 9) return null;
+function buildChunk(
+  cx: number,
+  cz: number,
+  centerX: number,
+  centerZ: number,
+): ChunkRecord {
+  const id = chunkId(cx, cz);
+  const offsetX = chunkCoordToWorld(cx);
+  const offsetZ = chunkCoordToWorld(cz);
+  const payload = loadChunkPayload(id, cx, cz, offsetX, offsetZ);
+  const geometry = acquireTerrainGeometry();
 
-    const accepted: Array<{
-        x: number; y: number; z: number;
-        sx: number; sy: number; sz: number;
-        rx: number; ry: number; rz: number;
-    }> = [];
+  try {
+    applyTerrainData(geometry, payload.heights, payload.normals, payload.colors);
+  } catch (error) {
+    releaseTerrainGeometry(geometry);
+    throw error;
+  }
 
-    const rockCount = Math.floor(rocks.length / 9);
-    for (let i = 0; i < rockCount; i += 1) {
-        const idx = i * 9;
-        const localX = rocks[idx];
-        const localZ = rocks[idx + 2];
-        const sx = Math.max(0.05, rocks[idx + 3]);
-        const sy = Math.max(0.05, rocks[idx + 4]);
-        const sz = Math.max(0.05, rocks[idx + 5]);
-        const worldX = offsetX + localX;
-        const worldZ = offsetZ + localZ;
+  const mesh = new THREE.Mesh(geometry, sceneManager.terrainMaterial);
+  mesh.position.set(offsetX, 0, offsetZ);
+  mesh.receiveShadow = false;
+  mesh.castShadow = false;
 
-        // A rock must be supportable by the terrain under its footprint, not
-        // merely by one center height sample. On cliff/crater edges, remove it.
-        const footprint = Math.max(0.35, Math.min(3.5, Math.max(sx, sz) * 0.55));
-        const ground = sampleRockFootprint(worldX, worldZ, footprint);
-        const heightSpan = ground.max - ground.min;
-        const maxSupportableSpan = Math.max(1.15, sy * 0.95);
-        if (!Number.isFinite(ground.max) || heightSpan > maxSupportableSpan) continue;
+  const nearDetail = isChunkInDetailRadius(cx, cz, centerX, centerZ);
+  const rocks = nearDetail
+    ? createGroundedRockInstances(payload.rocks, payload.heights, offsetX, offsetZ)
+    : null;
+  if (rocks) mesh.add(rocks);
 
-        // DodecahedronGeometry is centered at the origin with radius ~1. Embed
-        // most of the lower half into the highest support point so no side can
-        // visibly hover after the small allowed tilt.
-        const embeddedCenterY = ground.max + sy * 0.38;
-        const rx = Math.sin(rocks[idx + 6]) * 0.18;
-        const ry = rocks[idx + 7];
-        const rz = Math.sin(rocks[idx + 8]) * 0.18;
+  let ray: THREE.Mesh | null = null;
+  const seed = cx * 12.9898 + cz * 78.233;
+  if (seededRandom(seed) > 0.82) {
+    const localX = (seededRandom(seed + 2.1) - 0.5) * CHUNK_SIZE;
+    const localZ = (seededRandom(seed + 3.7) - 0.5) * CHUNK_SIZE;
+    ray = createNaturalSunRay(mesh, localX, localZ, seed);
+    mesh.add(ray);
+  }
 
-        accepted.push({
-            x: localX,
-            y: embeddedCenterY,
-            z: localZ,
-            sx,
-            sy,
-            sz,
-            rx,
-            ry,
-            rz,
-        });
-    }
-
-    if (accepted.length === 0) return null;
-    const instanced = new THREE.InstancedMesh(sceneManager.rockGeo, sceneManager.rockMat, accepted.length);
-    instanced.castShadow = false;
-    instanced.receiveShadow = false;
-    const dummy = new THREE.Object3D();
-
-    accepted.forEach((rock, index) => {
-        dummy.position.set(rock.x, rock.y, rock.z);
-        dummy.scale.set(rock.sx, rock.sy, rock.sz);
-        dummy.rotation.set(rock.rx, rock.ry, rock.rz);
-        dummy.updateMatrix();
-        instanced.setMatrixAt(index, dummy.matrix);
-    });
-    instanced.instanceMatrix.needsUpdate = true;
-    return instanced;
+  const record: ChunkRecord = {
+    id,
+    cx,
+    cz,
+    mesh,
+    rocks,
+    rockData: nearDetail ? null : payload.rocks,
+    heightData: payload.heights,
+    ray,
+  };
+  sceneManager.scene.add(mesh);
+  activeChunks.set(id, record);
+  return record;
 }
 
-export function updateChunks(playerPosition: THREE.Vector3) {
-    const px = Math.floor(playerPosition.x / CHUNK_SIZE);
-    const pz = Math.floor(playerPosition.z / CHUNK_SIZE);
+function disposeChunk(record: ChunkRecord): void {
+  sceneManager.scene.remove(record.mesh);
+  if (record.rocks) record.rocks.dispose();
+  record.mesh.clear();
+  releaseTerrainGeometry(record.mesh.geometry);
+  activeChunks.delete(record.id);
+  pendingDetailIds.delete(record.id);
+}
 
-    // Chunk membership only changes after crossing a 400 m boundary.
-    if (activeChunks.size > 0 && px === lastChunkX && pz === lastChunkZ) return;
-    lastChunkX = px;
-    lastChunkZ = pz;
+function refreshDesiredChunks(centerX: number, centerZ: number): void {
+  desiredChunkIds.clear();
+  const nextPending: PendingChunk[] = [];
+  pendingTerrainIds.clear();
 
-    const currentChunks = new Set<string>();
+  for (let dx = -CHUNK_RADIUS; dx <= CHUNK_RADIUS; dx += 1) {
+    for (let dz = -CHUNK_RADIUS; dz <= CHUNK_RADIUS; dz += 1) {
+      if (!isChunkInLoadRadius(dx, dz)) continue;
+      const cx = centerX + dx;
+      const cz = centerZ + dz;
+      const id = chunkId(cx, cz);
+      desiredChunkIds.add(id);
+      if (!activeChunks.has(id)) {
+        pendingTerrainIds.add(id);
+        nextPending.push({ id, cx, cz, priority: dx * dx + dz * dz });
+      }
+    }
+  }
 
-    for (let x = -CHUNK_RADIUS; x <= CHUNK_RADIUS; x++) {
-        for (let z = -CHUNK_RADIUS; z <= CHUNK_RADIUS; z++) {
-            if (x * x + z * z > CHUNK_RADIUS * CHUNK_RADIUS + 1) continue;
+  nextPending.sort((a, b) => a.priority - b.priority);
+  pendingTerrain = nextPending;
 
-            const cx = px + x;
-            const cz = pz + z;
-            const id = `${cx},${cz}`;
-            currentChunks.add(id);
+  for (const record of [...activeChunks.values()]) {
+    if (
+      Math.abs(record.cx - centerX) > CHUNK_HARD_UNLOAD_RADIUS ||
+      Math.abs(record.cz - centerZ) > CHUNK_HARD_UNLOAD_RADIUS
+    ) {
+      disposeChunk(record);
+    }
+  }
 
-            if (!activeChunks.has(id)) {
-                activeChunks.set(id, { mesh: null, targetY: 0 });
-                const offsetX = cx * CHUNK_SIZE;
-                const offsetZ = cz * CHUNK_SIZE;
-                const chunkData = generate_chunk(cx, cz, offsetX, offsetZ, CHUNK_SIZE, CHUNK_RESOLUTION);
+  reconcileChunkDetails(centerX, centerZ);
+}
 
-                const heights = chunkData.get_heights();
-                const colors = chunkData.get_colors();
-                const rocks = chunkData.get_rocks();
-
-                const geometry = new THREE.PlaneGeometry(CHUNK_SIZE, CHUNK_SIZE, CHUNK_RESOLUTION, CHUNK_RESOLUTION);
-                geometry.rotateX(-Math.PI / 2);
-                const positions = geometry.attributes.position;
-                for (let i = 0; i < positions.count; i += 1) positions.setY(i, heights[i]);
-                geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-                geometry.computeVertexNormals();
-
-                const mesh = new THREE.Mesh(geometry, sceneManager.terrainMaterial);
-                mesh.position.set(offsetX, 0, offsetZ);
-                mesh.receiveShadow = false;
-                mesh.castShadow = false;
-
-                const groundedRocks = createGroundedRocks(rocks, offsetX, offsetZ);
-                if (groundedRocks) mesh.add(groundedRocks);
-
-                // Large transparent god rays are fill-rate heavy. Keep a sparse
-                // deterministic ambience instead of multiple rays per chunk.
-                const seededRandom = (s: number) => {
-                    const r = Math.sin(s) * 43758.5453;
-                    return r - Math.floor(r);
-                };
-                const chunkSeed = cx * 12.9898 + cz * 78.233;
-                if (seededRandom(chunkSeed) > 0.82) {
-                    const sunDir = new THREE.Vector3(200, 300, -100).normalize();
-                    const up = new THREE.Vector3(0, 1, 0);
-                    const quaternion = new THREE.Quaternion().setFromUnitVectors(up, sunDir);
-                    const ray = new THREE.Mesh(sceneManager.rayGeo, sceneManager.rayMat);
-                    ray.position.set(
-                        (seededRandom(chunkSeed + 2.1) - 0.5) * CHUNK_SIZE,
-                        -50,
-                        (seededRandom(chunkSeed + 3.7) - 0.5) * CHUNK_SIZE,
-                    );
-                    ray.quaternion.copy(quaternion);
-                    mesh.add(ray);
-                }
-
-                sceneManager.scene.add(mesh);
-                const chunkObj = activeChunks.get(id);
-                if (chunkObj) chunkObj.mesh = mesh;
-                chunkData.free();
-            }
-        }
+function reconcileChunkDetails(centerX: number, centerZ: number): void {
+  for (const record of activeChunks.values()) {
+    const nearDetail = isChunkInDetailRadius(record.cx, record.cz, centerX, centerZ);
+    if (record.rocks) record.rocks.visible = nearDetail;
+    if (nearDetail && !record.rocks && record.rockData && record.rockData.length >= 9) {
+      pendingDetailIds.add(record.id);
+    } else if (!nearDetail) {
+      pendingDetailIds.delete(record.id);
     }
 
-    for (const [id, chunkObj] of activeChunks.entries()) {
-        if (!currentChunks.has(id)) {
-            if (chunkObj.mesh) {
-                sceneManager.scene.remove(chunkObj.mesh);
-                chunkObj.mesh.geometry.dispose();
-                chunkObj.mesh.children.forEach((child: any) => {
-                    if (child.isInstancedMesh) child.dispose();
-                });
-            }
-            activeChunks.delete(id);
-        }
+    if (record.ray) {
+      record.ray.visible =
+        desiredChunkIds.has(record.id) &&
+        chunkDistanceSq(record.cx, record.cz, centerX, centerZ) <= CHUNK_RADIUS * CHUNK_RADIUS + 1;
     }
+  }
+}
+
+function processOneTerrainBuild(centerX: number, centerZ: number): boolean {
+  while (pendingTerrain.length > 0) {
+    const next = pendingTerrain.shift()!;
+    pendingTerrainIds.delete(next.id);
+    if (!desiredChunkIds.has(next.id) || activeChunks.has(next.id)) continue;
+
+    const startedAt = performance.now();
+    buildChunk(next.cx, next.cz, centerX, centerZ);
+    lastBuildMs = performance.now() - startedAt;
+    lastBuildKind = 'terrain';
+    reconcileChunkDetails(centerX, centerZ);
+    return true;
+  }
+  return false;
+}
+
+function processOneDetailBuild(centerX: number, centerZ: number): boolean {
+  for (const id of pendingDetailIds) {
+    pendingDetailIds.delete(id);
+    const record = activeChunks.get(id);
+    if (!record || record.rocks || !record.rockData || !isChunkInDetailRadius(record.cx, record.cz, centerX, centerZ)) {
+      continue;
+    }
+
+    const startedAt = performance.now();
+    record.rocks = createGroundedRockInstances(
+      record.rockData,
+      record.heightData,
+      record.mesh.position.x,
+      record.mesh.position.z,
+    );
+    record.rockData = null;
+    if (record.rocks) record.mesh.add(record.rocks);
+    lastBuildMs = performance.now() - startedAt;
+    lastBuildKind = 'rocks';
+    return true;
+  }
+  return false;
+}
+
+function unloadStaleChunksWhenSettled(): void {
+  if (pendingTerrainIds.size > 0) return;
+  for (const record of [...activeChunks.values()]) {
+    if (!desiredChunkIds.has(record.id)) disposeChunk(record);
+  }
+}
+
+function updateRenderVisibility(playerPosition: THREE.Vector3): void {
+  const limit = WORLD_FOG_FAR + CHUNK_RENDER_CULL_MARGIN;
+  const limitSq = limit * limit;
+  const half = CHUNK_SIZE * 0.5;
+
+  for (const record of activeChunks.values()) {
+    const dx = Math.max(Math.abs(playerPosition.x - record.mesh.position.x) - half, 0);
+    const dz = Math.max(Math.abs(playerPosition.z - record.mesh.position.z) - half, 0);
+    record.mesh.visible = dx * dx + dz * dz <= limitSq;
+  }
+}
+
+export function updateChunks(playerPosition: THREE.Vector3): void {
+  const centerX = worldToChunkCoord(playerPosition.x);
+  const centerZ = worldToChunkCoord(playerPosition.z);
+  const centerChanged = centerX !== lastChunkX || centerZ !== lastChunkZ;
+
+  if (centerChanged || desiredChunkIds.size === 0) {
+    lastChunkX = centerX;
+    lastChunkZ = centerZ;
+    refreshDesiredChunks(centerX, centerZ);
+  }
+
+  const builtTerrain = processOneTerrainBuild(centerX, centerZ);
+  if (!builtTerrain) {
+    if (!processOneDetailBuild(centerX, centerZ) && !centerChanged) {
+      lastBuildKind = 'none';
+      lastBuildMs = 0;
+    }
+  }
+
+  unloadStaleChunksWhenSettled();
+  updateRenderVisibility(playerPosition);
 }

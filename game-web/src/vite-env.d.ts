@@ -12,7 +12,8 @@ declare module '../pkg/game_core.js' {
   ): {
     free(): void;
     get_heights(): Float32Array;
-    get_colors(): Float32Array;
+    get_normals(): Float32Array;
+    get_colors(): Uint8Array;
     get_rocks(): Float32Array;
   };
   export function get_height_at(x: number, z: number): number;

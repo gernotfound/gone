@@ -140,12 +140,14 @@ export function get_height_at(x, z) {
 }
 
 class ChunkData {
-  constructor(heights, colors, rocks) {
+  constructor(heights, normals, colors, rocks) {
     this.heights = heights;
+    this.normals = normals;
     this.colors = colors;
     this.rocks = rocks;
   }
   get_heights() { return this.heights; }
+  get_normals() { return this.normals; }
   get_colors() { return this.colors; }
   get_rocks() { return this.rocks; }
   free() {}
@@ -156,7 +158,8 @@ export function generate_chunk(cx, cz, offsetX, offsetZ, size, resolution) {
   const verts = res + 1;
   const count = verts * verts;
   const heights = new Float32Array(count);
-  const colors = new Float32Array(count * 3);
+  const normals = new Float32Array(count * 3);
+  const colors = new Uint8Array(count * 3);
   const half = size / 2;
 
   // Height pass: one expensive height lookup per vertex.
@@ -181,13 +184,18 @@ export function generate_chunk(cx, cz, offsetX, offsetZ, size, resolution) {
       const right = heights[row * verts + Math.min(res, col + 1)];
       const down = heights[Math.max(0, row - 1) * verts + col];
       const up = heights[Math.min(res, row + 1) * verts + col];
-      const sx = (right - left) / Math.max(cell * 2, 0.001);
-      const sz = (up - down) / Math.max(cell * 2, 0.001);
-      const vertical = 1 / Math.sqrt(sx * sx + 1 + sz * sz);
-      const t = Math.max(0, Math.min(1, (vertical - 0.45) * 1.8));
-      colors[i * 3] = lerp(dark[0], light[0], t);
-      colors[i * 3 + 1] = lerp(dark[1], light[1], t);
-      colors[i * 3 + 2] = lerp(dark[2], light[2], t);
+      const dxSpan = Math.max((Math.min(res, col + 1) - Math.max(0, col - 1)) * cell, 0.001);
+      const dzSpan = Math.max((Math.min(res, row + 1) - Math.max(0, row - 1)) * cell, 0.001);
+      const sx = (right - left) / dxSpan;
+      const sz = (up - down) / dzSpan;
+      const invLen = 1 / Math.sqrt(sx * sx + 1 + sz * sz);
+      normals[i * 3] = -sx * invLen;
+      normals[i * 3 + 1] = invLen;
+      normals[i * 3 + 2] = -sz * invLen;
+      const t = Math.max(0, Math.min(1, (invLen - 0.5) * 2.5));
+      colors[i * 3] = Math.round(2 + (30 - 2) * t);
+      colors[i * 3 + 1] = Math.round(6 + (41 - 6) * t);
+      colors[i * 3 + 2] = Math.round(15 + (59 - 15) * t);
     }
   }
 
@@ -214,7 +222,7 @@ export function generate_chunk(cx, cz, offsetX, offsetZ, size, resolution) {
     );
   }
 
-  return new ChunkData(heights, colors, new Float32Array(rockValues));
+  return new ChunkData(heights, normals, colors, new Float32Array(rockValues));
 }
 
 export class PhysicsInput {
