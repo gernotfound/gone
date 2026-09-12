@@ -3,6 +3,7 @@ import { bootstrap } from './gameplay/engine.ts';
 import { startAdvancedWeaponController } from './gameplay/advancedWeaponController.ts';
 import { startDynamicPrecisionReticle } from './gameplay/dynamicPrecisionReticle.ts';
 import { startPrecisionShotRuntime } from './gameplay/precisionShotRuntime.ts';
+import { startLocalHitscanRangeGuard } from './gameplay/localHitscanRangeGuard.ts';
 import { startSpawnController } from './gameplay/spawnController.ts';
 import { startKillAmmoReset } from './gameplay/killAmmoReset.ts';
 import { startHostRemoteSync } from './net/hostRemoteSync.ts';
@@ -28,6 +29,7 @@ startNaturalSunRays();
 
 bootstrap();
 startPrecisionShotRuntime();
+startLocalHitscanRangeGuard();
 startAdvancedWeaponController();
 startDynamicPrecisionReticle();
 startLobbyPresenceSync();
