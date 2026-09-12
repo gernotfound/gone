@@ -29,6 +29,7 @@ import { startLocalTelemetry } from '../performance/localTelemetry.ts';
 import { startAdaptiveRenderScale } from '../performance/adaptiveRenderScale.ts';
 import { startTelemetryDetails } from '../performance/telemetryDetails.ts';
 import { startP2PQualityHud } from '../ui/p2pQualityHud.ts';
+import { startMobileRuntime } from '../mobile/mobileRuntime.ts';
 
 function installPreBootstrapGuards(): void {
   startNetworkStabilityFix();
@@ -80,6 +81,7 @@ export function startClientRuntime(): void {
   installPreBootstrapGuards();
   bootstrap();
   startCoreGameplayRuntime();
+  startMobileRuntime();
   startNetworkRuntime();
   startGameplayPresentation();
   startPresentationAndDiagnostics();

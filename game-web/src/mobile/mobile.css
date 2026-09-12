@@ -1,0 +1,45 @@
+html,body,#app,#game-canvas{overscroll-behavior:none;-webkit-overflow-scrolling:touch}
+body{touch-action:manipulation;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+#gone-mobile-controls{position:fixed;inset:0;z-index:70;pointer-events:none;touch-action:none;font-family:ui-sans-serif,system-ui,sans-serif}
+#gone-mobile-controls:not(.hidden){display:block}
+#mobile-look-pad{position:absolute;z-index:71;left:42%;right:0;top:0;bottom:0;pointer-events:auto;touch-action:none}
+#mobile-stick{position:absolute;z-index:75;left:max(20px,calc(env(safe-area-inset-left) + 12px));bottom:max(22px,calc(env(safe-area-inset-bottom) + 12px));width:142px;height:142px;border:2px solid rgba(103,232,249,.34);border-radius:50%;background:radial-gradient(circle,rgba(15,23,42,.24),rgba(2,6,23,.48));box-shadow:inset 0 0 28px rgba(34,211,238,.12);pointer-events:auto;touch-action:none}
+#mobile-stick-knob{position:absolute;left:50%;top:50%;width:62px;height:62px;transform:translate(-50%,-50%);border-radius:50%;border:2px solid rgba(165,243,252,.75);background:rgba(8,145,178,.38);box-shadow:0 0 20px rgba(34,211,238,.25);pointer-events:none}
+#gone-mobile-controls button{position:absolute;z-index:80;display:flex;align-items:center;justify-content:center;min-width:50px;min-height:50px;padding:0;border:1px solid rgba(148,163,184,.5);border-radius:16px;background:rgba(15,23,42,.63);backdrop-filter:blur(7px);color:#f8fafc;font-size:11px;font-weight:950;letter-spacing:.04em;box-shadow:0 6px 18px rgba(0,0,0,.24);pointer-events:auto;touch-action:none;-webkit-tap-highlight-color:transparent}
+#gone-mobile-controls button.is-held,#gone-mobile-controls button:active{transform:scale(.94);background:rgba(8,145,178,.78);border-color:rgba(103,232,249,.9)}
+#gone-mobile-controls .mc-action{width:66px;height:66px;border-radius:50%}
+#gone-mobile-controls .mc-fire{right:max(22px,calc(env(safe-area-inset-right) + 14px));bottom:max(26px,calc(env(safe-area-inset-bottom) + 16px));width:78px;height:78px;border-color:rgba(251,113,133,.72);background:rgba(159,18,57,.56);font-size:12px}
+#gone-mobile-controls .mc-aim{right:max(112px,calc(env(safe-area-inset-right) + 104px));bottom:max(92px,calc(env(safe-area-inset-bottom) + 82px));border-color:rgba(192,132,252,.64);background:rgba(88,28,135,.52)}
+#mc-jump{right:max(112px,calc(env(safe-area-inset-right) + 104px));bottom:max(18px,calc(env(safe-area-inset-bottom) + 8px))}
+#mc-reload{right:max(22px,calc(env(safe-area-inset-right) + 14px));bottom:max(118px,calc(env(safe-area-inset-bottom) + 108px))}
+#mc-crouch{right:max(22px,calc(env(safe-area-inset-right) + 14px));bottom:max(178px,calc(env(safe-area-inset-bottom) + 168px))}
+#mc-sprint{left:max(116px,calc(env(safe-area-inset-left) + 106px));bottom:max(150px,calc(env(safe-area-inset-bottom) + 140px))}
+#mc-menu{left:max(14px,calc(env(safe-area-inset-left) + 8px));top:max(12px,calc(env(safe-area-inset-top) + 8px))}
+#mc-map{right:max(14px,calc(env(safe-area-inset-right) + 8px));top:max(72px,calc(env(safe-area-inset-top) + 66px));font-size:10px}
+#mc-weapon-switcher{position:absolute;z-index:80;left:50%;top:max(12px,calc(env(safe-area-inset-top) + 8px));transform:translateX(-50%);display:flex;align-items:center;gap:7px;height:50px;pointer-events:auto}
+#mc-weapon-switcher button{position:relative;inset:auto;min-width:48px;min-height:48px;font-size:26px}
+#mc-weapon-name{min-width:76px;padding:7px 10px;border:1px solid rgba(103,232,249,.35);border-radius:12px;background:rgba(2,6,23,.62);backdrop-filter:blur(7px);color:#a5f3fc;text-align:center;font-size:11px;font-weight:950;letter-spacing:.08em}
+#gone-mobile-controls.map-open>*{display:none!important}#gone-mobile-controls.map-open #mc-map{display:flex!important;top:max(12px,calc(env(safe-area-inset-top) + 8px));background:rgba(15,118,110,.9);font-size:9px}#gone-mobile-controls.map-open #mc-map::after{content:' CLOSE'}
+#gone-rotate-phone{display:none;position:fixed;z-index:999;left:50%;top:50%;transform:translate(-50%,-50%);width:min(84vw,360px);padding:18px 20px;border:1px solid rgba(103,232,249,.5);border-radius:18px;background:rgba(2,6,23,.9);color:#e2e8f0;text-align:center;font:800 14px/1.4 ui-sans-serif,system-ui,sans-serif;pointer-events:none;backdrop-filter:blur(10px)}
+@media (orientation:portrait) and (max-width:760px){#gone-rotate-phone.is-active{display:block}}
+@media (pointer:coarse){
+  #main-menu,#settings-menu,#multiplayer-lobby{max-width:min(94vw,560px)!important;max-height:calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 18px)!important;padding:clamp(18px,4vw,34px)!important;border-radius:22px!important}
+  #main-menu h1{font-size:clamp(44px,13vw,68px)!important;margin-bottom:clamp(24px,6vw,42px)!important}
+  #settings-menu h2,#multiplayer-lobby h2{font-size:clamp(24px,7vw,34px)!important;margin-bottom:20px!important}
+  #main-menu button,#settings-menu button,#multiplayer-lobby button{min-height:48px}
+  #multiplayer-lobby input{font-size:16px!important;min-height:48px}
+  #map-ui{padding:max(10px,env(safe-area-inset-top)) max(10px,env(safe-area-inset-right)) max(10px,env(safe-area-inset-bottom)) max(10px,env(safe-area-inset-left))}
+  #map-ui>div{width:min(88vw,78dvh)!important;height:min(88vw,78dvh)!important;max-width:620px;max-height:620px}
+  #map-ui>div>div:last-child{display:none!important}
+  #health-hud{left:max(10px,env(safe-area-inset-left))!important;bottom:max(172px,calc(env(safe-area-inset-bottom) + 162px))!important;transform:scale(.66)!important;transform-origin:bottom left!important}
+  #advanced-weapon-hud{right:max(10px,env(safe-area-inset-right))!important;bottom:max(210px,calc(env(safe-area-inset-bottom) + 200px))!important;transform:scale(.66)!important;transform-origin:bottom right!important}
+  #weapon-hud{display:none!important}#gone-local-telemetry{display:none!important}#gone-p2p-quality-hud{transform:scale(.7)!important;transform-origin:top left!important;left:max(68px,calc(env(safe-area-inset-left) + 62px))!important;top:max(10px,env(safe-area-inset-top))!important}#gone-dm-compact{transform:scale(.72)!important;transform-origin:top right!important;top:max(10px,env(safe-area-inset-top))!important;right:max(68px,calc(env(safe-area-inset-right) + 62px))!important}#gone-kill-feed{display:none!important}
+  #death-overlay>div{max-width:88vw;padding:22px!important;text-align:center}#death-overlay h2{font-size:clamp(28px,8vw,48px)!important}#death-overlay .text-4xl{font-size:clamp(22px,6vw,36px)!important}
+}
+@media (max-height:430px) and (orientation:landscape){
+  #mobile-stick{width:126px;height:126px}#mobile-stick-knob{width:54px;height:54px}
+  #gone-mobile-controls .mc-action{width:58px;height:58px;min-width:58px;min-height:58px}#gone-mobile-controls .mc-fire{width:70px;height:70px}
+  #mc-aim{right:max(100px,calc(env(safe-area-inset-right) + 92px));bottom:max(78px,calc(env(safe-area-inset-bottom) + 70px))}#mc-jump{right:max(100px,calc(env(safe-area-inset-right) + 92px))}#mc-reload{bottom:max(104px,calc(env(safe-area-inset-bottom) + 96px))}#mc-crouch{bottom:max(160px,calc(env(safe-area-inset-bottom) + 152px))}#mc-sprint{bottom:max(132px,calc(env(safe-area-inset-bottom) + 124px))}
+  #health-hud{bottom:max(142px,calc(env(safe-area-inset-bottom) + 134px))!important}
+  #advanced-weapon-hud{bottom:max(166px,calc(env(safe-area-inset-bottom) + 158px))!important}
+}

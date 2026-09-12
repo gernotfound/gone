@@ -98,6 +98,7 @@ jobs:
           node scripts/rescue_selfhost_relay_smoke.mjs 2>&1 | tee ../rescue-selfhost-relay.log
           node scripts/rescue_selfhost_scale_smoke.mjs 2>&1 | tee ../rescue-selfhost-scale.log
           node scripts/rescue_full_match_smoke.mjs 2>&1 | tee ../rescue-full-match.log
+          node scripts/mobile_pwa_smoke.mjs 2>&1 | tee ../rescue-mobile-pwa.log
 
       - name: Upload browser smoke diagnostics
         if: always()
@@ -112,6 +113,7 @@ jobs:
             rescue-selfhost-relay.log
             rescue-selfhost-scale.log
             rescue-full-match.log
+            rescue-mobile-pwa.log
             rescue-preview.log
           if-no-files-found: warn
           retention-days: 3
