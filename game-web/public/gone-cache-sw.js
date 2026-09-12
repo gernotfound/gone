@@ -1,10 +1,11 @@
-const PWA_SHELL_CACHE = 'gone-pwa-shell-v4';
-const PWA_RUNTIME_CACHE = 'gone-pwa-runtime-v4';
-const PERFORMANCE_CACHE_PREFIX = 'gone-performance-pack-';
 const params = new URL(self.location.href).searchParams;
-const rawVersion = params.get('v') || 'runtime-v2';
+const rawVersion = params.get('v') || 'runtime-v5';
 const safeVersion = rawVersion.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80);
+const PWA_SHELL_CACHE = `gone-pwa-shell-${safeVersion}`;
+const PWA_RUNTIME_CACHE = `gone-pwa-runtime-${safeVersion}`;
+const PERFORMANCE_CACHE_PREFIX = 'gone-performance-pack-';
 const PERFORMANCE_CACHE_NAME = `${PERFORMANCE_CACHE_PREFIX}${safeVersion}`;
+const MAX_PWA_CACHE_GENERATIONS = 4;
 
 const APP_SHELL = [
   '/',
@@ -31,6 +32,16 @@ async function firstCached(request) {
   return match || null;
 }
 
+async function pruneOldPwaCaches() {
+  const names = await caches.keys();
+  const pwaNames = names.filter((name) => name.startsWith('gone-pwa-'));
+  const keep = new Set([PWA_SHELL_CACHE, PWA_RUNTIME_CACHE]);
+  for (let i = pwaNames.length - 1; i >= 0 && keep.size < MAX_PWA_CACHE_GENERATIONS * 2; i -= 1) {
+    keep.add(pwaNames[i]);
+  }
+  await Promise.all(pwaNames.filter((name) => !keep.has(name)).map((name) => caches.delete(name)));
+}
+
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(PWA_SHELL_CACHE);
@@ -44,12 +55,9 @@ self.addEventListener('install', (event) => {
 
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
-    const names = await caches.keys();
-    await Promise.all(names
-      .filter((name) => name.startsWith('gone-pwa-') && name !== PWA_SHELL_CACHE && name !== PWA_RUNTIME_CACHE)
-      .map((name) => caches.delete(name)));
-    // Performance-pack caches are managed by cacheIntegrity.ts and are never
-    // purged here, so the optional heavy asset preload remains compatible.
+    // Keep a few previous build generations alive so an already-open PvP tab
+    // can finish safely even after a new worker claims the scope.
+    await pruneOldPwaCaches();
     await self.clients.claim();
   })());
 });
@@ -62,7 +70,7 @@ self.addEventListener('fetch', (event) => {
   if (request.mode === 'navigate') {
     event.respondWith((async () => {
       try {
-        const response = await fetch(request);
+        const response = await fetch(request, { cache: 'no-store' });
         if (response.ok) {
           const cache = await caches.open(PWA_SHELL_CACHE);
           await cache.put('/', response.clone());
@@ -89,6 +97,10 @@ self.addEventListener('fetch', (event) => {
 });
 
 self.addEventListener('message', (event) => {
+  if (event.data?.type === 'SKIP_WAITING') {
+    event.waitUntil(self.skipWaiting());
+    return;
+  }
   if (event.data?.type !== 'CACHE_PERFORMANCE_PACK') return;
   const port = event.ports?.[0];
   if (!port) return;

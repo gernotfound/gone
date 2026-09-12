@@ -6,5 +6,20 @@
       "main": true
     }
   },
-  "ignoreCommand": "node -e \"process.exit(process.env.VERCEL_GIT_COMMIT_REF === 'main' ? 1 : 0)\""
+  "ignoreCommand": "node -e \"process.exit(process.env.VERCEL_GIT_COMMIT_REF === 'main' ? 1 : 0)\"",
+  "headers": [
+    {
+      "source": "/version.json",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-store, max-age=0" }
+      ]
+    },
+    {
+      "source": "/gone-cache-sw.js",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-store, max-age=0" },
+        { "key": "Service-Worker-Allowed", "value": "/" }
+      ]
+    }
+  ]
 }
