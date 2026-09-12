@@ -7,6 +7,11 @@ export default async function init() {
 }
 
 const TAU = Math.PI * 2;
+let runtimeMovementScale = 1;
+
+export function set_movement_scale(scale) {
+  runtimeMovementScale = Number.isFinite(scale) ? Math.max(0.25, Math.min(1.25, scale)) : 1;
+}
 
 function fract(v) {
   return v - Math.floor(v);
@@ -174,8 +179,6 @@ export function generate_chunk(cx, cz, offsetX, offsetZ, size, resolution) {
 
   // Color pass derives slope from neighboring cached vertices instead of
   // recomputing terrain multiple times.
-  const dark = [2 / 255, 6 / 255, 15 / 255];
-  const light = [30 / 255, 41 / 255, 59 / 255];
   const cell = size / res;
   for (let row = 0; row < verts; row += 1) {
     for (let col = 0; col < verts; col += 1) {
@@ -229,7 +232,7 @@ export class PhysicsInput {
   constructor(
     x, y, z, vel_y, is_grounded,
     forward, backward, left, right, yaw,
-    jump, sprint, crouch, movement_scale, delta,
+    jump, sprint, crouch, delta,
   ) {
     this.x = x;
     this.y = y;
@@ -244,7 +247,6 @@ export class PhysicsInput {
     this.jump = !!jump;
     this.sprint = !!sprint;
     this.crouch = !!crouch;
-    this.movement_scale = Number.isFinite(movement_scale) ? Math.max(0.25, Math.min(1.25, movement_scale)) : 1;
     this.delta = Math.max(0, Math.min(0.1, Number.isFinite(delta) ? delta : 0));
   }
   free() {}
@@ -288,7 +290,7 @@ export function step_physics(input) {
     dz = worldZ;
   }
 
-  let speed = 12 * (input.crouch ? 0.6 : (input.sprint ? 2 : 1)) * input.movement_scale;
+  let speed = 12 * (input.crouch ? 0.6 : (input.sprint ? 2 : 1)) * runtimeMovementScale;
   if (grounded && len > 0) {
     const probe = 0.8;
     const forwardHeight = get_height_at(x + dx * probe, z + dz * probe);
