@@ -7,6 +7,7 @@ export interface InputState {
     ctrl: boolean;
     jump: boolean;
     fire: boolean;
+    aim: boolean;
     yaw: number;
     pitch: number;
     timestamp: number;
@@ -21,6 +22,7 @@ export const inputState: InputState = {
     ctrl: false,
     jump: false,
     fire: false,
+    aim: false,
     yaw: 0,
     pitch: 0,
     timestamp: 0,
@@ -146,6 +148,7 @@ export function resetInputState() {
     inputState.ctrl = false;
     inputState.jump = false;
     inputState.fire = false;
+    inputState.aim = false;
     inputState.timestamp = performance.now();
 }
 
