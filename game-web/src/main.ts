@@ -1,6 +1,7 @@
 import './style.css';
 import { startInputModeSettings } from './mobile/inputMode.ts';
 import { startMobileSessionResume } from './mobile/mobileSessionResume.ts';
+import { startPubgTouchControls } from './mobile/pubgTouchControls.ts';
 import { startSmartphoneControlsGuard } from './mobile/smartphoneControlsGuard.ts';
 import { startSmartphoneProfile } from './mobile/smartphoneProfile.ts';
 import { startTouchPreferences } from './mobile/touchPreferences.ts';
@@ -13,6 +14,7 @@ startTouchPreferences();
 startPwaRuntime();
 startClientRuntime();
 startSmartphoneControlsGuard();
+startPubgTouchControls();
 startMobileSessionResume();
 
 // Reconcile the touch guard whenever the explicit control mode changes. Re-arming
@@ -21,4 +23,5 @@ startMobileSessionResume();
 window.addEventListener('gone-input-mode-changed', () => {
   (window as any).__goneSmartphoneControlsGuardStarted = false;
   startSmartphoneControlsGuard();
+  startPubgTouchControls();
 });
