@@ -22,7 +22,10 @@ jobs:
           fetch-depth: 0
 
       - name: Apply bionic spider implementation
-        run: python3 .github/apply_bionic_spiders.py
+        shell: bash
+        run: |
+          python3 .github/apply_bionic_spiders.py
+          sed -i 's/private updateLegs(enemy: EnemyState, delta: number,/private updateLegs(enemy: EnemyState, _delta: number,/' game-web/src/gameplay/bionicSpiderEnemies.ts
 
       - name: Verify patch cleanliness
         run: git diff --check
