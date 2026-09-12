@@ -19,6 +19,7 @@ const manualSprintPointers = new Set<number>();
 const jumpPointers = new Set<number>();
 const crouchPointers = new Set<number>();
 const firePointers = new Set<number>();
+const nativePointerLockGetter = Object.getOwnPropertyDescriptor(Document.prototype, 'pointerLockElement')?.get;
 let pointerBridgeInstalled = false;
 
 function visible(id: string): boolean {
@@ -163,18 +164,19 @@ function switchWeapon(delta: number): void {
 
 function installPointerLockBridge(): void {
   if (pointerBridgeInstalled) return;
-  pointerBridgeInstalled = true;
   const previous = Object.getOwnPropertyDescriptor(document, 'pointerLockElement')?.get;
   try {
     Object.defineProperty(document, 'pointerLockElement', {
       configurable: true,
       get() {
         if (useOnScreenControls() && gameplayActive()) return document.body;
-        return previous?.call(document) ?? null;
+        return previous?.call(document) ?? nativePointerLockGetter?.call(document) ?? null;
       },
     });
+    pointerBridgeInstalled = true;
   } catch {
-    // The primary mobile runtime normally exposes a configurable virtual pointer lock.
+    // Preserve native pointer lock if the browser does not allow an own-property bridge.
+    pointerBridgeInstalled = false;
   }
 }
 
