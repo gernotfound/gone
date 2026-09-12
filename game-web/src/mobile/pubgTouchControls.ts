@@ -15,7 +15,6 @@ let activePointerId: number | null = null;
 let lastX = 0;
 let lastY = 0;
 let attachedButton: HTMLButtonElement | null = null;
-let observer: MutationObserver | null = null;
 
 function applyLookDelta(dx: number, dy: number): void {
   const preferences = getTouchPreferences();
@@ -97,8 +96,8 @@ export function startPubgTouchControls(): void {
   (window as any).__gonePubgTouchControlsStarted = true;
 
   attachWhenAvailable();
-  observer = new MutationObserver(() => { attachWhenAvailable(); });
-  observer.observe(document.body, { childList: true, subtree: true });
+  const controlsObserver = new MutationObserver(() => { attachWhenAvailable(); });
+  controlsObserver.observe(document.body, { childList: true, subtree: true });
 
   window.addEventListener('gone-input-mode-changed', () => {
     window.setTimeout(attachWhenAvailable, 0);
