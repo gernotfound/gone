@@ -23,8 +23,11 @@ body {
  * absolute coordinates that can collide as new UI is added.
  */
 #health-hud {
-  left: clamp(12px, 2vw, 32px) !important;
+  left: 50% !important;
+  right: auto !important;
   bottom: clamp(12px, 2vh, 24px) !important;
+  transform: translateX(-50%);
+  transform-origin: bottom center;
 }
 
 #weapon-hud {
@@ -41,7 +44,7 @@ body {
   box-sizing: border-box;
 }
 
-/* Network quality leaves bottom-left to health/shield. */
+/* Network quality stays in the upper-left so the centered health bar owns the lower center. */
 #gone-p2p-quality-hud {
   left: 14px !important;
   top: 14px !important;
@@ -75,8 +78,8 @@ body {
 
 @media (max-width: 720px) {
   #health-hud {
-    transform: scale(0.84);
-    transform-origin: bottom left;
+    transform: translateX(-50%) scale(0.84);
+    transform-origin: bottom center;
   }
 
   #weapon-hud,
