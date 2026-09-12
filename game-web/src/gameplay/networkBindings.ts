@@ -8,6 +8,7 @@ import {
   type HitConfirmedData,
   type WorldSnapshotData,
 } from '../net/binaryProtocol.ts';
+import { CLIENT_STATE_EXT_FLAGS } from '../net/clientStateExtensions.ts';
 import { inputState } from '../controls/playerInput.ts';
 import { setActiveP2PClient, setActiveP2PHost } from '../ui/lobby.ts';
 import { healthHud } from '../ui/healthHud.ts';
@@ -24,6 +25,7 @@ type LocalPlayerNetworkState = {
   isAlive: boolean;
   isInvulnerable: boolean;
   shieldExpiresAt: number;
+  healthPickupRequestUntil?: number;
 };
 
 export type GameplayNetworkContext = {
@@ -53,7 +55,10 @@ export function bindClientGameplayNetworking(client: P2PClient, context: Gamepla
       (player.isGrounded ? 0x01 : 0) |
       (inputState.ctrl ? 0x02 : 0) |
       (inputState.shift ? 0x04 : 0) |
-      (inputState.fire ? 0x08 : 0),
+      (inputState.fire ? 0x08 : 0) |
+      ((player.healthPickupRequestUntil ?? 0) >= performance.now()
+        ? CLIENT_STATE_EXT_FLAGS.HEALTH_PICKUP_REQUEST
+        : 0),
   }));
   client.startStateTick(30);
 
