@@ -263,6 +263,8 @@ interface PeerConnectionRecord {
   info: SessionPlayerInfo;
 }
 
+export type RespawnPositionResolver = (slot: number) => { x: number; y: number; z: number };
+
 export interface CombatValidationStats {
   lastClientShotTime: Map<string, number>;
   lastShotSeq: Map<string, number>;
@@ -300,6 +302,8 @@ export class P2PHost {
 
   private snapshotTickTimer: ReturnType<typeof setInterval> | null = null;
   private snapshotSeq: number = 0;
+  private respawnPositionResolver: RespawnPositionResolver | null = null;
+  private authoritativeRespawnCount = 0;
   public readonly __gonePvpHardeningState: CombatValidationStats = createCombatValidationStats();
 
   constructor(options: P2PHostOptions) {
@@ -340,6 +344,23 @@ export class P2PHost {
       lastClientSeq: 0,
       lastClientTimestamp: 0,
     });
+  }
+
+  public setRespawnPositionResolver(resolver: RespawnPositionResolver | null): void {
+    this.respawnPositionResolver = resolver;
+  }
+
+  public getAuthoritativeRespawnCount(): number {
+    return this.authoritativeRespawnCount;
+  }
+
+  private resolveRespawnPosition(slot: number): { x: number; y: number; z: number } {
+    const resolved = this.respawnPositionResolver?.(slot);
+    if (resolved && [resolved.x, resolved.y, resolved.z].every(Number.isFinite)) {
+      return { x: resolved.x, y: resolved.y, z: resolved.z };
+    }
+    // Compatibility fallback for isolated tests/callers that do not install the gameplay resolver.
+    return { x: 0, y: 17.5, z: 0 };
   }
 
   public allocateSlot(playerId: string): number {
@@ -545,12 +566,24 @@ export class P2PHost {
     this.broadcastBinary(relayBuffer, shooterId);
 
     const now = performance.now();
+    type CandidateHit = {
+      victim: PlayerCombatRecord;
+      damage: number;
+      isHeadshot: boolean;
+      distance: number;
+      hitX: number;
+      hitY: number;
+      hitZ: number;
+    };
+    let nearestHit: CandidateHit | null = null;
+
     for (const victim of this.playerRecords.values()) {
       if (victim.id === shooterId || !victim.isAlive) continue;
 
       let hitConfirmed = false;
       let damage = 0;
       let isHeadshot = false;
+      let hitDistance = Number.POSITIVE_INFINITY;
       let hitX = 0, hitY = 0, hitZ = 0;
 
       if (this.lagCompensator) {
@@ -570,18 +603,18 @@ export class P2PHost {
             getWeaponRuntimeById(shot.weaponType).maxRange
           );
           const res = JSON.parse(resultJson);
-          if (res.hit) {
+          const parsedDistance = Number(res.distance);
+          if (res.hit && Number.isFinite(parsedDistance) && parsedDistance >= 0) {
             isHeadshot = !!res.is_headshot;
-            const parsedDistance = Number(res.distance);
-            const dist = Number.isFinite(parsedDistance) ? parsedDistance : 0;
+            hitDistance = parsedDistance;
             const parsedDamage = Number(res.damage);
             damage = Number.isFinite(parsedDamage)
               ? parsedDamage
-              : calculateWeaponDamageAtDistance(shot.weaponType, dist, isHeadshot);
+              : calculateWeaponDamageAtDistance(shot.weaponType, hitDistance, isHeadshot);
             hitConfirmed = damage > 0;
-            hitX = shot.originX + shot.dirX * dist;
-            hitY = shot.originY + shot.dirY * dist;
-            hitZ = shot.originZ + shot.dirZ * dist;
+            hitX = shot.originX + shot.dirX * hitDistance;
+            hitY = shot.originY + shot.dirY * hitDistance;
+            hitZ = shot.originZ + shot.dirZ * hitDistance;
           }
         } catch {
           const fallback = this.checkRayCylinderHit(shot, victim.position);
@@ -592,6 +625,11 @@ export class P2PHost {
             hitX = fallback.hitX;
             hitY = fallback.hitY;
             hitZ = fallback.hitZ;
+            hitDistance = Math.hypot(
+              hitX - shot.originX,
+              hitY - shot.originY,
+              hitZ - shot.originZ,
+            );
           }
         }
       } else {
@@ -603,56 +641,71 @@ export class P2PHost {
           hitX = fallback.hitX;
           hitY = fallback.hitY;
           hitZ = fallback.hitZ;
+          hitDistance = Math.hypot(
+            hitX - shot.originX,
+            hitY - shot.originY,
+            hitZ - shot.originZ,
+          );
         }
       }
 
-      if (hitConfirmed) {
-        let hitFlags = 0;
-        if (isHeadshot) hitFlags |= HIT_FLAGS.HEADSHOT;
-
-        if (victim.shieldExpiresAt > now) {
-          damage = 0;
-          hitFlags |= HIT_FLAGS.SHIELD_BLOCKED;
-        } else {
-          victim.hp = Math.max(0, victim.hp - damage);
-          if (victim.hp === 0) {
-            victim.isAlive = false;
-            victim.deathTime = now;
-            hitFlags |= HIT_FLAGS.FATAL_KILL;
-          }
-        }
-
-        const hitBuffer = encodeHitConfirmed(
-          victim.slot,
-          shooter.slot,
-          hitFlags,
-          Math.round(damage),
-          Math.round(victim.hp),
-          hitX,
-          hitY,
-          hitZ
-        );
-        this.broadcastBinary(hitBuffer);
-
-        const eventData: HitConfirmationEvent = {
-          victimId: victim.id,
-          shooterId,
-          victimSlot: victim.slot,
-          shooterSlot: shooter.slot,
-          damage,
-          newHp: victim.hp,
-          isHeadshot,
-          isShieldBlocked: (hitFlags & HIT_FLAGS.SHIELD_BLOCKED) !== 0,
-          isFatal: (hitFlags & HIT_FLAGS.FATAL_KILL) !== 0,
-          hitX,
-          hitY,
-          hitZ,
-        };
-
-        this.options.onHitConfirmed?.(eventData);
-        break;
+      if (
+        hitConfirmed
+        && Number.isFinite(hitDistance)
+        && hitDistance >= 0
+        && (nearestHit === null || hitDistance < nearestHit.distance)
+      ) {
+        nearestHit = { victim, damage, isHeadshot, distance: hitDistance, hitX, hitY, hitZ };
       }
     }
+
+    if (!nearestHit) return;
+
+    const { victim, isHeadshot, hitX, hitY, hitZ } = nearestHit;
+    let damage = nearestHit.damage;
+    let hitFlags = 0;
+    if (isHeadshot) hitFlags |= HIT_FLAGS.HEADSHOT;
+
+    if (victim.shieldExpiresAt > now) {
+      damage = 0;
+      hitFlags |= HIT_FLAGS.SHIELD_BLOCKED;
+    } else {
+      victim.hp = Math.max(0, victim.hp - damage);
+      if (victim.hp === 0) {
+        victim.isAlive = false;
+        victim.deathTime = now;
+        hitFlags |= HIT_FLAGS.FATAL_KILL;
+      }
+    }
+
+    const hitBuffer = encodeHitConfirmed(
+      victim.slot,
+      shooter.slot,
+      hitFlags,
+      Math.round(damage),
+      Math.round(victim.hp),
+      hitX,
+      hitY,
+      hitZ
+    );
+    this.broadcastBinary(hitBuffer);
+
+    const eventData: HitConfirmationEvent = {
+      victimId: victim.id,
+      shooterId,
+      victimSlot: victim.slot,
+      shooterSlot: shooter.slot,
+      damage,
+      newHp: victim.hp,
+      isHeadshot,
+      isShieldBlocked: (hitFlags & HIT_FLAGS.SHIELD_BLOCKED) !== 0,
+      isFatal: (hitFlags & HIT_FLAGS.FATAL_KILL) !== 0,
+      hitX,
+      hitY,
+      hitZ,
+    };
+
+    this.options.onHitConfirmed?.(eventData);
   }
 
   public fireHitscan(
@@ -710,10 +763,11 @@ export class P2PHost {
     record.isAlive = true;
     record.hp = 100;
     record.deathTime = 0;
-    record.position = { x: 0, y: 17.5, z: 0 };
+    record.position = this.resolveRespawnPosition(record.slot);
     record.shieldExpiresAt = now + 10000;
     record.stateFlags = STATE_FLAGS.ALIVE | STATE_FLAGS.SHIELD_ACTIVE;
     this.lagCompensator?.clear_player(record.slot);
+    this.authoritativeRespawnCount += 1;
     this.options.onPlayerRespawned?.(record.id);
     return true;
   }
@@ -771,9 +825,10 @@ export class P2PHost {
         record.isAlive = true;
         record.hp = 100;
         record.deathTime = 0;
-        record.position = { x: 0, y: 17.5, z: 0 };
+        record.position = this.resolveRespawnPosition(record.slot);
         record.shieldExpiresAt = now + 10000;
         this.lagCompensator?.clear_player(record.slot);
+        this.authoritativeRespawnCount += 1;
         this.options.onPlayerRespawned?.(record.id);
       }
 

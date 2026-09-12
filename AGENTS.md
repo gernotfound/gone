@@ -41,7 +41,7 @@ Read this first. Dense project index intended to minimize repo search/tool spend
 - Spawn policy lives in `gameplay/spawnPolicy.ts`.
 - Slot 0 spawn is X=+1200, Z=+1200 (SE giant crater). Other multiplayer slots are deterministic across the map.
 - `engine.ts` performs normal initial spawn and local respawn directly with terrain-correct Y.
-- `gameplay/spawnController.ts` adapts host authoritative respawn records and exposes diagnostics; it must not reintroduce per-frame corrective teleports.
+- `gameplay/networkBindings.ts` installs the host authoritative per-slot respawn resolver; `spawnController.ts` is diagnostics/manual teleport compatibility only and must not poll to repair host state.
 - Never reintroduce `(0,17.5,0)` as intended gameplay spawn.
 - Solo PvE bionic spiders are owned by `gameplay/bionicSpiderEnemies.ts`; their procedural rig lives in `models/bionicSpider.ts`. They spawn from deterministic crater centers, use terrain-aware eight-leg gait/IK, and are intentionally disabled in P2P until enemy state/combat is host-authoritatively represented in the binary protocol. Do not enable divergent per-client enemy simulation in multiplayer.
 
@@ -80,7 +80,7 @@ Canonical browser gameplay balance is `game-web/src/weapons/weaponConfig.ts`; Ru
 - Native WebRTC direct mode: `net/directWebRtc.ts`, manual offer/answer, star host↔guests.
 - Browser host is authoritative. Core binary opcodes: 0x01 CLIENT_STATE, 0x02 WORLD_SNAPSHOT, 0x03 FIRE_HITSCAN, 0x04 HIT_CONFIRMED.
 - State/snapshots ~30 Hz.
-- `net/networkStabilityFix.ts`, `net/pvpTuning.ts`, `net/hostRemoteSync.ts`, and `net/pvpHardening.ts` own stability, clock mapping, host presentation, and shot validation respectively.
+- `net/networkStabilityFix.ts`, `net/pvpTuning.ts`, and `net/hostRemoteSync.ts` own stability, clock mapping, and host presentation. Authoritative shot validation belongs directly to `net/p2pHost.ts`; do not reintroduce `pvpHardening.ts` as a runtime patch.
 
 ## Self-host mode
 
