@@ -1,51 +1,154 @@
-# G.O.N.E. Layered Architecture Contracts
+# G.O.N.E. browser architecture
 
-The G.O.N.E. project uses a strict 5-layer architecture to ensure clean separation of concerns, optimal performance (WASM integration), and maintainable network synchronization. The five layers and their contracts are defined below.
+This document describes both the current ownership boundaries and the direction future refactors should follow. The objective is not to maximize the number of files: it is to make each behavior have one obvious owner, keep runtime composition explicit, and avoid hidden patch layers that make the executed code differ from the code an engineer or AI reads.
 
-## 1. UI Layer (`/game-web/src/ui/`)
-**Responsibilities**: Manage menus, HUD, lobby system, and 2D overlay rendering (Minimap, Health, Crosshair).
-**Contracts**:
-- Exposes `setupMenu()`, `healthHud`, and lobby state functions.
-- The UI layer runs purely on the DOM and 2D Canvas contexts. It must NEVER directly mutate 3D scene properties or physics states.
-- It receives updates exclusively via exposed Gameplay callbacks (e.g., `updateHealth`, `updateShield`) and reads state without mutating it.
+## Core rule: one behavior, one owner
 
-## 2. Input Layer (`/game-web/src/controls/playerInput.ts`)
-**Responsibilities**: Capture and normalize keyboard and mouse inputs, manage PointerLock lifecycle.
-**Contracts**:
-- Maintains the `inputState` singleton, which holds normalized movement flags (forward, backward, yaw, pitch, etc.).
-- Exposes `initInput(callbacks)` which allows the Gameplay layer to subscribe to specific input events (e.g., `onFire`, `onWeaponSwitch`, `onToggleMap`).
-- Does not contain any game logic; simply translates physical inputs into the `inputState` structure.
+When a bug belongs to a module, fix that module. Do not add a second startup module that monkey-patches the first one unless backward compatibility makes that unavoidable.
 
-## 3. Gameplay Layer (`/game-web/src/gameplay/engine.ts` & Network Bindings)
-**Responsibilities**: Glue layer. Manages game loop (`animate`), player health lifecycle (damage, death, respawn), weapon firing, hitscan raycasting logic, and P2P synchronization.
-**Contracts**:
-- Imports `inputState` to decide logic, and drives the Physics layer by passing sanitized variables to it.
-- Acts as the mediator between local events and the Network (`P2PClient` / `P2PHost`).
-- Triggers VFX and Sounds based on gameplay events.
-- Exposes the initialization entry point (`bootstrap`, `startEngine`) to `main.ts`.
+Avoid new code that:
 
-## 4. Physics Layer (`/game-core/` WASM & Physics logic)
-**Responsibilities**: Execute authoritative mathematical operations for collisions, gravity, jump trajectories, procedural chunk heightmap sampling, and temporal lag compensation.
-**Contracts**:
-- Written mostly in Rust (`game-core`), exposed via WASM (`pkg/game_core.js`).
-- The `step_physics(PhysicsInput)` function acts as a pure function: it takes the current state and delta-time as input, and returns the strictly evaluated next state (e.g., `x, y, z, vel_y, is_grounded`).
-- The physics logic avoids DOM access or Three.js dependencies (pure mathematics).
+- patches `THREE.*.prototype` at runtime;
+- replaces another module's methods after startup;
+- polls every animation frame only to repair state written incorrectly elsewhere;
+- duplicates canonical weapon, spawn, protocol or lifecycle constants;
+- adds another `window.goneGame` consumer when a typed import/callback is practical.
 
-## 5. Rendering Layer (`/game-web/src/rendering/`, `/game-web/src/world/`, `/game-web/src/models/`, `/game-web/src/vfx/`)
-**Responsibilities**: 3D Scene management, WebGL rendering, Procedural Chunk Mesh generation, Shaders (Nebbia, VFX, Godrays), and Asset loading.
-**Contracts**:
-- Provides `sceneManager` exposing `scene`, `camera`, and `renderer`.
-- Driven entirely by the Gameplay layer (which updates `camera.position` or `robot.position`).
-- Responsible for instancing, chunk culling, and VFX pooling (`vfxManager`).
-- Exposes `updateChunks(playerPosition)` to dynamically generate and discard terrain without coupling to the player's internal state.
+Compatibility adapters are allowed, but their filename and comments must identify them as compatibility code and they should sit at the boundary they adapt.
 
----
-## Summary of Data Flow
+## Composition root
+
+`game-web/src/main.ts` is intentionally tiny. Browser startup is owned by:
+
+- `game-web/src/runtime/startClientRuntime.ts`
+
+That module defines explicit startup phases: pre-bootstrap guards, network runtime, gameplay runtime, presentation/diagnostics. If a feature must run before another feature, encode the ordering there rather than relying on import side effects.
+
+`startClientRuntime.ts` may compose modules; it should not contain gameplay algorithms.
+
+## Browser layers and ownership
+
+### 1. UI (`game-web/src/ui/`)
+
+Owns menus, HUD, lobby DOM, minimap UI and user-facing overlays. UI should translate state into DOM/canvas output and emit user intent. It should not own terrain math, hit validation or network authority.
+
+The lobby is still a secondary refactor target: `ui/lobby.ts` contains both UI rendering and direct-WebRTC session orchestration. Future work should extract session orchestration into a typed session controller while keeping DOM rendering in `ui/`.
+
+### 2. Input (`game-web/src/controls/`)
+
+Owns keyboard/mouse capture and normalized input state. Raw browser events should be converted to intent here or in a focused controller. Gameplay rules do not belong in the low-level input collector.
+
+### 3. Gameplay (`game-web/src/gameplay/`)
+
+Owns local player flow and feature controllers. `engine.ts` remains the compatibility/game-loop facade, but it is no longer the intended home for every new feature.
+
+Focused ownership introduced by the refactor:
+
+- `spawnPolicy.ts`: deterministic spawn points and terrain-correct spawn height;
+- `spawnController.ts`: host-authoritative respawn adapter plus manual diagnostics, not a per-frame corrective teleport;
+- `remotePlayerRegistry.ts`: remote model lifecycle, interpolation presentation and remote shield presentation;
+- `networkBindings.ts`: bridge between P2P callbacks and gameplay state;
+- `advancedWeaponController.ts`: ammo/reload/ADS/action UX;
+- `precisionShotRuntime.ts`: accuracy/spread adaptation around the local shot path.
+
+`engine.ts` should trend toward a coordinator that owns the local game loop, local physics/camera and the compatibility facade. New remote-player, network, UI or world systems should not be added directly to it.
+
+### 4. Weapons (`game-web/src/weapons/`)
+
+`weaponConfig.ts` is the canonical browser gameplay contract for weapon identity, cadence, damage/range, ammunition, reload, ADS and spread.
+
+`weaponCombatStats.ts` derives weapon id/name/fire cadence from that canonical config and owns only camera/viewmodel recoil tuning. Do not duplicate id, display name or fire rate in the engine.
+
+If a new weapon property changes gameplay semantics, add it to `weaponConfig.ts` and keep the Rust counterpart aligned where applicable.
+
+### 5. Networking (`game-web/src/net/`)
+
+Owns binary protocol, transport, WebRTC session behavior, host authority, lag compensation and network-specific presentation adapters.
+
+The host remains authoritative for PvP. Browser presentation code must never turn a visual ray/tracer into damage authority.
+
+`legacyRemoteShotPresentation.ts` exists only for the older JSON `FIRE_HITSCAN` callback. Current binary enemy-shot presentation is owned by `remoteShotPresentation.ts`. Compatibility code should not grow new gameplay behavior.
+
+### 6. World / rendering / models / VFX
+
+- `world/`: chunk lifecycle, terrain sampling and world ambience;
+- `rendering/`: renderer/scene resources;
+- `models/`: model construction/loading/socket attachment;
+- `vfx/`: pooled runtime visual effects.
+
+Visual behavior should live in the object that executes it. For example, tracer travel/fade is implemented directly in `vfx/tracerPool.ts`; there is no separate startup patch replacing `TracerPool.update()`.
+
+### 7. Rust/WASM (`game-core/`)
+
+Owns performance-sensitive/pure mathematical systems such as procedural terrain and physics plus shared authoritative calculations. Keep browser/DOM/Three.js dependencies out of Rust core logic.
+
+## Compatibility facade: `window.goneGame`
+
+`window.goneGame` is retained because UI/network adapters and browser smoke tests use it. Treat it as a compatibility facade, not the default dependency-injection mechanism.
+
+Rules for future work:
+
+1. Existing public members should remain stable unless all consumers/tests are migrated in the same change.
+2. New internal modules should prefer typed imports and explicit callbacks/context objects.
+3. If the facade becomes large again, move its construction to a dedicated adapter module rather than distributing global writes around the repository.
+
+## Files that are large but not automatically wrong
+
+File size alone is not a refactor criterion. Some large files are dense, cohesive definitions:
+
+- `net/binaryProtocol.ts` is a protocol contract and benefits from keeping wire layout close together;
+- procedural weapon model builders are data/geometry-heavy and can be split per weapon later, but they are less dangerous than a cross-domain god object;
+- sound synthesis may be large while still having one clear responsibility.
+
+Split a large file when it owns multiple lifecycles, has unrelated reasons to change, or requires readers to understand distant subsystems to make a local edit.
+
+## Next structural targets
+
+The recommended order for future refactoring is:
+
+1. **Lobby/session split** — extract direct-WebRTC/session orchestration from `ui/lobby.ts` into `net/sessionController.ts` (or equivalent), leaving DOM rendering in UI.
+2. **Engine lifecycle split** — move local death/respawn/shield state into a focused local-player lifecycle controller with explicit dependencies.
+3. **Weapon model builders** — split `models/weaponBuilders.ts` into per-weapon builders behind the existing barrel export, without changing call sites.
+4. **Host internals** — if `p2pHost.ts` keeps growing, separate peer/session bookkeeping from authoritative combat processing while preserving one host authority boundary.
+5. **Global facade migration** — progressively replace new `window.goneGame` lookups with typed services/events; keep the facade as a thin compatibility layer.
+
+Do not perform these splits purely for line-count targets. Preserve stable APIs and do them when a change can be verified end-to-end.
+
+## Data flow
+
 ```text
-[Input] (Keyboard/Mouse) -> `inputState` 
-   -> [Gameplay] (reads Input, runs weapons, checks network) 
-        -> [Physics] (evaluates final player pos/collisions via WASM) 
-             -> [Gameplay] (applies returned physics pos to player)
-                  -> [Rendering] (updates camera and meshes based on player pos)
-                  -> [UI] (updates HUD/Minimap based on current status)
+Browser events
+   -> controls / focused input controller
+   -> gameplay coordinator
+      -> WASM physics / terrain math
+      -> weapon runtime contract
+      -> P2P gameplay bindings
+         -> host-authoritative networking
+      -> scene/world/VFX presentation
+      -> UI state presentation
 ```
+
+Startup is separate from this data flow:
+
+```text
+main.ts
+  -> runtime/startClientRuntime.ts
+       -> install guards
+       -> bootstrap engine/menu
+       -> network features
+       -> gameplay features
+       -> presentation + diagnostics
+```
+
+## Refactor checklist
+
+Before merging a structural change:
+
+- identify the single canonical owner of each constant and behavior touched;
+- search for runtime patches/wrappers that become redundant after the owner is fixed;
+- search for files with zero import/reference consumers before deleting them;
+- preserve `window.goneGame` compatibility where browser scripts depend on it;
+- keep host authority and binary protocol behavior unchanged unless the task explicitly changes networking semantics;
+- keep expensive work out of per-frame paths;
+- update this document and `AGENTS.md` when high-value file ownership changes;
+- create Git objects off-ref, inspect the diff, and move `main` once because Vercel free-tier builds are push-sensitive.

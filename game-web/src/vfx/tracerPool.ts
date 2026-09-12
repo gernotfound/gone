@@ -1,9 +1,6 @@
 /**
  * Volumetric Visual Tracers for G.O.N.E. FPS
- * Milestone 3 (F-9, R1): Pre-allocated pool of 50 CylinderGeometry laser beams.
- *
- * Bypasses WebGL 1px line limitations via 3D volumetric cylinders with additive blending.
- * Strictly zero per-shot allocations (zero new THREE.Mesh / scene.add in runtime).
+ * Pre-allocated pool of CylinderGeometry beams with no per-shot mesh creation.
  */
 
 import * as THREE from 'three';
@@ -60,7 +57,23 @@ export const TRACER_STYLES: Record<string, TracerStyle> = {
   }
 };
 
-/** Normalizes arbitrary weapon strings or numbers to canonical key */
+const TRACER_SPEED_MPS: Record<string, number> = {
+  assalto: 900,
+  cecchino: 1450,
+  pompa: 650,
+  mitraglietta: 800,
+  coltello: 120,
+};
+
+const FADE_SECONDS: Record<string, number> = {
+  assalto: 0.08,
+  cecchino: 0.14,
+  pompa: 0.09,
+  mitraglietta: 0.07,
+  coltello: 0.08,
+};
+
+/** Normalizes arbitrary weapon strings or numbers to canonical key. */
 export function normalizeWeaponType(weapon: string | number): string {
   if (typeof weapon === 'number') {
     const table = ['assalto', 'cecchino', 'pompa', 'mitraglietta', 'coltello'];
@@ -247,8 +260,6 @@ export class TracerPool {
     const safeLength = length < 0.001 ? 0.001 : length;
     this._dir.copy(this._delta).divideScalar(safeLength);
 
-    // Keep the canonical full-beam spawn geometry for deterministic tests and
-    // immediately turn it into a travelling projectile streak in update().
     tracer.mesh.position.copy(start);
     tracer.mesh.scale.set(style.radius, safeLength, style.radius);
     tracer.mesh.quaternion.setFromUnitVectors(this._UNIT_Y, this._dir);
@@ -273,41 +284,48 @@ export class TracerPool {
     return tracer;
   }
 
+  /**
+   * Travelling-beam presentation formerly installed by tracerPresentationFix.ts.
+   * Keeping it here means the code being read is the code actually executed.
+   */
   public update(delta: number): void {
-    if (delta <= 0) return;
+    if (!Number.isFinite(delta) || delta <= 0) return;
 
-    for (let i = 0; i < TracerPool.POOL_SIZE; i++) {
-      const tracer = this.tracers[i];
+    for (const tracer of this.tracers) {
       if (!tracer.active) continue;
 
       tracer.age += delta;
-      const visualLifetime = tracer.visualLifetime || tracer.lifetime;
-      const progress = tracer.age / visualLifetime;
+      const speed = TRACER_SPEED_MPS[tracer.weaponType] ?? TRACER_SPEED_MPS.assalto;
+      const travelSeconds = Math.max(0.055, Math.min(0.55, tracer.length / speed));
+      const fadeSeconds = FADE_SECONDS[tracer.weaponType] ?? 0.08;
+      const totalSeconds = travelSeconds + fadeSeconds;
 
-      if (progress >= 1.0) {
+      if (tracer.age >= totalSeconds) {
         tracer.active = false;
         tracer.mesh.visible = false;
+        tracer.material.opacity = 0;
         continue;
       }
 
-      const alpha = Math.max(0, 1.0 - progress * progress);
-      tracer.material.opacity = tracer.peakOpacity * alpha;
+      const travelProgress = Math.min(1, tracer.age / travelSeconds);
+      const eased = 1 - Math.pow(1 - travelProgress, 1.35);
+      const visibleLength = Math.max(0.08, tracer.length * eased);
 
-      const radiusScale = Math.max(0.35, 1.0 - progress * 0.25);
+      tracer.mesh.position.copy(tracer.start);
+      tracer.mesh.scale.y = visibleLength;
+
+      const radiusProgress = tracer.age / totalSeconds;
+      const radiusScale = Math.max(0.55, 1 - radiusProgress * 0.22);
       tracer.mesh.scale.x = tracer.initialRadius * radiusScale;
       tracer.mesh.scale.z = tracer.initialRadius * radiusScale;
 
-      // Sniper remains a persistent rail beam; knife remains a short slash.
-      // Automatic weapons and shotgun pellets become visible travelling streaks
-      // so even at ~20 FPS the player can see them leave the muzzle.
-      if (tracer.weaponType !== 'cecchino' && tracer.weaponType !== 'coltello') {
-        const travelProgress = Math.min(1, progress * 1.25);
-        const headDistance = tracer.length * travelProgress;
-        const tailDistance = Math.max(0, headDistance - tracer.trailLength);
-        const visibleLength = Math.max(0.05, headDistance - tailDistance);
-        tracer.mesh.position.copy(tracer.start).addScaledVector(tracer.direction, tailDistance);
-        tracer.mesh.scale.y = visibleLength;
+      if (travelProgress < 1) {
+        tracer.material.opacity = tracer.peakOpacity;
+      } else {
+        const fadeProgress = (tracer.age - travelSeconds) / fadeSeconds;
+        tracer.material.opacity = tracer.peakOpacity * Math.max(0, 1 - fadeProgress * fadeProgress);
       }
+      tracer.mesh.visible = true;
     }
   }
 

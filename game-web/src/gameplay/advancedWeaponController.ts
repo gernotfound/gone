@@ -2,7 +2,6 @@ import * as THREE from 'three';
 import {
   WEAPON_KEYS,
   WEAPON_RUNTIME,
-  getWeaponRuntime,
   type WeaponKey,
   type WeaponRuntimeConfig,
 } from '../weapons/weaponConfig.ts';
@@ -17,7 +16,6 @@ type GoneGameApi = {
   viewmodelRoot?: THREE.Group;
   player?: { isAlive?: boolean };
   keys?: { yaw: number; pitch: number; timestamp: number };
-  vfxManager?: { spawnTracer: (start: THREE.Vector3, end: THREE.Vector3, weapon: string) => void };
 };
 
 const HIP_FOV = 75;
@@ -52,8 +50,6 @@ let lastUiSignature = '';
 
 const targetPosition = new THREE.Vector3();
 const targetRotation = new THREE.Euler();
-const tracerDelta = new THREE.Vector3();
-const tracerEnd = new THREE.Vector3();
 
 function api(): GoneGameApi | null {
   return (window as any).goneGame ?? null;
@@ -341,24 +337,6 @@ function refreshHud(force = false): void {
   }
 }
 
-function installTracerRangeClamp(): void {
-  const vfx = api()?.vfxManager as any;
-  if (!vfx || vfx.__weaponRangeClampInstalled || typeof vfx.spawnTracer !== 'function') return;
-  const original = vfx.spawnTracer.bind(vfx);
-  vfx.spawnTracer = (start: THREE.Vector3, end: THREE.Vector3, weapon: string) => {
-    const cfg = getWeaponRuntime(weapon);
-    tracerDelta.subVectors(end, start);
-    const length = tracerDelta.length();
-    if (length > cfg.maxRange && length > 0.0001) {
-      tracerEnd.copy(start).addScaledVector(tracerDelta, cfg.maxRange / length);
-      original(start, tracerEnd, weapon);
-    } else {
-      original(start, end, weapon);
-    }
-  };
-  vfx.__weaponRangeClampInstalled = true;
-}
-
 function updateWeaponSelection(): void {
   const next = sanitizeWeapon(api()?.getActiveWeapon?.());
   if (next === currentWeapon) return;
@@ -373,7 +351,6 @@ let previousFrameAt = 0;
 function animationLoop(now: number): void {
   const game = api();
   updateWeaponSelection();
-  installTracerRangeClamp();
   updateReload(now);
   const alive = game?.player?.isAlive !== false;
   if (alive && !wasAlive) resetAmmo();

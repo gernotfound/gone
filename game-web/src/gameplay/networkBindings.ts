@@ -1,1 +1,174 @@
-placeholder
+import * as THREE from 'three';
+import type { P2PClient } from '../net/p2pClient.ts';
+import type { P2PHost, HitConfirmationEvent } from '../net/p2pHost.ts';
+import type { FireHitscanMessage } from '../net/protocol.ts';
+import {
+  STATE_FLAGS,
+  type FireHitscanData,
+  type HitConfirmedData,
+  type WorldSnapshotData,
+} from '../net/binaryProtocol.ts';
+import { inputState } from '../controls/playerInput.ts';
+import { setActiveP2PClient, setActiveP2PHost } from '../ui/lobby.ts';
+import { healthHud } from '../ui/healthHud.ts';
+import { shieldVfxController } from '../vfx/shieldVfx.ts';
+import { addOrUpdateRemotePlayer, remotePlayers } from './remotePlayerRegistry.ts';
+import { presentLegacyRemoteHitscan } from '../net/legacyRemoteShotPresentation.ts';
+
+type LocalPlayerNetworkState = {
+  position: THREE.Vector3;
+  isGrounded: boolean;
+  hp: number;
+  maxHp: number;
+  isAlive: boolean;
+  isInvulnerable: boolean;
+  shieldExpiresAt: number;
+};
+
+export type GameplayNetworkContext = {
+  player: LocalPlayerNetworkState;
+  localShieldAnchor: THREE.Group;
+  getActiveWeaponIndex: () => number;
+  handleLocalPlayerDeath: () => void;
+  handleLocalPlayerRespawn: () => void;
+  handleLocalPlayerDamage: (newHp: number) => void;
+  localEyeHeight: number;
+};
+
+export function bindClientGameplayNetworking(client: P2PClient, context: GameplayNetworkContext): void {
+  const { player } = context;
+  setActiveP2PClient(client);
+
+  client.setStateProvider(() => ({
+    position: {
+      x: player.position.x,
+      y: player.position.y,
+      z: player.position.z,
+    },
+    yaw: inputState.yaw,
+    pitch: inputState.pitch,
+    activeWeapon: context.getActiveWeaponIndex(),
+    flags:
+      (player.isGrounded ? 0x01 : 0) |
+      (inputState.ctrl ? 0x02 : 0) |
+      (inputState.shift ? 0x04 : 0) |
+      (inputState.fire ? 0x08 : 0),
+  }));
+  client.startStateTick(30);
+
+  const previousSnapshot = client.config.onWorldSnapshot;
+  client.config.onWorldSnapshot = (snapshot: WorldSnapshotData) => {
+    previousSnapshot?.(snapshot);
+    const mySlot = client.playerSlot;
+
+    for (const state of snapshot.players) {
+      const isAlive = (state.flags & STATE_FLAGS.ALIVE) !== 0;
+      const isShielded = (state.flags & STATE_FLAGS.SHIELD_ACTIVE) !== 0;
+
+      if (mySlot !== null && state.slot === mySlot) {
+        if (!isAlive && player.isAlive) {
+          context.handleLocalPlayerDeath();
+        } else if (isAlive && !player.isAlive) {
+          context.handleLocalPlayerRespawn();
+        }
+
+        player.hp = state.hp;
+        healthHud.updateHealth(player.hp, player.maxHp);
+        if (isShielded) {
+          player.isInvulnerable = true;
+          player.shieldExpiresAt = performance.now() + state.timerRemainingMs;
+          if (!shieldVfxController.hasShield(context.localShieldAnchor)) {
+            shieldVfxController.attachShield(
+              context.localShieldAnchor,
+              Math.max(0.1, state.timerRemainingMs / 1000),
+            );
+          }
+        }
+        continue;
+      }
+
+      const playerId = client.slotToPlayerId.get(state.slot) || `peer_slot_${state.slot}`;
+      let remote = remotePlayers.get(playerId);
+      if (!remote) {
+        const info = client.sessionPlayers.find((sessionPlayer) => sessionPlayer.id === playerId);
+        remote = addOrUpdateRemotePlayer(
+          playerId,
+          state.x,
+          state.y,
+          state.z,
+          state.yaw,
+          info?.color || '#00F0FF',
+          state.activeWeapon,
+          state.slot,
+        );
+      }
+
+      remote.interpolator.pushSnapshot({
+        timestamp: snapshot.hostTimestamp,
+        localArrival: performance.now(),
+        x: state.x,
+        y: state.y,
+        z: state.z,
+        yaw: state.yaw,
+        pitch: state.pitch,
+        activeWeapon: state.activeWeapon,
+        stateFlags: state.flags,
+        health: state.hp,
+        timerRemainingMs: state.timerRemainingMs,
+      });
+
+      remote.group.visible = isAlive;
+      if (isAlive && isShielded) {
+        if (!shieldVfxController.hasShield(remote.group)) {
+          shieldVfxController.attachShield(remote.group, Math.max(0.1, state.timerRemainingMs / 1000));
+        }
+      } else if (shieldVfxController.hasShield(remote.group)) {
+        shieldVfxController.detachShield(remote.group);
+      }
+    }
+  };
+
+  const previousHit = client.config.onHitConfirmed;
+  client.config.onHitConfirmed = (hit: HitConfirmedData) => {
+    previousHit?.(hit);
+    if (client.playerSlot !== null && hit.victimSlot === client.playerSlot) {
+      context.handleLocalPlayerDamage(hit.newHp);
+    }
+  };
+
+  const previousLegacyShot = client.config.onHitscanFired;
+  client.config.onHitscanFired = (shot: FireHitscanMessage) => {
+    previousLegacyShot?.(shot);
+    presentLegacyRemoteHitscan(shot, context.localEyeHeight);
+  };
+
+  const previousBinaryShot = client.config.onBinaryHitscanFired;
+  client.config.onBinaryHitscanFired = (shot: FireHitscanData) => {
+    previousBinaryShot?.(shot);
+    const shooterId = client.slotToPlayerId.get(shot.shooterSlot) || `peer_slot_${shot.shooterSlot}`;
+    presentLegacyRemoteHitscan({
+      type: 'FIRE_HITSCAN',
+      shooterId,
+      weaponType: shot.weaponType,
+      origin: shot.origin,
+      direction: shot.direction,
+    }, context.localEyeHeight);
+  };
+}
+
+export function bindHostGameplayNetworking(host: P2PHost, context: GameplayNetworkContext): void {
+  setActiveP2PHost(host);
+  host.startSnapshotTick(30);
+
+  const previousHit = host.options.onHitConfirmed;
+  host.options.onHitConfirmed = (hit: HitConfirmationEvent) => {
+    previousHit?.(hit);
+    if (hit.victimId === host.hostPlayer.id) context.handleLocalPlayerDamage(hit.newHp);
+  };
+
+  const previousRespawn = host.options.onPlayerRespawned;
+  host.options.onPlayerRespawned = (playerId: string) => {
+    previousRespawn?.(playerId);
+    if (playerId === host.hostPlayer.id) context.handleLocalPlayerRespawn();
+  };
+}
