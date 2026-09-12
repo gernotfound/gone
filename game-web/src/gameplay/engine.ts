@@ -300,7 +300,11 @@ function fireWeapon(): void {
     );
   }
 
-  vfxManager.spawnMuzzleFlash(muzzleWorldPos, currentWeaponType);
+  // Local muzzle flash is explicitly bound to the authored viewmodel socket.
+  // It must never be inferred from or coupled to the hitscan/tracer direction.
+  if (!vfxManager.spawnLocalMuzzleFlash(currentWeaponType)) {
+    vfxManager.spawnMuzzleFlash(muzzleWorldPos, currentWeaponType);
+  }
 
   const rayOrigin = camera.position.clone();
   const rayDirection = new THREE.Vector3();
