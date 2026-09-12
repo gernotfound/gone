@@ -38,28 +38,34 @@ function phoneUserAgent(): boolean {
   return /iPhone|iPod|Android.+Mobile|Windows Phone|webOS|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 }
 
+function coarsePointerPresent(): boolean {
+  return window.matchMedia('(pointer: coarse)').matches || window.matchMedia('(any-pointer: coarse)').matches;
+}
+
+function touchEvidence(): boolean {
+  return navigator.maxTouchPoints > 0 || 'ontouchstart' in window || coarsePointerPresent();
+}
+
 export function isSmartphoneDevice(): boolean {
-  if (navigator.maxTouchPoints <= 0) return false;
-
   const uaDataMobile = (navigator as NavigatorWithUaData).userAgentData?.mobile;
-  if (uaDataMobile === true) return true;
+  const phoneUa = phoneUserAgent();
+
+  // Strong phone signals win even when a WebView/PWA reports maxTouchPoints
+  // incorrectly. This avoids the bad state where the smartphone layout is used
+  // but the gameplay touch runtime refuses to start.
+  if (uaDataMobile === true || phoneUa) return true;
   if (tabletLikeDevice()) return false;
+  if (!touchEvidence() || !coarsePointerPresent()) return false;
 
-  const coarsePointer = window.matchMedia('(pointer: coarse)').matches || window.matchMedia('(any-pointer: coarse)').matches;
-  if (!coarsePointer) return false;
-
-  // 720 CSS px keeps normal phones/foldables in the smartphone profile while
-  // avoiding iPad-class/tablet layouts. UA hints are used only as a strong
-  // signal; viewport geometry is the fallback so the UI still works when UA
-  // reduction hides model details.
-  return phoneUserAgent() || viewportShortestSide() <= 720;
+  // Geometry is the privacy-safe fallback for browsers that reduce UA details.
+  return viewportShortestSide() <= 720;
 }
 
 function snapshot(): SmartphoneSnapshot {
   return {
     enabled: isSmartphoneDevice(),
     touchPoints: navigator.maxTouchPoints,
-    coarsePointer: window.matchMedia('(pointer: coarse)').matches || window.matchMedia('(any-pointer: coarse)').matches,
+    coarsePointer: coarsePointerPresent(),
     shortestSide: viewportShortestSide(),
     phoneUa: phoneUserAgent(),
     tabletLike: tabletLikeDevice(),
