@@ -2,6 +2,16 @@
  * PUBG Mobile and COD Mobile: left-thumb movement, right-thumb camera, optional
  * claw fire, dedicated ADS, compact action cluster and simultaneous actions. */
 
+/* Keep health in the lower center, the conventional FPS scan zone between the
+ * movement and action thumbs. The existing health/shield colors are untouched. */
+html.gone-smartphone #health-hud {
+  left: 50% !important;
+  right: auto !important;
+  bottom: max(8px, calc(env(safe-area-inset-bottom) + 6px)) !important;
+  transform: translateX(-50%) scale(.56) !important;
+  transform-origin: bottom center !important;
+}
+
 html.gone-smartphone #mc-weapon-switcher {
   top: auto !important;
   bottom: max(10px, calc(env(safe-area-inset-bottom) + 6px)) !important;
@@ -122,6 +132,10 @@ html.gone-smartphone #mobile-stick::before {
 }
 
 @media (max-height: 430px) and (orientation: landscape) {
+  html.gone-smartphone #health-hud {
+    bottom: max(6px, calc(env(safe-area-inset-bottom) + 4px)) !important;
+    transform: translateX(-50%) scale(.50) !important;
+  }
   html.gone-smartphone #gone-mobile-controls #mc-fire {
     bottom: max(50px, calc(env(safe-area-inset-bottom) + 44px)) !important;
     width: 76px !important;
