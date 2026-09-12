@@ -51,7 +51,7 @@ export class PhysicsInput {
   constructor(
     x: number, y: number, z: number, vel_y: number, is_grounded: boolean,
     forward: boolean, backward: boolean, left: boolean, right: boolean, yaw: number,
-    jump: boolean, sprint: boolean, crouch: boolean, delta: number
+    jump: boolean, sprint: boolean, crouch: boolean, movement_scale: number, delta: number
   );
 }
 
