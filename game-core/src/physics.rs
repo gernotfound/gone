@@ -1,4 +1,15 @@
+use std::cell::Cell;
 use wasm_bindgen::prelude::*;
+
+std::thread_local! {
+    static MOVEMENT_SCALE: Cell<f64> = Cell::new(1.0);
+}
+
+#[wasm_bindgen]
+pub fn set_movement_scale(scale: f64) {
+    let safe_scale = if scale.is_finite() { scale.clamp(0.25, 1.25) } else { 1.0 };
+    MOVEMENT_SCALE.with(|value| value.set(safe_scale));
+}
 
 #[wasm_bindgen]
 pub struct PhysicsInput {
@@ -15,7 +26,6 @@ pub struct PhysicsInput {
     pub jump: bool,
     pub sprint: bool,
     pub crouch: bool,
-    pub movement_scale: f64,
     pub delta: f64,
 }
 
@@ -25,12 +35,12 @@ impl PhysicsInput {
     pub fn new(
         x: f64, y: f64, z: f64, vel_y: f64, is_grounded: bool,
         forward: bool, backward: bool, left: bool, right: bool, yaw: f64,
-        jump: bool, sprint: bool, crouch: bool, movement_scale: f64, delta: f64
+        jump: bool, sprint: bool, crouch: bool, delta: f64
     ) -> PhysicsInput {
         PhysicsInput {
             x, y, z, vel_y, is_grounded,
             forward, backward, left, right, yaw,
-            jump, sprint, crouch, movement_scale, delta
+            jump, sprint, crouch, delta
         }
     }
 }
@@ -101,7 +111,7 @@ pub fn step_physics(input: &PhysicsInput) -> PhysicsState {
     } else if input.crouch {
         current_speed = speed * crouch_multiplier;
     }
-    current_speed *= input.movement_scale.clamp(0.25, 1.25);
+    current_speed *= MOVEMENT_SCALE.with(|value| value.get());
 
     // Preserve configured speed along the actual walking surface, not only its
     // X/Z projection. On a slope with directional derivative s = dy/dh, the
