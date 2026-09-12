@@ -15,6 +15,7 @@ pub struct PhysicsInput {
     pub jump: bool,
     pub sprint: bool,
     pub crouch: bool,
+    pub movement_scale: f64,
     pub delta: f64,
 }
 
@@ -24,12 +25,12 @@ impl PhysicsInput {
     pub fn new(
         x: f64, y: f64, z: f64, vel_y: f64, is_grounded: bool,
         forward: bool, backward: bool, left: bool, right: bool, yaw: f64,
-        jump: bool, sprint: bool, crouch: bool, delta: f64
+        jump: bool, sprint: bool, crouch: bool, movement_scale: f64, delta: f64
     ) -> PhysicsInput {
         PhysicsInput {
             x, y, z, vel_y, is_grounded,
             forward, backward, left, right, yaw,
-            jump, sprint, crouch, delta
+            jump, sprint, crouch, movement_scale, delta
         }
     }
 }
@@ -59,11 +60,12 @@ pub fn step_physics(input: &PhysicsInput) -> PhysicsState {
     let gravity = 9.8;
     let gravity_scale = 5.0;
     let terminal_velocity = -54.0;
-    
+
     let player_height = 2.0;
     let float_height = 0.5;
     let r = 1.5;
     let ground_snap_margin = 0.5;
+    let slope_probe = 0.8;
 
     let mut move_dir_x: f64 = 0.0;
     let mut move_dir_z: f64 = 0.0;
@@ -73,11 +75,12 @@ pub fn step_physics(input: &PhysicsInput) -> PhysicsState {
     if input.left { move_dir_x -= 1.0; }
     if input.right { move_dir_x += 1.0; }
 
-    if move_dir_x != 0.0 || move_dir_z != 0.0 {
+    let has_movement = move_dir_x != 0.0 || move_dir_z != 0.0;
+    if has_movement {
         let length = (move_dir_x * move_dir_x + move_dir_z * move_dir_z).sqrt();
         move_dir_x /= length;
         move_dir_z /= length;
-        
+
         let yaw = input.yaw;
         let cos_yaw = yaw.cos();
         let sin_yaw = yaw.sin();
@@ -97,6 +100,24 @@ pub fn step_physics(input: &PhysicsInput) -> PhysicsState {
         current_speed = speed * sprint_multiplier;
     } else if input.crouch {
         current_speed = speed * crouch_multiplier;
+    }
+    current_speed *= input.movement_scale.clamp(0.25, 1.25);
+
+    // Preserve configured speed along the actual walking surface, not only its
+    // X/Z projection. On a slope with directional derivative s = dy/dh, the
+    // horizontal component must be v/sqrt(1+s²) so the 3D tangent speed stays v.
+    // Two directional samples are enough and avoid a full terrain normal query.
+    if is_grounded && has_movement {
+        let forward_height = crate::get_height_at(
+            x + move_dir_x * slope_probe,
+            z + move_dir_z * slope_probe,
+        );
+        let backward_height = crate::get_height_at(
+            x - move_dir_x * slope_probe,
+            z - move_dir_z * slope_probe,
+        );
+        let directional_slope = (forward_height - backward_height) / (2.0 * slope_probe);
+        current_speed /= (1.0 + directional_slope * directional_slope).sqrt();
     }
 
     x += move_dir_x * current_speed * delta;
