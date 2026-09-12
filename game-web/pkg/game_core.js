@@ -229,7 +229,7 @@ export class PhysicsInput {
   constructor(
     x, y, z, vel_y, is_grounded,
     forward, backward, left, right, yaw,
-    jump, sprint, crouch, delta,
+    jump, sprint, crouch, movement_scale, delta,
   ) {
     this.x = x;
     this.y = y;
@@ -244,6 +244,7 @@ export class PhysicsInput {
     this.jump = !!jump;
     this.sprint = !!sprint;
     this.crouch = !!crouch;
+    this.movement_scale = Number.isFinite(movement_scale) ? Math.max(0.25, Math.min(1.25, movement_scale)) : 1;
     this.delta = Math.max(0, Math.min(0.1, Number.isFinite(delta) ? delta : 0));
   }
   free() {}
@@ -287,7 +288,14 @@ export function step_physics(input) {
     dz = worldZ;
   }
 
-  const speed = 12 * (input.crouch ? 0.6 : (input.sprint ? 2 : 1));
+  let speed = 12 * (input.crouch ? 0.6 : (input.sprint ? 2 : 1)) * input.movement_scale;
+  if (grounded && len > 0) {
+    const probe = 0.8;
+    const forwardHeight = get_height_at(x + dx * probe, z + dz * probe);
+    const backwardHeight = get_height_at(x - dx * probe, z - dz * probe);
+    const directionalSlope = (forwardHeight - backwardHeight) / (2 * probe);
+    speed /= Math.sqrt(1 + directionalSlope * directionalSlope);
+  }
   x += dx * speed * dt;
   z += dz * speed * dt;
 
@@ -329,7 +337,7 @@ const WEAPON_DAMAGE = {
   1: { body: 90, head: 140, range: 400 },
   2: { body: 80, head: 100, range: 24 },
   3: { body: 20, head: 30, range: 75 },
-  4: { body: 50, head: 50, range: 2.5 },
+  4: { body: 999, head: 999, range: 2.6 },
 };
 
 function rayCylinder(origin, dir, snap, maxRange) {
