@@ -16,6 +16,7 @@ export function generate_chunk(
   get_rocks(): Float32Array;
 };
 export function get_height_at(x: number, z: number): number;
+export function set_movement_scale(scale: number): void;
 
 export class WasmLagCompensator {
   free(): void;
@@ -51,7 +52,7 @@ export class PhysicsInput {
   constructor(
     x: number, y: number, z: number, vel_y: number, is_grounded: boolean,
     forward: boolean, backward: boolean, left: boolean, right: boolean, yaw: number,
-    jump: boolean, sprint: boolean, crouch: boolean, movement_scale: number, delta: number
+    jump: boolean, sprint: boolean, crouch: boolean, delta: number
   );
 }
 
