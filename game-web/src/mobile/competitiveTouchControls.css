@@ -4,7 +4,8 @@
 
 /* Keep health in the lower center, the conventional FPS scan zone between the
  * movement and action thumbs. The existing health/shield colors are untouched. */
-html.gone-smartphone #health-hud {
+html.gone-smartphone #health-hud,
+html.gone-smartphone.gone-touch-left-handed #health-hud {
   left: 50% !important;
   right: auto !important;
   bottom: max(8px, calc(env(safe-area-inset-bottom) + 6px)) !important;
@@ -12,9 +13,11 @@ html.gone-smartphone #health-hud {
   transform-origin: bottom center !important;
 }
 
+/* Health now owns the lower-center band. Keep weapon switching in the upper
+ * center so the two persistent HUD elements never overlap. */
 html.gone-smartphone #mc-weapon-switcher {
-  top: auto !important;
-  bottom: max(10px, calc(env(safe-area-inset-bottom) + 6px)) !important;
+  top: max(7px, calc(env(safe-area-inset-top) + 5px)) !important;
+  bottom: auto !important;
   height: 48px !important;
   padding: 0 5px !important;
   border-radius: 14px;
@@ -132,7 +135,8 @@ html.gone-smartphone #mobile-stick::before {
 }
 
 @media (max-height: 430px) and (orientation: landscape) {
-  html.gone-smartphone #health-hud {
+  html.gone-smartphone #health-hud,
+  html.gone-smartphone.gone-touch-left-handed #health-hud {
     bottom: max(6px, calc(env(safe-area-inset-bottom) + 4px)) !important;
     transform: translateX(-50%) scale(.50) !important;
   }
