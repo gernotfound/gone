@@ -64,7 +64,7 @@ export async function run(suite) {
     const agentsPath = path.join(PROJECT_ROOT, 'AGENTS.md');
     assert(fs.existsSync(agentsPath), 'AGENTS.md must exist at project root');
     const content = fs.readFileSync(agentsPath, 'utf-8');
-    assert(content.includes('Cyberpunk') || content.includes('FPS Online'), 'AGENTS.md must specify project architecture');
+    assert(content.includes('Architecture discipline') && content.includes('Browser FPS'), 'AGENTS.md must specify the current browser/runtime architecture');
 
     const projectPath = path.join(PROJECT_ROOT, 'PROJECT.md');
     assert(fs.existsSync(projectPath), 'PROJECT.md must exist at project root');

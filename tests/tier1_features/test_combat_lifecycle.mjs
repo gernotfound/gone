@@ -194,12 +194,12 @@ export async function run(suite) {
     const now = performance.now();
     assertGreaterThan(victim.shieldExpiresAt, now + 8000, 'Shield must be active for ~10s');
 
-    // Host fires high-damage sniper shot (weaponType = 1, base damage 90) directly at victim
+    // Host fires high-damage sniper shot (weaponType = 1, base damage 70) directly at victim
     confirmedHitEvent = null;
     host.fireHitscan(
       'host_01',
       1, // cecchino
-      [0, 18.0, -10], // origin 10m south
+      [0, 17.0, -10], // origin 10m south at valid fallback-collider body height
       [0, 0, 1]        // direction north towards [0, 17.5, 0]
     );
 
@@ -211,7 +211,7 @@ export async function run(suite) {
 
     // Fire 5 more assault rifle shots
     for (let i = 0; i < 5; i++) {
-      host.fireHitscan('host_01', 0, [0, 18.0, -10], [0, 0, 1]);
+      host.fireHitscan('host_01', 0, [0, 17.0, -10], [0, 0, 1]);
     }
     assertEqual(victim.hp, 100, 'Victim HP must remain 100 after multiple shots during shield');
 
@@ -245,12 +245,12 @@ export async function run(suite) {
     host.tickSnapshot();
     assertEqual((victim.stateFlags & STATE_FLAGS.SHIELD_ACTIVE) === 0, true, 'Shield flag must be cleared');
 
-    // Host shoots assault rifle (weaponType 0, base 34) at victim
+    // Host shoots assault rifle (weaponType 0, base 18) at victim
     confirmedHitEvent = null;
     host.fireHitscan(
       'host_01',
       0, // assalto
-      [0, 18.0, -10],
+      [0, 17.0, -10],
       [0, 0, 1]
     );
 

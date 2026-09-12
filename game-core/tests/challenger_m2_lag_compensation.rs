@@ -440,7 +440,7 @@ fn test_challenger_m2_weapons_damage_and_range_during_rewind() {
     assert!(smg_head.is_headshot);
     assert_eq!(smg_head.damage, 18.0);
 
-    // 3. Shotgun (Pompa): Base 64.0, Headshot multiplier 1.5 => 96.0
+    // 3. Shotgun (Pompa): at 9.55m canonical falloff yields 60.9 body damage; headshot multiplier 1.25 => 76.125
     let shotgun_head = engine.validate_rewind_hitscan(
         WeaponType::Pompa,
         victim_id,
@@ -451,9 +451,9 @@ fn test_challenger_m2_weapons_damage_and_range_during_rewind() {
     );
     assert!(shotgun_head.hit);
     assert!(shotgun_head.is_headshot);
-    assert_eq!(shotgun_head.damage, 96.0);
+    assert!((shotgun_head.damage - 76.125).abs() < 1e-9);
 
-    // 4. Knife: strict 2.5m range cutoff
+    // 4. Knife: strict 2.6m range cutoff
     // Target is at 9.55m distance -> knife MUST deal 0 damage and MISS
     let knife_far = engine.validate_rewind_hitscan(
         WeaponType::Coltello,

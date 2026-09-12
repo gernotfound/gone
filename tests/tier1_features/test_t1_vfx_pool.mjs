@@ -159,7 +159,7 @@ export async function run(suite) {
   // ---------------------------------------------------------------------------
   // 5. Quadratic Fade and Lifetime Dissolve
   // ---------------------------------------------------------------------------
-  suite.test('F-9 / R1: Tracers follow quadratic opacity falloff and deactivate when lifetime expires', () => {
+  suite.test('F-9 / R1: Tracers travel before quadratic tail fade and deactivate when visual lifetime expires', () => {
     const scene = new THREE.Scene();
     const pool = new TracerPool();
     pool.init(scene);
@@ -173,12 +173,12 @@ export async function run(suite) {
     assert(tracer !== undefined, 'Active tracer must exist');
     assertEqual(tracer.material.opacity, 1.0);
 
-    // Step 0.16s (50% lifetime) -> alpha = 1.0 - (0.5)^2 = 0.75
+    // At 0.16s the 20m sniper beam has completed its minimum 0.055s travel and is 0.105s into a 0.14s quadratic tail fade.
     pool.update(0.16);
     assertEqual(tracer.active, true);
-    assertCloseTo(tracer.material.opacity, 0.75, 0.02, 'Quadratic fade at 50% life');
+    assertCloseTo(tracer.material.opacity, 0.4375, 0.02, 'Quadratic tail fade after beam travel');
 
-    // Step another 0.17s (total 0.33s > 0.32s) -> expires
+    // Step another 0.17s (total 0.33s > travel + fade visual lifetime) -> expires
     pool.update(0.17);
     assertEqual(tracer.active, false, 'Tracer must deactivate when age >= lifetime');
     assertEqual(tracer.mesh.visible, false, 'Mesh must be hidden on deactivation');

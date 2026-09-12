@@ -310,11 +310,11 @@ fn challenger2_wasm_binding_self_damage_and_malformed_json() {
 }
 
 // =========================================================================
-// 3. MELEE WEAPON RANGE CUTOFF (2.5M) DURING TEMPORAL REWIND
+// 3. MELEE WEAPON RANGE CUTOFF (2.6M) DURING TEMPORAL REWIND
 // =========================================================================
 
 #[test]
-fn challenger2_melee_knife_strict_2_5m_range_cutoff_during_rewind() {
+fn challenger2_melee_knife_strict_2_6m_range_cutoff_during_rewind() {
     let mut engine = LagCompensationEngine::new(1000.0);
     let victim_id = 88;
     let shooter_id = 1;
@@ -324,8 +324,8 @@ fn challenger2_melee_knife_strict_2_5m_range_cutoff_during_rewind() {
     // Target base radius = 0.45m.
     // Distance from shooter to cylinder surface along Z = (target_z - 0.45)
     //
-    // At t = 1000ms: Target base at Z = 2.94m -> Surface distance = 2.94 - 0.45 = 2.49m (<= 2.5m, in melee range)
-    // At t = 1100ms: Target base at Z = 3.50m -> Surface distance = 3.50 - 0.45 = 3.05m (> 2.5m, out of melee range)
+    // At t = 1000ms: Target base at Z = 2.94m -> Surface distance = 2.94 - 0.45 = 2.49m (<= 2.6m, in melee range)
+    // At t = 1100ms: Target base at Z = 3.50m -> Surface distance = 3.50 - 0.45 = 3.05m (> 2.6m, out of melee range)
     engine.record_position(victim_id, 1000.0, 0.0, 0.0, 2.94, 0.45, 2.0);
     engine.record_position(victim_id, 1100.0, 0.0, 0.0, 3.50, 0.45, 2.0);
 
@@ -339,11 +339,11 @@ fn challenger2_melee_knife_strict_2_5m_range_cutoff_during_rewind() {
         1000.0,
         0.0, 1.0, 0.0,
         0.0, 0.0, 1.0,
-        0.0, // default range -> 2.5m
+        0.0, // default range -> canonical 2.6m
     );
     assert!(
         knife_hit_rewind.hit,
-        "Melee knife within 2.5m range (2.49m) at rewound time MUST HIT!"
+        "Melee knife within 2.6m range (2.49m) at rewound time MUST HIT!"
     );
     assert!((knife_hit_rewind.distance - 2.49).abs() < EPSILON);
     assert_eq!(knife_hit_rewind.damage, 50.0);
@@ -362,15 +362,15 @@ fn challenger2_melee_knife_strict_2_5m_range_cutoff_during_rewind() {
     );
     assert!(
         !knife_miss_current.hit,
-        "Melee knife beyond 2.5m range (3.05m) at current time MUST MISS!"
+        "Melee knife beyond 2.6m range (3.05m) at current time MUST MISS!"
     );
     assert_eq!(knife_miss_current.damage, 0.0);
 
     // 3. Knife range boundary during rewind:
-    // Create exact 2.5000m vs 2.5001m scenarios
+    // Create exact 2.6000m vs 2.6001m scenarios
     let victim_exact = 89;
-    // Surface distance = 2.95 - 0.45 = 2.5000m
-    engine.record_position(victim_exact, 1000.0, 0.0, 0.0, 2.95, 0.45, 2.0);
+    // Surface distance = 3.05 - 0.45 = 2.6000m
+    engine.record_position(victim_exact, 1000.0, 0.0, 0.0, 3.05, 0.45, 2.0);
 
     let knife_boundary_hit = engine.validate_rewind_hitscan_full(
         shooter_id,
@@ -384,13 +384,13 @@ fn challenger2_melee_knife_strict_2_5m_range_cutoff_during_rewind() {
     );
     assert!(
         knife_boundary_hit.hit,
-        "Knife at exact boundary 2.500m must HIT"
+        "Knife at exact boundary 2.600m must HIT"
     );
     assert_eq!(knife_boundary_hit.damage, 50.0);
 
-    // Surface distance = 2.9501 - 0.45 = 2.5001m
+    // Surface distance = 3.0501 - 0.45 = 2.6001m
     let victim_over = 90;
-    engine.record_position(victim_over, 1000.0, 0.0, 0.0, 2.9501, 0.45, 2.0);
+    engine.record_position(victim_over, 1000.0, 0.0, 0.0, 3.0501, 0.45, 2.0);
 
     let knife_boundary_miss = engine.validate_rewind_hitscan_full(
         shooter_id,
@@ -404,7 +404,7 @@ fn challenger2_melee_knife_strict_2_5m_range_cutoff_during_rewind() {
     );
     assert!(
         !knife_boundary_miss.hit,
-        "Knife past boundary (2.5001m) MUST MISS"
+        "Knife past boundary (2.6001m) MUST MISS"
     );
     assert_eq!(knife_boundary_miss.damage, 0.0);
 
@@ -421,7 +421,7 @@ fn challenger2_melee_knife_strict_2_5m_range_cutoff_during_rewind() {
     );
     assert!(
         !knife_spoofed_range.hit,
-        "SECURITY FAILURE: Spoofed max_range for knife must be clamped to 2.5m effective range!"
+        "SECURITY FAILURE: Spoofed max_range for knife must be clamped to 2.6m effective range!"
     );
 }
 
@@ -489,9 +489,9 @@ fn challenger2_headshot_boundaries_and_elevations_during_rewind() {
     );
     assert!(hs_boundary.hit);
     assert!(hs_boundary.is_headshot, "Y=19.06m must be headshot");
-    // At 19.55m distance, Assalto experiences falloff: 18 - 6 * ((19.55-10)/60) = 17.045
-    // Headshot multiplier is 1.5: 17.045 * 1.5 = 25.5675
-    assert!((hs_boundary.damage - 25.5675).abs() < 1e-4);
+    // At 19.55m distance, Assalto is still before the canonical 35m falloff start.
+    // Headshot multiplier is 1.5: 18.0 * 1.5 = 27.0.
+    assert!((hs_boundary.damage - 27.0).abs() < 1e-4);
 
     // Also test non-falloff distance at Z = 10.0m (distance = 9.55m <= 10.0m falloff start)
     let victim_close = 67;
