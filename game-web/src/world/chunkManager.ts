@@ -16,6 +16,8 @@ import {
   CHUNK_RENDER_CULL_MARGIN,
   CHUNK_RESOLUTION,
   CHUNK_SIZE,
+  TERRAIN_BUILD_MAX_COOLDOWN_MS,
+  TERRAIN_BUILD_SOFT_BUDGET_MS,
   WORLD_FOG_FAR,
   chunkCoordToWorld,
   chunkDistanceSq,
@@ -78,6 +80,7 @@ let lastBuildMs = 0;
 let lastBuildKind: ChunkStreamingStats['lastBuildKind'] = 'none';
 let cacheHits = 0;
 let cacheMisses = 0;
+let nextTerrainBuildAt = 0;
 
 export function getChunkMeshes(): THREE.Object3D[] {
   const meshes: THREE.Object3D[] = [];
@@ -188,6 +191,11 @@ function buildChunk(
   mesh.position.set(offsetX, 0, offsetZ);
   mesh.receiveShadow = false;
   mesh.castShadow = false;
+  // Terrain chunks never move after creation. Avoid recomputing their local
+  // transform every render frame; world transforms remain available to child
+  // details and raycasts through Three.js' normal matrix-world propagation.
+  mesh.matrixAutoUpdate = false;
+  mesh.updateMatrix();
 
   const nearDetail = isChunkInDetailRadius(cx, cz, centerX, centerZ);
   const rocks = nearDetail
@@ -290,6 +298,16 @@ function processOneTerrainBuild(centerX: number, centerZ: number): boolean {
     buildChunk(next.cx, next.cz, centerX, centerZ);
     lastBuildMs = performance.now() - startedAt;
     lastBuildKind = 'terrain';
+
+    // Expensive WASM terrain generation is intentionally followed by a short
+    // cooldown. This keeps movement/input frames responsive on slower devices
+    // instead of scheduling another heavy chunk immediately on the next frame.
+    nextTerrainBuildAt = performance.now() + (
+      lastBuildMs > TERRAIN_BUILD_SOFT_BUDGET_MS
+        ? Math.min(TERRAIN_BUILD_MAX_COOLDOWN_MS, lastBuildMs)
+        : 0
+    );
+
     reconcileChunkDetails(centerX, centerZ);
     return true;
   }
@@ -350,8 +368,14 @@ export function updateChunks(playerPosition: THREE.Vector3): void {
     refreshDesiredChunks(centerX, centerZ);
   }
 
-  const builtTerrain = processOneTerrainBuild(centerX, centerZ);
-  if (!builtTerrain) {
+  const now = performance.now();
+  const builtTerrain = pendingTerrainIds.size > 0 && now >= nextTerrainBuildAt
+    ? processOneTerrainBuild(centerX, centerZ)
+    : false;
+
+  // Detail work waits until the terrain queue is settled; mixing rock creation
+  // into a terrain cooldown would defeat the frame-pacing safeguard above.
+  if (!builtTerrain && pendingTerrainIds.size === 0) {
     if (!processOneDetailBuild(centerX, centerZ) && !centerChanged) {
       lastBuildKind = 'none';
       lastBuildMs = 0;
