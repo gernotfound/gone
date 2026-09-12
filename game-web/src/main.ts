@@ -2,6 +2,7 @@ import './style.css';
 import { startInputModeSettings } from './mobile/inputMode.ts';
 import { startMobileSessionResume } from './mobile/mobileSessionResume.ts';
 import { startPubgTouchControls } from './mobile/pubgTouchControls.ts';
+import { startCompetitiveTouchControls } from './mobile/competitiveTouchControls.ts';
 import { startSmartphoneControlsGuard } from './mobile/smartphoneControlsGuard.ts';
 import { startSmartphoneProfile } from './mobile/smartphoneProfile.ts';
 import { startTouchLayoutEditor } from './mobile/touchLayoutEditor.ts';
@@ -16,6 +17,7 @@ startPwaRuntime();
 startClientRuntime();
 startSmartphoneControlsGuard();
 startPubgTouchControls();
+startCompetitiveTouchControls();
 startTouchLayoutEditor();
 startMobileSessionResume();
 
@@ -26,5 +28,6 @@ window.addEventListener('gone-input-mode-changed', () => {
   (window as any).__goneSmartphoneControlsGuardStarted = false;
   startSmartphoneControlsGuard();
   startPubgTouchControls();
+  startCompetitiveTouchControls();
   startTouchLayoutEditor();
 });
