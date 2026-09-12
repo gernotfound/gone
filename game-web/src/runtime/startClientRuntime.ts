@@ -23,6 +23,7 @@ import { startSessionLifecycleHardening } from '../net/sessionLifecycleHardening
 import { startRemoteShotPresentation } from '../net/remoteShotPresentation.ts';
 import { startLiveMapOverlay } from '../gameplay/liveMapOverlay.ts';
 import { startMusicSourceGain } from '../audio/musicSourceGain.ts';
+import { startClientDiagnostics } from '../observability/clientDiagnostics.ts';
 import { startPerformancePack } from '../performance/performancePack.ts';
 import { startCacheIntegrity } from '../performance/cacheIntegrity.ts';
 import { startLocalTelemetry } from '../performance/localTelemetry.ts';
@@ -32,6 +33,7 @@ import { startP2PQualityHud } from '../ui/p2pQualityHud.ts';
 import { startMobileRuntime } from '../mobile/mobileRuntime.ts';
 
 function installPreBootstrapGuards(): void {
+  startClientDiagnostics();
   startNetworkStabilityFix();
   startCombatEventBridge();
   startDeathmatchAuthority();
