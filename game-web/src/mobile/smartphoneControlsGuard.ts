@@ -1,5 +1,7 @@
 import { inputState, resetInputState } from '../controls/playerInput.ts';
+import { useOnScreenControls } from './inputMode.ts';
 import { isSmartphoneDevice } from './smartphoneProfile.ts';
+import { getTouchPreferences } from './touchPreferences.ts';
 
 type MobileControlsApi = {
   enabled?: boolean;
@@ -153,7 +155,10 @@ function bindLook(): void {
     const dy = event.clientY - state.lookY;
     state.lookX = event.clientX;
     state.lookY = event.clientY;
-    const sensitivity = inputState.aim ? 0.003 : 0.0042;
+    const preferences = getTouchPreferences();
+    const sensitivity = inputState.aim
+      ? 0.003 * preferences.adsSensitivity
+      : 0.0042 * preferences.lookSensitivity;
     inputState.yaw -= dx * sensitivity;
     inputState.pitch -= dy * sensitivity;
     inputState.pitch = Math.max(-Math.PI / 2 + 0.05, Math.min(Math.PI / 2 - 0.05, inputState.pitch));
@@ -275,7 +280,11 @@ function syncFallbackVisibility(): void {
 export function startSmartphoneControlsGuard(): void {
   if ((window as any).__goneSmartphoneControlsGuardStarted) return;
   (window as any).__goneSmartphoneControlsGuardStarted = true;
-  if (!isSmartphoneDevice()) return;
+
+  // Explicit on-screen mode is authoritative. The smartphone heuristic remains
+  // the automatic fallback, but a user-selected screen mode must work even when
+  // a WebView/PWA reports misleading UA/touch capabilities.
+  if (!useOnScreenControls() && !isSmartphoneDevice()) return;
 
   const primary = (window as any).goneMobileControls as MobileControlsApi | undefined;
   if (primary?.enabled === true) {
@@ -283,7 +292,7 @@ export function startSmartphoneControlsGuard(): void {
     return;
   }
 
-  console.warn('[Mobile] Primary touch runtime unavailable on a smartphone; enabling fallback controls.');
+  console.warn('[Mobile] Primary touch runtime unavailable; enabling fallback on-screen controls.');
   createFallbackControls();
   syncFallbackVisibility();
 

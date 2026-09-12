@@ -3,11 +3,13 @@ import { startInputModeSettings } from './mobile/inputMode.ts';
 import { startMobileSessionResume } from './mobile/mobileSessionResume.ts';
 import { startSmartphoneControlsGuard } from './mobile/smartphoneControlsGuard.ts';
 import { startSmartphoneProfile } from './mobile/smartphoneProfile.ts';
+import { startTouchPreferences } from './mobile/touchPreferences.ts';
 import { startPwaRuntime } from './pwa/pwaRuntime.ts';
 import { startClientRuntime } from './runtime/startClientRuntime.ts';
 
 startSmartphoneProfile();
 startInputModeSettings();
+startTouchPreferences();
 startPwaRuntime();
 startClientRuntime();
 startSmartphoneControlsGuard();
