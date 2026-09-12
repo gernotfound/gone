@@ -46,7 +46,16 @@ function touchEvidence(): boolean {
   return navigator.maxTouchPoints > 0 || 'ontouchstart' in window || coarsePointerPresent();
 }
 
+function forcedOnScreenControls(): boolean {
+  try { return window.localStorage.getItem('gone-input-mode') === 'screen'; } catch { return false; }
+}
+
 export function isSmartphoneDevice(): boolean {
+  // A user-selected on-screen mode is an explicit override. This intentionally
+  // wins over UA/touch heuristics so misreported WebViews and installed PWAs can
+  // still enter the smartphone presentation and touch-control path.
+  if (forcedOnScreenControls()) return true;
+
   const uaDataMobile = (navigator as NavigatorWithUaData).userAgentData?.mobile;
   const phoneUa = phoneUserAgent();
 
@@ -99,4 +108,5 @@ export function startSmartphoneProfile(): void {
   window.matchMedia('(pointer: coarse)').addEventListener?.('change', scheduleRefresh);
   window.matchMedia('(any-pointer: coarse)').addEventListener?.('change', scheduleRefresh);
   window.matchMedia('(display-mode: standalone)').addEventListener?.('change', scheduleRefresh);
+  window.addEventListener('gone-input-mode-changed', scheduleRefresh);
 }
