@@ -1,6 +1,7 @@
 import './mobile.css';
 import { inputState, resetInputState } from '../controls/playerInput.ts';
 import { sceneManager } from '../rendering/scene.ts';
+import { getTouchPreferences } from './touchPreferences.ts';
 
 type WakeLockSentinelLike = { release?: () => Promise<void>; addEventListener?: (type: string, cb: () => void) => void };
 
@@ -80,9 +81,6 @@ function installVirtualPointerLock(): void {
     console.warn('[Mobile] Virtual pointer-lock compatibility shim unavailable:', error);
   }
 
-  // iOS has no Pointer Lock API. Android browsers may expose it, but the game
-  // does not need native pointer lock when touch look is active. A resolved
-  // no-op keeps legacy desktop resume/map code safe on both platforms.
   try {
     Object.defineProperty(document.body, 'requestPointerLock', {
       configurable: true,
@@ -90,8 +88,7 @@ function installVirtualPointerLock(): void {
       value: () => Promise.resolve(),
     });
   } catch {
-    // If the browser makes this property non-configurable, the virtual getter
-    // still handles the gameplay guards and rejected native requests are benign.
+    // The virtual getter is sufficient when native pointer lock cannot be replaced.
   }
 }
 
@@ -202,7 +199,10 @@ function bindLookPad(): void {
     const dy = event.clientY - lookLastY;
     lookLastX = event.clientX;
     lookLastY = event.clientY;
-    const sensitivity = inputState.aim ? 0.0030 : 0.0042;
+    const preferences = getTouchPreferences();
+    const sensitivity = inputState.aim
+      ? 0.0030 * preferences.adsSensitivity
+      : 0.0042 * preferences.lookSensitivity;
     inputState.yaw -= dx * sensitivity;
     inputState.pitch -= dy * sensitivity;
     inputState.pitch = Math.max(-Math.PI / 2 + 0.05, Math.min(Math.PI / 2 - 0.05, inputState.pitch));
@@ -462,7 +462,6 @@ export function startMobileRuntime(): void {
     document.getElementById(id)?.addEventListener('click', () => { void requestImmersiveMode(); }, { capture: true });
   }
 
-  // Prevent iOS browser gestures/zoom from stealing active gameplay touches.
   document.addEventListener('touchmove', (event) => {
     if (gameplayActive() && !mapOpen()) event.preventDefault();
   }, { passive: false });
