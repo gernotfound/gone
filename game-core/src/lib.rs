@@ -278,8 +278,6 @@ pub fn generate_chunk(cx: f64, cz: f64, offset_x: f64, offset_z: f64, size: f64,
     let cell = size / resolution as f64;
 
     // Height pass: one expensive procedural lookup per terrain vertex.
-    // The previous implementation evaluated the complete terrain function
-    // three times per vertex just to estimate slope for vertex color.
     for row in 0..verts {
         for col in 0..verts {
             let x = offset_x + (col as f64 / resolution as f64) * size - half;
@@ -288,9 +286,11 @@ pub fn generate_chunk(cx: f64, cz: f64, offset_x: f64, offset_z: f64, size: f64,
         }
     }
 
-    // Color/slope pass: derive the gradient from the height grid already in
-    // memory. Central differences preserve the same slope semantics while
-    // removing roughly two thirds of terrain evaluations during chunk builds.
+    // Normal/color pass. Interior vertices use the cached height grid. Border
+    // normals get one-cell halo samples outside the chunk so both sides of a
+    // chunk seam evaluate the exact same centered derivative. This removes
+    // lighting seams without changing geometry or the existing RGB terrain
+    // contract. Colors intentionally keep their previous in-grid derivative.
     for row in 0..verts {
         for col in 0..verts {
             let left_col = col.saturating_sub(1);
@@ -298,22 +298,51 @@ pub fn generate_chunk(cx: f64, cz: f64, offset_x: f64, offset_z: f64, size: f64,
             let down_row = row.saturating_sub(1);
             let up_row = (row + 1).min(resolution);
 
-            let left = heights[row * verts + left_col] as f64;
-            let right = heights[row * verts + right_col] as f64;
-            let down = heights[down_row * verts + col] as f64;
-            let up = heights[up_row * verts + col] as f64;
+            let grid_left = heights[row * verts + left_col] as f64;
+            let grid_right = heights[row * verts + right_col] as f64;
+            let grid_down = heights[down_row * verts + col] as f64;
+            let grid_up = heights[up_row * verts + col] as f64;
 
-            let dx_span = ((right_col - left_col) as f64 * cell).max(0.001);
-            let dz_span = ((up_row - down_row) as f64 * cell).max(0.001);
-            let sx = (right - left) / dx_span;
-            let sz = (up - down) / dz_span;
+            // Preserve the historical slope used for vertex colors exactly:
+            // no palette constants or edge-color behavior change in this pass.
+            let color_dx_span = ((right_col - left_col) as f64 * cell).max(0.001);
+            let color_dz_span = ((up_row - down_row) as f64 * cell).max(0.001);
+            let color_sx = (grid_right - grid_left) / color_dx_span;
+            let color_sz = (grid_up - grid_down) / color_dz_span;
+            let color_inv_len = 1.0 / (color_sx * color_sx + 1.0 + color_sz * color_sz).sqrt();
+
+            let world_x = offset_x + (col as f64 / resolution as f64) * size - half;
+            let world_z = offset_z + (row as f64 / resolution as f64) * size - half;
+            let normal_left = if col == 0 {
+                get_terrain_height(world_x - cell, world_z)
+            } else {
+                grid_left
+            };
+            let normal_right = if col == resolution {
+                get_terrain_height(world_x + cell, world_z)
+            } else {
+                grid_right
+            };
+            let normal_down = if row == 0 {
+                get_terrain_height(world_x, world_z - cell)
+            } else {
+                grid_down
+            };
+            let normal_up = if row == resolution {
+                get_terrain_height(world_x, world_z + cell)
+            } else {
+                grid_up
+            };
+
+            let sx = (normal_right - normal_left) / (2.0 * cell).max(0.001);
+            let sz = (normal_up - normal_down) / (2.0 * cell).max(0.001);
             let inv_len = 1.0 / (sx * sx + 1.0 + sz * sz).sqrt();
 
             normals.push((-sx * inv_len) as f32);
             normals.push(inv_len as f32);
             normals.push((-sz * inv_len) as f32);
 
-            let mut t = (inv_len - 0.5) * 2.5;
+            let mut t = (color_inv_len - 0.5) * 2.5;
             t = t.clamp(0.0, 1.0);
             colors.push((2.0 + (30.0 - 2.0) * t).round() as u8);
             colors.push((6.0 + (41.0 - 6.0) * t).round() as u8);
@@ -398,5 +427,41 @@ pub fn generate_chunk(cx: f64, cz: f64, offset_x: f64, offset_z: f64, size: f64,
         normals,
         colors,
         rocks,
+    }
+}
+
+#[cfg(test)]
+mod terrain_mesh_tests {
+    use super::*;
+
+    #[test]
+    fn adjacent_chunk_edge_normals_are_seamless() {
+        let size = 400.0;
+        let resolution = 16usize;
+        let verts = resolution + 1;
+        let left = generate_chunk(0.0, 0.0, 0.0, 0.0, size, resolution);
+        let right = generate_chunk(1.0, 0.0, size, 0.0, size, resolution);
+
+        for row in 0..verts {
+            let left_index = (row * verts + resolution) * 3;
+            let right_index = (row * verts) * 3;
+            for axis in 0..3 {
+                let delta = (left.normals[left_index + axis] - right.normals[right_index + axis]).abs();
+                assert!(
+                    delta <= 1.0e-5,
+                    "terrain seam normal mismatch row={row} axis={axis} delta={delta}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn terrain_vertex_color_palette_contract_is_unchanged() {
+        let chunk = generate_chunk(0.0, 0.0, 0.0, 0.0, 400.0, 16);
+        for rgb in chunk.colors.chunks_exact(3) {
+            assert!((2..=30).contains(&rgb[0]));
+            assert!((6..=41).contains(&rgb[1]));
+            assert!((15..=59).contains(&rgb[2]));
+        }
     }
 }

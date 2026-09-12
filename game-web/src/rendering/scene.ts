@@ -14,6 +14,8 @@ export class SceneManager {
     public rayMat!: THREE.MeshBasicMaterial;
 
     private isInitialized = false;
+    private renderWidth = 0;
+    private renderHeight = 0;
 
     public init() {
         if (this.isInitialized) return;
@@ -26,7 +28,7 @@ export class SceneManager {
         this.rayGeo = createNaturalSunRayGeometry();
         this.rayMat = createNaturalSunRayMaterial();
 
-        this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.01, 3000);
+        this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / Math.max(1, window.innerHeight), 0.01, 3000);
 
         this.renderer = new THREE.WebGLRenderer({
             canvas: DOM.gameCanvas,
@@ -34,7 +36,6 @@ export class SceneManager {
             alpha: false,
             powerPreference: 'high-performance'
         });
-        this.renderer.setSize(window.innerWidth, window.innerHeight);
         this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.25));
         this.renderer.shadowMap.enabled = false;
         this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -62,13 +63,22 @@ export class SceneManager {
         });
 
         this.isInitialized = true;
+        this.resize(window.innerWidth, window.innerHeight, true);
     }
 
-    public resize(width: number, height: number) {
+    public resize(width: number, height: number, force = false) {
         if (!this.isInitialized) return;
-        this.camera.aspect = width / height;
+        const safeWidth = Math.max(1, Math.round(Number.isFinite(width) ? width : 1));
+        const safeHeight = Math.max(1, Math.round(Number.isFinite(height) ? height : 1));
+        if (!force && safeWidth === this.renderWidth && safeHeight === this.renderHeight) return;
+
+        this.renderWidth = safeWidth;
+        this.renderHeight = safeHeight;
+        this.camera.aspect = safeWidth / safeHeight;
         this.camera.updateProjectionMatrix();
-        this.renderer.setSize(width, height);
+        // CSS already owns canvas sizing; updating only the drawing buffer avoids
+        // repeated style/layout writes during mobile browser chrome/orientation churn.
+        this.renderer.setSize(safeWidth, safeHeight, false);
     }
 
     public dispose() {
@@ -81,6 +91,8 @@ export class SceneManager {
         this.rayMat.dispose();
 
         this.renderer.dispose();
+        this.renderWidth = 0;
+        this.renderHeight = 0;
         this.isInitialized = false;
     }
 
