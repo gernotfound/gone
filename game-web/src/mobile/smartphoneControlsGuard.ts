@@ -1,4 +1,5 @@
 import { inputState, resetInputState } from '../controls/playerInput.ts';
+import { useOnScreenControls } from './inputMode.ts';
 import { isSmartphoneDevice } from './smartphoneProfile.ts';
 import { getTouchPreferences } from './touchPreferences.ts';
 
@@ -279,7 +280,11 @@ function syncFallbackVisibility(): void {
 export function startSmartphoneControlsGuard(): void {
   if ((window as any).__goneSmartphoneControlsGuardStarted) return;
   (window as any).__goneSmartphoneControlsGuardStarted = true;
-  if (!isSmartphoneDevice()) return;
+
+  // Explicit on-screen mode is authoritative. The smartphone heuristic remains
+  // the automatic fallback, but a user-selected screen mode must work even when
+  // a WebView/PWA reports misleading UA/touch capabilities.
+  if (!useOnScreenControls() && !isSmartphoneDevice()) return;
 
   const primary = (window as any).goneMobileControls as MobileControlsApi | undefined;
   if (primary?.enabled === true) {
@@ -287,7 +292,7 @@ export function startSmartphoneControlsGuard(): void {
     return;
   }
 
-  console.warn('[Mobile] Primary touch runtime unavailable on a smartphone; enabling fallback controls.');
+  console.warn('[Mobile] Primary touch runtime unavailable; enabling fallback on-screen controls.');
   createFallbackControls();
   syncFallbackVisibility();
 
