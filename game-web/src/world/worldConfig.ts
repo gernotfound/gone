@@ -6,6 +6,13 @@ export const CHUNK_HARD_UNLOAD_RADIUS = 3;
 export const TERRAIN_GEOMETRY_POOL_LIMIT = 8;
 export const CHUNK_DATA_CACHE_LIMIT = 24;
 
+// Streaming work is deliberately paced after an expensive chunk build. A
+// single terrain build is never split (WASM returns one coherent payload), but
+// costly builds no longer run on back-to-back animation frames and compound a
+// frame hitch on slower phones.
+export const TERRAIN_BUILD_SOFT_BUDGET_MS = 8;
+export const TERRAIN_BUILD_MAX_COOLDOWN_MS = 48;
+
 export const WORLD_FOG_NEAR = CHUNK_SIZE * (CHUNK_RADIUS - 1.6);
 export const WORLD_FOG_FAR = CHUNK_SIZE * (CHUNK_RADIUS - 0.7);
 export const CHUNK_RENDER_CULL_MARGIN = 80;
