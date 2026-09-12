@@ -41,7 +41,7 @@ Read this first. Dense project index intended to minimize repo search/tool spend
 
 ## Runtime composition
 
-- `game-web/src/main.ts` currently initializes smartphone profile, explicit input mode, touch preferences, PWA runtime, client runtime, smartphone controls guard, PUBG touch controls, draggable touch layout, and mobile session resume.
+- `game-web/src/main.ts` currently initializes smartphone profile, explicit input mode, touch preferences, PWA runtime, client runtime, smartphone controls guard, PUBG touch controls, competitive mobile FPS controls, draggable touch layout, and mobile session resume.
 - `runtime/startClientRuntime.ts` owns explicit startup phases: diagnostics/guards, engine bootstrap, gameplay controllers, mobile runtime, network runtime, presentation/diagnostics.
 - `gameplay/engine.ts` is the local game loop/physics/camera/viewmodel coordinator plus compatibility facade. Do not grow it back into a god object.
 
@@ -55,10 +55,12 @@ Read this first. Dense project index intended to minimize repo search/tool spend
 
 ## iPhone / mobile controls
 
-There are two layers by design:
+There are layered mobile owners by design:
 
 1. `mobile/mobileRuntime.ts` — generic touch runtime for movement/look/actions, virtual pointer-lock compatibility, wake lock, orientation/fullscreen best effort and mobile DPR cap.
 2. `mobile/smartphoneControlsGuard.ts` — safety fallback if the primary runtime is unavailable or device heuristics are wrong.
+3. `mobile/pubgTouchControls.ts` — ammo-safe FIRE/drag, secondary claw FIRE, ADS drag, gyro and iOS-safe action taps.
+4. `mobile/competitiveTouchControls.ts` — competitive PUBG/CODM-style input composition: joystick sprint zone, independent left-move/right-look contacts, dedicated ADS/action ownership, live-map input continuity and map-open combat bridge.
 
 Explicit `Comandi a schermo` in `mobile/inputMode.ts` is authoritative and must work even when UA/touch detection is wrong. `Mouse + tastiera` hides the touch overlay.
 
@@ -66,9 +68,22 @@ Presentation/customization:
 
 - `mobile/smartphoneProfile.ts` owns smartphone presentation detection/classes.
 - `mobile/smartphone.css` owns compact phone HUD/menu layout.
+- `mobile/competitiveTouchControls.css` owns the competitive phone control geometry and non-modal map presentation. Keep the map below the touch HUD and preserve safe-area spacing.
 - `mobile/touchPreferences.ts` owns persistent touch tuning: look sensitivity, ADS sensitivity, FIRE drag dead-zone, gyro sensitivity/on-off, button scale/opacity, handedness, and secondary claw FIRE preference.
 - `mobile/touchLayoutEditor.ts` owns persistent draggable positions (`gone-touch-layout-v1`) and edit/reset UI. Do not encode user offsets back into base CSS.
-- `mobile/pubgTouchControls.ts` owns PUBG-like action hardening: primary FIRE + drag-look, dead-zone/spray curve, ADS drag-look, secondary claw FIRE, optional gyro, and capture-phase iOS-safe reload/weapon/map/pause actions.
+
+### Competitive control contract
+
+For current G.O.N.E. actions, follow modern PUBG Mobile / COD Mobile interaction principles rather than inventing unsupported buttons:
+
+- left thumb owns joystick movement; pushing near the forward edge may engage auto-sprint while the explicit RUN control remains available;
+- right thumb owns free-look; FIRE and ADS may be dragged for camera correction;
+- optional secondary FIRE supports claw/index-finger play;
+- jump, crouch and reload remain separate actions so they can be combined with movement/fire;
+- weapon switching stays immediately reachable and must work through direct pointer input on iOS;
+- do **not** add prone/slide/lean/peek UI until the corresponding gameplay mechanics actually exist;
+- the live map is informational, not modal: while open on phone, movement, look, FIRE, ADS, reload and weapon controls remain usable; the map must remain partially transparent and below the touch-control z-layer;
+- MAP itself must always be able to close the overlay even while the overlay is already open.
 
 ### Critical ammo/input rule
 
@@ -80,7 +95,8 @@ When changing touch FIRE:
 - ensure each successful shot decrements magazine exactly once;
 - never allow sustained touch hold to fire after magazine reaches zero;
 - preserve normal desktop mouse behavior;
-- browser-smoke reload and weapon switching via pointer events, because iOS click synthesis can be delayed/cancelled by pointer capture.
+- browser-smoke reload and weapon switching via pointer events, because iOS click synthesis can be delayed/cancelled by pointer capture;
+- browser-smoke map-open firing separately, because mobile virtual pointer-lock and legacy map gating can otherwise silently block the magazine-aware controller.
 
 Canonical ammo:
 
@@ -179,7 +195,7 @@ Current runtime contract:
 - Composition: `game-web/src/runtime/startClientRuntime.ts`, `game-web/src/main.ts`
 - Main loop/facade: `game-web/src/gameplay/engine.ts`
 - Weapon UX/ammo: `game-web/src/gameplay/advancedWeaponController.ts`, `game-web/src/weapons/weaponConfig.ts`
-- Touch: `game-web/src/mobile/mobileRuntime.ts`, `smartphoneControlsGuard.ts`, `pubgTouchControls.ts`, `touchPreferences.ts`, `touchLayoutEditor.ts`
+- Touch: `game-web/src/mobile/mobileRuntime.ts`, `smartphoneControlsGuard.ts`, `pubgTouchControls.ts`, `competitiveTouchControls.ts`, `touchPreferences.ts`, `touchLayoutEditor.ts`
 - Mobile/PWA lifecycle: `mobile/mobileSessionResume.ts`, `pwa/pwaRuntime.ts`
 - Audio: `game-web/src/ui/menu.ts`, `game-web/src/audio/musicSourceGain.ts`
 - Diagnostics: `game-web/src/observability/clientDiagnostics.ts`, `game-web/api/client-telemetry.js`
@@ -201,7 +217,7 @@ Current runtime contract:
 5. Decide whether a reported iPhone issue is mobile-specific or a global contract regression; fix at the narrowest correct owner without degrading desktop.
 6. Prefer owner fixes over patch layers; preserve compatibility facades where tests/UI depend on them.
 7. Keep expensive work out of per-frame paths and reuse/pool Three resources.
-8. Add deterministic Tier tests plus real Chromium smoke for browser interaction changes. Mobile controls must test pointerdown/pointermove behavior, not only DOM presence.
+8. Add deterministic Tier tests plus real Chromium smoke for browser interaction changes. Mobile controls must test pointerdown/pointermove behavior, not only DOM presence. Map changes must test simultaneous movement/FIRE while open.
 9. Full CI must be green before merge. Multiple branch commits are fine.
 10. Squash merge exactly once to `main`.
 11. Verify the resulting `main` commit has the previous main as its sole parent and a valid signature when available.
