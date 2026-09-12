@@ -255,6 +255,43 @@ export async function run(suite) {
     flash.dispose();
   });
 
+  suite.test('F-10: local muzzle flash follows the weapon socket independently from the tracer line', () => {
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera();
+    const vfx = new VFXCoordinator();
+    vfx.init(scene, camera);
+
+    const weaponAnchor = new THREE.Group();
+    scene.add(weaponAnchor);
+    const localMuzzle = new THREE.Vector3(2.0, 0.25, -0.1);
+    vfx.setLocalMuzzleAnchorResolver((weaponType) =>
+      weaponType === 'assalto' ? { anchor: weaponAnchor, localPosition: localMuzzle } : null,
+    );
+
+    assertEqual(vfx.spawnLocalMuzzleFlash('assalto'), true, 'Local flash must use explicit socket path');
+
+    // Tracer travels on an unrelated line. Moving/rotating the weapon must move
+    // the flash with the socket rather than leaving it on that line.
+    vfx.spawnTracer(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -100), 'assalto');
+    weaponAnchor.position.set(5, 2, 3);
+    weaponAnchor.rotation.set(0, Math.PI / 2, 0);
+    scene.updateMatrixWorld(true);
+    vfx.update(0.01);
+
+    const expected = localMuzzle.clone().applyMatrix4(weaponAnchor.matrixWorld);
+    const flash = vfx.getMuzzleFlash();
+    assertCloseTo(flash.getMesh().position.x, expected.x, 1e-4);
+    assertCloseTo(flash.getMesh().position.y, expected.y, 1e-4);
+    assertCloseTo(flash.getMesh().position.z, expected.z, 1e-4);
+    assertCloseTo(flash.getLight().position.x, expected.x, 1e-4);
+    assertCloseTo(flash.getLight().position.y, expected.y, 1e-4);
+    assertCloseTo(flash.getLight().position.z, expected.z, 1e-4);
+    assertGreaterThan(flash.getMesh().position.length(), 1, 'Flash must not remain at tracer origin');
+    assertEqual(vfx.spawnLocalMuzzleFlash('cecchino'), false, 'Resolver must reject inactive weapon');
+
+    vfx.dispose();
+  });
+
   // ---------------------------------------------------------------------------
   // 8. Instanced Impact Particles - 1 Draw Call & Capacity (F-11, R3)
   // ---------------------------------------------------------------------------

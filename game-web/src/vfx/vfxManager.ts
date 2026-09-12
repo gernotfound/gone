@@ -11,7 +11,6 @@ import { ImpactParticleSystem } from './impactParticles.ts';
 export interface LocalMuzzleAnchor {
   anchor: THREE.Object3D;
   localPosition: THREE.Vector3;
-  worldPosition: THREE.Vector3;
 }
 
 export type LocalMuzzleAnchorResolver = (weaponType: string) => LocalMuzzleAnchor | null;
@@ -19,6 +18,7 @@ export type LocalMuzzleAnchorResolver = (weaponType: string) => LocalMuzzleAncho
 export interface VFXManager {
   init(scene: THREE.Scene, camera: THREE.Camera): void;
   spawnTracer(start: THREE.Vector3, end: THREE.Vector3, weaponType: string): void;
+  spawnLocalMuzzleFlash(weaponType: string): boolean;
   spawnMuzzleFlash(muzzleWorldPos: THREE.Vector3, weaponType: string): void;
   spawnImpact(hitPos: THREE.Vector3, hitNormal: THREE.Vector3, weaponType: string): void;
   update(delta: number): void;
@@ -31,7 +31,6 @@ export interface OnFireVFXParams {
   weaponType: string;
 }
 
-const LOCAL_MUZZLE_MATCH_TOLERANCE_SQ = 0.05 * 0.05;
 
 export class VFXCoordinator implements VFXManager {
   private tracerPool: TracerPool;
@@ -60,11 +59,7 @@ export class VFXCoordinator implements VFXManager {
     this.isInitialized = true;
   }
 
-  /**
-   * Registers the local first-person muzzle owner. Existing callers can keep
-   * passing the shot-time world position; when it matches this resolver the
-   * flash follows the weapon socket instead of freezing on the tracer line.
-   */
+  /** Registers the authored first-person muzzle socket for explicit local shots. */
   public setLocalMuzzleAnchorResolver(resolver: LocalMuzzleAnchorResolver | null): void {
     this.localMuzzleAnchorResolver = resolver;
   }
@@ -73,20 +68,20 @@ export class VFXCoordinator implements VFXManager {
     this.tracerPool.spawnTracer(start, end, weaponType);
   }
 
-  public spawnMuzzleFlash(muzzleWorldPos: THREE.Vector3, weaponType: string): void {
+  public spawnLocalMuzzleFlash(weaponType: string): boolean {
     const localMuzzle = this.localMuzzleAnchorResolver?.(weaponType) ?? null;
-    if (
-      localMuzzle
-      && localMuzzle.worldPosition.distanceToSquared(muzzleWorldPos) <= LOCAL_MUZZLE_MATCH_TOLERANCE_SQ
-    ) {
-      this.muzzleFlash.spawnAnchoredMuzzleFlash(
-        localMuzzle.anchor,
-        localMuzzle.localPosition,
-        weaponType,
-      );
-      return;
-    }
+    if (!localMuzzle) return false;
 
+    this.muzzleFlash.spawnAnchoredMuzzleFlash(
+      localMuzzle.anchor,
+      localMuzzle.localPosition,
+      weaponType,
+    );
+    return true;
+  }
+
+  /** World-space flash for remote weapons and compatibility callers only. */
+  public spawnMuzzleFlash(muzzleWorldPos: THREE.Vector3, weaponType: string): void {
     this.muzzleFlash.spawnMuzzleFlash(muzzleWorldPos, weaponType);
   }
 

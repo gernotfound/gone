@@ -13,11 +13,9 @@ type LocalGameViewmodelApi = {
   recoilContainer?: THREE.Group;
 };
 
-const resolvedWorldPosition = new THREE.Vector3();
 const resolvedMuzzle: LocalMuzzleAnchor = {
   anchor: null as unknown as THREE.Object3D,
   localPosition: new THREE.Vector3(),
-  worldPosition: resolvedWorldPosition,
 };
 
 function resolveLocalMuzzle(weaponType: string): LocalMuzzleAnchor | null {
@@ -33,8 +31,6 @@ function resolveLocalMuzzle(weaponType: string): LocalMuzzleAnchor | null {
   const localPosition = WEAPON_MUZZLE_POSITIONS[weaponType as WeaponModelType];
   if (!localPosition) return null;
 
-  anchor.updateMatrixWorld(true);
-  resolvedWorldPosition.copy(localPosition).applyMatrix4(anchor.matrixWorld);
   resolvedMuzzle.anchor = anchor;
   resolvedMuzzle.localPosition = localPosition;
   return resolvedMuzzle;
