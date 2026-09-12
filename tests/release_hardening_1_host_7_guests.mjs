@@ -1,13 +1,18 @@
 /**
  * Release hardening gate: one authoritative browser host + seven guests.
  * Exercises join/slot allocation, 30 Hz client state, world snapshots,
- * simultaneous shots, disconnect cleanup and slot reuse without external
- * multiplayer infrastructure.
+ * simultaneous shots, disconnect cleanup, slot reuse and deathmatch score wire
+ * compatibility without external multiplayer infrastructure.
  */
 import { P2PHost } from '../game-web/src/net/p2pHost.ts';
 import { P2PClient } from '../game-web/src/net/p2pClient.ts';
 import { startPvpHardening } from '../game-web/src/net/pvpHardening.ts';
 import { DEFAULT_NEON_HEX_LIST } from '../game-web/src/net/protocol.ts';
+import {
+  DEATHMATCH_TARGET_KILLS,
+  decodeDeathmatchSnapshot,
+  encodeDeathmatchSnapshot,
+} from '../game-web/src/net/deathmatchProtocol.ts';
 import { MockDataChannel } from './helpers/p2p_mock_channel.mjs';
 
 let assertions = 0;
@@ -44,6 +49,23 @@ async function flush(rounds = 4) {
 }
 
 startPvpHardening();
+
+const scorePacket = encodeDeathmatchSnapshot({
+  round: 7,
+  targetKills: DEATHMATCH_TARGET_KILLS,
+  winnerSlot: 3,
+  resetRemainingMs: 4200,
+  rows: [
+    { slot: 0, kills: 12, deaths: 4, damage: 1337, headshots: 5 },
+    { slot: 3, kills: 20, deaths: 6, damage: 2450, headshots: 9 },
+  ],
+});
+const decodedScore = decodeDeathmatchSnapshot(scorePacket);
+assert(decodedScore?.round === 7, 'deathmatch wire preserves round');
+assert(decodedScore?.targetKills === DEATHMATCH_TARGET_KILLS, 'deathmatch wire preserves target kills');
+assert(decodedScore?.winnerSlot === 3, 'deathmatch wire preserves winner slot');
+assert(decodedScore?.resetRemainingMs === 4200, 'deathmatch wire preserves round reset countdown');
+assert(decodedScore?.rows[1]?.kills === 20 && decodedScore?.rows[1]?.damage === 2450, 'deathmatch wire preserves authoritative score rows');
 
 const palette = DEFAULT_NEON_HEX_LIST.slice(0, 8);
 assert(palette.length >= 8, 'palette provides eight unique session colors');

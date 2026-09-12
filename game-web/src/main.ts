@@ -17,6 +17,7 @@ import { startPvpHardening } from './net/pvpHardening.ts';
 import { startNetworkStabilityFix } from './net/networkStabilityFix.ts';
 import { startAdaptiveSnapshotRate } from './net/adaptiveSnapshotRate.ts';
 import { startCombatEventBridge } from './net/combatEventBridge.ts';
+import { startDeathmatchAuthority } from './net/deathmatchAuthority.ts';
 import { startSessionLifecycleHardening } from './net/sessionLifecycleHardening.ts';
 import { startRemoteShotPresentation } from './net/remoteShotPresentation.ts';
 import { startTracerPresentationFix } from './gameplay/tracerPresentationFix.ts';
@@ -33,6 +34,7 @@ import { startTelemetryDetails } from './performance/telemetryDetails.ts';
 startNetworkStabilityFix();
 startPvpHardening();
 startCombatEventBridge();
+startDeathmatchAuthority();
 startTracerPresentationFix();
 startNaturalSunRays();
 
