@@ -216,10 +216,11 @@ function frame(now: number): void {
   window.requestAnimationFrame(frame);
 }
 
-/** Fixed-size pickup pools guarantee at most three crates per category. */
-export function startCraterSupplyPickups(): void {
-  if ((window as any).__goneCraterSupplyPickupsStarted) return;
-  (window as any).__goneCraterSupplyPickupsStarted = true;
+function attachPoolsWhenSceneReady(): void {
+  if (!sceneManager.scene) {
+    window.requestAnimationFrame(attachPoolsWhenSceneReady);
+    return;
+  }
 
   for (const kind of SUPPLY_KINDS) {
     for (let index = 0; index < MAX_PER_KIND; index += 1) {
@@ -229,4 +230,11 @@ export function startCraterSupplyPickups(): void {
     }
   }
   window.requestAnimationFrame(frame);
+}
+
+/** Fixed-size pickup pools guarantee at most three crates per category. */
+export function startCraterSupplyPickups(): void {
+  if ((window as any).__goneCraterSupplyPickupsStarted) return;
+  (window as any).__goneCraterSupplyPickupsStarted = true;
+  window.requestAnimationFrame(attachPoolsWhenSceneReady);
 }
