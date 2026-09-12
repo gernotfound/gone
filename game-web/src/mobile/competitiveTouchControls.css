@@ -1,0 +1,143 @@
+/* Competitive mobile FPS HUD inspired by the interaction patterns shared by
+ * PUBG Mobile and COD Mobile: left-thumb movement, right-thumb camera, optional
+ * claw fire, dedicated ADS, compact action cluster and simultaneous actions. */
+
+html.gone-smartphone #mc-weapon-switcher {
+  top: auto !important;
+  bottom: max(10px, calc(env(safe-area-inset-bottom) + 6px)) !important;
+  height: 48px !important;
+  padding: 0 5px !important;
+  border-radius: 14px;
+  background: rgba(2, 6, 23, .28);
+  backdrop-filter: blur(3px);
+}
+
+html.gone-smartphone #gone-mobile-controls #mc-fire {
+  right: max(16px, calc(env(safe-area-inset-right) + 10px)) !important;
+  bottom: max(62px, calc(env(safe-area-inset-bottom) + 54px)) !important;
+  width: 82px !important;
+  height: 82px !important;
+  border-radius: 50% !important;
+}
+
+html.gone-smartphone #gone-mobile-controls #mc-fire-left {
+  top: max(70px, calc(env(safe-area-inset-top) + 62px)) !important;
+  width: 60px !important;
+  height: 60px !important;
+  min-width: 60px !important;
+  min-height: 60px !important;
+}
+
+html.gone-smartphone #gone-mobile-controls #mc-aim {
+  right: max(106px, calc(env(safe-area-inset-right) + 98px)) !important;
+  bottom: max(102px, calc(env(safe-area-inset-bottom) + 94px)) !important;
+  width: 60px !important;
+  height: 60px !important;
+  border-radius: 50% !important;
+}
+
+html.gone-smartphone #mc-jump {
+  right: max(106px, calc(env(safe-area-inset-right) + 98px)) !important;
+  bottom: max(32px, calc(env(safe-area-inset-bottom) + 24px)) !important;
+}
+
+html.gone-smartphone #mc-crouch {
+  right: max(20px, calc(env(safe-area-inset-right) + 14px)) !important;
+  bottom: max(160px, calc(env(safe-area-inset-bottom) + 152px)) !important;
+}
+
+html.gone-smartphone #mc-reload {
+  right: max(20px, calc(env(safe-area-inset-right) + 14px)) !important;
+  bottom: max(218px, calc(env(safe-area-inset-bottom) + 210px)) !important;
+}
+
+html.gone-smartphone #mc-sprint {
+  left: max(108px, calc(env(safe-area-inset-left) + 100px)) !important;
+  bottom: max(142px, calc(env(safe-area-inset-bottom) + 134px)) !important;
+  min-width: 52px !important;
+  min-height: 44px !important;
+  opacity: .82;
+}
+
+/* The map is informational, not a modal. Keep the game visible beneath it and
+ * leave the touch HUD on top so movement/combat can continue. */
+html.gone-smartphone #map-ui {
+  background: rgba(2, 6, 23, .56) !important;
+  backdrop-filter: blur(1.5px) !important;
+  pointer-events: none !important;
+}
+
+html.gone-smartphone #map-ui > div {
+  background: rgba(15, 23, 42, .70) !important;
+  box-shadow: 0 0 24px rgba(16, 185, 129, .22) !important;
+}
+
+html.gone-smartphone #minimap-canvas {
+  opacity: .88 !important;
+}
+
+/* mobile.css historically hides every control while the map is open. Override
+ * that modal behavior with higher-specificity selectors and keep all gameplay
+ * surfaces interactive. */
+html.gone-smartphone #gone-mobile-controls.map-open #mobile-look-pad,
+html.gone-smartphone #gone-mobile-controls.map-open #mobile-stick {
+  display: block !important;
+}
+
+html.gone-smartphone #gone-mobile-controls.map-open button,
+html.gone-smartphone #gone-mobile-controls.map-open #mc-weapon-switcher {
+  display: flex !important;
+}
+
+html.gone-smartphone:not(.gone-touch-secondary-fire) #gone-mobile-controls.map-open #mc-fire-left {
+  display: none !important;
+}
+
+html.gone-smartphone #gone-mobile-controls.map-open {
+  opacity: .94;
+}
+
+html.gone-smartphone #gone-mobile-controls.map-open #mc-map {
+  top: max(47px, calc(env(safe-area-inset-top) + 43px)) !important;
+  background: rgba(5, 150, 105, .76) !important;
+  border-color: rgba(110, 231, 183, .78) !important;
+}
+
+html.gone-smartphone #gone-mobile-controls.map-open #mc-map::after {
+  content: ' · CHIUDI';
+  margin-left: 2px;
+}
+
+/* A subtle sprint arc communicates the PUBG/CODM-style joystick sprint zone. */
+html.gone-smartphone #mobile-stick::before {
+  content: 'RUN';
+  position: absolute;
+  left: 50%;
+  top: 7px;
+  transform: translateX(-50%);
+  color: rgba(165, 243, 252, .46);
+  font: 900 8px/1 ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: .12em;
+  pointer-events: none;
+}
+
+@media (max-height: 430px) and (orientation: landscape) {
+  html.gone-smartphone #gone-mobile-controls #mc-fire {
+    bottom: max(50px, calc(env(safe-area-inset-bottom) + 44px)) !important;
+    width: 76px !important;
+    height: 76px !important;
+  }
+  html.gone-smartphone #gone-mobile-controls #mc-aim {
+    right: max(96px, calc(env(safe-area-inset-right) + 90px)) !important;
+    bottom: max(88px, calc(env(safe-area-inset-bottom) + 82px)) !important;
+  }
+  html.gone-smartphone #mc-jump {
+    right: max(96px, calc(env(safe-area-inset-right) + 90px)) !important;
+  }
+  html.gone-smartphone #mc-crouch {
+    bottom: max(142px, calc(env(safe-area-inset-bottom) + 136px)) !important;
+  }
+  html.gone-smartphone #mc-reload {
+    bottom: max(194px, calc(env(safe-area-inset-bottom) + 188px)) !important;
+  }
+}

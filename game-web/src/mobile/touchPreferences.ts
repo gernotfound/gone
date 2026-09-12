@@ -6,6 +6,10 @@ export type TouchPreferences = {
   buttonScale: number;
   buttonOpacity: number;
   handedness: TouchHandedness;
+  fireDragDeadZone: number;
+  secondaryFire: boolean;
+  gyroEnabled: boolean;
+  gyroSensitivity: number;
 };
 
 const STORAGE_KEY = 'gone-touch-preferences-v1';
@@ -15,6 +19,10 @@ const DEFAULTS: TouchPreferences = {
   buttonScale: 1,
   buttonOpacity: 1,
   handedness: 'right',
+  fireDragDeadZone: 8,
+  secondaryFire: true,
+  gyroEnabled: false,
+  gyroSensitivity: 1,
 };
 
 let current: TouchPreferences = readStoredPreferences();
@@ -30,6 +38,10 @@ function sanitize(raw: Partial<TouchPreferences> | null | undefined): TouchPrefe
     buttonScale: clamp(Number(raw?.buttonScale ?? DEFAULTS.buttonScale) || DEFAULTS.buttonScale, 1, 1.35),
     buttonOpacity: clamp(Number(raw?.buttonOpacity ?? DEFAULTS.buttonOpacity) || DEFAULTS.buttonOpacity, 0.55, 1),
     handedness: raw?.handedness === 'left' ? 'left' : 'right',
+    fireDragDeadZone: clamp(Number(raw?.fireDragDeadZone ?? DEFAULTS.fireDragDeadZone) || DEFAULTS.fireDragDeadZone, 2, 20),
+    secondaryFire: raw?.secondaryFire === undefined ? DEFAULTS.secondaryFire : Boolean(raw.secondaryFire),
+    gyroEnabled: raw?.gyroEnabled === undefined ? DEFAULTS.gyroEnabled : Boolean(raw.gyroEnabled),
+    gyroSensitivity: clamp(Number(raw?.gyroSensitivity ?? DEFAULTS.gyroSensitivity) || DEFAULTS.gyroSensitivity, 0.5, 2),
   };
 }
 
@@ -50,36 +62,53 @@ function percent(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
 
-function handednessClasses(active: boolean): string {
+function optionClasses(active: boolean): string {
   const base = 'min-h-12 rounded-xl border px-3 py-2 text-xs font-black uppercase tracking-wide transition-all active:scale-95';
   return active
     ? `${base} border-emerald-400 bg-emerald-500/20 text-emerald-100`
     : `${base} border-slate-700 bg-slate-950/70 text-slate-300 hover:border-slate-500`;
 }
 
+function syncBooleanButton(id: string, active: boolean, onLabel = 'ON', offLabel = 'OFF'): void {
+  const button = document.getElementById(id) as HTMLButtonElement | null;
+  if (!button) return;
+  button.className = optionClasses(active);
+  button.setAttribute('aria-pressed', String(active));
+  button.textContent = active ? onLabel : offLabel;
+}
+
 function syncUi(): void {
-  const mappings: Array<[string, keyof TouchPreferences, string]> = [
+  const percentMappings: Array<[string, 'lookSensitivity' | 'adsSensitivity' | 'buttonScale' | 'buttonOpacity' | 'gyroSensitivity', string]> = [
     ['touch-look-sensitivity', 'lookSensitivity', 'touch-look-value'],
     ['touch-ads-sensitivity', 'adsSensitivity', 'touch-ads-value'],
     ['touch-button-scale', 'buttonScale', 'touch-scale-value'],
     ['touch-button-opacity', 'buttonOpacity', 'touch-opacity-value'],
+    ['touch-gyro-sensitivity', 'gyroSensitivity', 'touch-gyro-value'],
   ];
-  for (const [inputId, key, valueId] of mappings) {
+  for (const [inputId, key, valueId] of percentMappings) {
     const input = document.getElementById(inputId) as HTMLInputElement | null;
     const value = document.getElementById(valueId);
     if (input) input.value = String(current[key]);
-    if (value) value.textContent = percent(Number(current[key]));
+    if (value) value.textContent = percent(current[key]);
   }
+
+  const deadZone = document.getElementById('touch-fire-deadzone') as HTMLInputElement | null;
+  const deadZoneValue = document.getElementById('touch-fire-deadzone-value');
+  if (deadZone) deadZone.value = String(current.fireDragDeadZone);
+  if (deadZoneValue) deadZoneValue.textContent = `${Math.round(current.fireDragDeadZone)} px`;
 
   const right = document.getElementById('touch-handedness-right') as HTMLButtonElement | null;
   const left = document.getElementById('touch-handedness-left') as HTMLButtonElement | null;
   if (right && left) {
     const rightActive = current.handedness === 'right';
-    right.className = handednessClasses(rightActive);
-    left.className = handednessClasses(!rightActive);
+    right.className = optionClasses(rightActive);
+    left.className = optionClasses(!rightActive);
     right.setAttribute('aria-pressed', String(rightActive));
     left.setAttribute('aria-pressed', String(!rightActive));
   }
+
+  syncBooleanButton('touch-secondary-fire', current.secondaryFire, 'FUOCO CLAW ON', 'FUOCO CLAW OFF');
+  syncBooleanButton('touch-gyro-toggle', current.gyroEnabled, 'GIROSCOPIO ON', 'GIROSCOPIO OFF');
 }
 
 function applyPreferences(): void {
@@ -87,6 +116,8 @@ function applyPreferences(): void {
   html.style.setProperty('--gone-touch-scale', String(current.buttonScale));
   html.style.setProperty('--gone-touch-opacity', String(current.buttonOpacity));
   html.classList.toggle('gone-touch-left-handed', current.handedness === 'left');
+  html.classList.toggle('gone-touch-secondary-fire', current.secondaryFire);
+  html.classList.toggle('gone-touch-gyro-enabled', current.gyroEnabled);
   html.dataset.goneTouchHandedness = current.handedness;
   syncUi();
 
@@ -125,16 +156,23 @@ function ensureSettingsUi(): void {
   section.className = 'flex flex-col gap-3 rounded-2xl border border-cyan-900/70 bg-slate-950/45 p-3';
   section.innerHTML = `
     <div class="flex items-center justify-between gap-3 text-xs font-black uppercase tracking-wider text-slate-400">
-      <span>Comandi a schermo</span><span class="text-cyan-300">PERSONALIZZA</span>
+      <span>Comandi a schermo</span><span class="text-cyan-300">PUBG-LIKE</span>
     </div>
     ${rangeRow('Sensibilità visuale', 'touch-look-sensitivity', 'touch-look-value', 0.5, 2, 0.05)}
     ${rangeRow('Sensibilità ADS', 'touch-ads-sensitivity', 'touch-ads-value', 0.5, 1.5, 0.05)}
+    ${rangeRow('Dead-zone drag FIRE', 'touch-fire-deadzone', 'touch-fire-deadzone-value', 2, 20, 1)}
+    ${rangeRow('Sensibilità giroscopio', 'touch-gyro-sensitivity', 'touch-gyro-value', 0.5, 2, 0.05)}
     ${rangeRow('Dimensione pulsanti', 'touch-button-scale', 'touch-scale-value', 1, 1.35, 0.05)}
     ${rangeRow('Opacità controlli', 'touch-button-opacity', 'touch-opacity-value', 0.55, 1, 0.05)}
     <div class="grid grid-cols-2 gap-2" role="group" aria-label="Mano dominante">
       <button type="button" id="touch-handedness-right">Destrimano</button>
       <button type="button" id="touch-handedness-left">Mancino</button>
     </div>
+    <div class="grid grid-cols-2 gap-2">
+      <button type="button" id="touch-secondary-fire" aria-pressed="true">FUOCO CLAW ON</button>
+      <button type="button" id="touch-gyro-toggle" aria-pressed="false">GIROSCOPIO OFF</button>
+    </div>
+    <button type="button" id="touch-layout-edit" class="min-h-12 rounded-xl border border-cyan-800 bg-cyan-950/40 px-3 py-2 text-xs font-black uppercase tracking-wide text-cyan-200">Modifica posizioni</button>
     <button type="button" id="touch-controls-reset" class="min-h-12 rounded-xl border border-slate-700 bg-slate-900/70 px-3 py-2 text-xs font-black uppercase tracking-wide text-slate-300">Ripristina controlli</button>
   `;
 
@@ -142,16 +180,20 @@ function ensureSettingsUi(): void {
   if (inputMode?.parentElement === stack) inputMode.insertAdjacentElement('afterend', section);
   else stack.prepend(section);
 
-  const bindRange = (id: string, key: 'lookSensitivity' | 'adsSensitivity' | 'buttonScale' | 'buttonOpacity') => {
+  const bindRange = (id: string, key: 'lookSensitivity' | 'adsSensitivity' | 'buttonScale' | 'buttonOpacity' | 'gyroSensitivity' | 'fireDragDeadZone') => {
     const input = document.getElementById(id) as HTMLInputElement;
     input.addEventListener('input', () => setOne(key, Number(input.value)));
   };
   bindRange('touch-look-sensitivity', 'lookSensitivity');
   bindRange('touch-ads-sensitivity', 'adsSensitivity');
+  bindRange('touch-fire-deadzone', 'fireDragDeadZone');
+  bindRange('touch-gyro-sensitivity', 'gyroSensitivity');
   bindRange('touch-button-scale', 'buttonScale');
   bindRange('touch-button-opacity', 'buttonOpacity');
   (document.getElementById('touch-handedness-right') as HTMLButtonElement).addEventListener('click', () => setOne('handedness', 'right'));
   (document.getElementById('touch-handedness-left') as HTMLButtonElement).addEventListener('click', () => setOne('handedness', 'left'));
+  (document.getElementById('touch-secondary-fire') as HTMLButtonElement).addEventListener('click', () => setOne('secondaryFire', !current.secondaryFire));
+  (document.getElementById('touch-gyro-toggle') as HTMLButtonElement).addEventListener('click', () => setOne('gyroEnabled', !current.gyroEnabled));
   (document.getElementById('touch-controls-reset') as HTMLButtonElement).addEventListener('click', resetTouchPreferences);
   syncUi();
 }
