@@ -58,6 +58,7 @@ try {
 
   await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
   await waitFor(page, () => page.evaluate(() => Boolean(window.goneMobileControls?.enabled)), 'mobile runtime');
+  await waitFor(page, () => page.evaluate(() => Boolean(window.gonePubgTouchControls?.snapshot?.().attached)), 'PUBG fire-drag controls');
 
   const boot = await page.evaluate(async () => {
     const registration = await navigator.serviceWorker.ready;
@@ -72,6 +73,7 @@ try {
       deviceProfile: document.documentElement.dataset.goneDevice,
       inputMode: document.documentElement.dataset.goneInputMode,
       touchPreferences: Boolean(window.goneTouchPreferences?.snapshot),
+      pubgFireDrag: window.gonePubgTouchControls?.snapshot?.(),
     };
   });
   assert(boot.pwa, 'PWA runtime not initialized');
@@ -82,6 +84,7 @@ try {
   assert(boot.smartphoneProfile && boot.deviceProfile === 'smartphone', 'smartphone presentation profile must activate on phone context');
   assert(boot.inputMode === 'screen', 'smartphone default input mode must be on-screen controls');
   assert(boot.touchPreferences, 'touch preference API must initialize');
+  assert(boot.pubgFireDrag?.enabled && boot.pubgFireDrag?.attached, 'PUBG-style fire-drag layer must attach to the fire button');
 
   await page.locator('#btn-settings').click();
   await waitFor(page, () => page.evaluate(() => !document.getElementById('settings-menu').classList.contains('hidden')), 'settings open');
@@ -150,12 +153,14 @@ try {
       width: window.innerWidth,
       stickCenter: stick.left + stick.width / 2,
       fireCenter: fire.left + fire.width / 2,
+      fireWidth: fire.width,
       lookLeft: look.left,
       lookRight: look.right,
     };
   });
   assert(layout.stickCenter > layout.width / 2, 'left-handed layout must move joystick to right half');
   assert(layout.fireCenter < layout.width / 2, 'left-handed layout must move fire control to left half');
+  assert(layout.fireWidth >= 76, `PUBG-style primary fire target should be enlarged, got ${layout.fireWidth}`);
   assert(layout.lookLeft <= 1 && layout.lookRight < layout.width * 0.75, 'left-handed look pad must occupy the left interaction zone');
 
   const sizes = await page.evaluate(() => ['mc-fire', 'mc-aim', 'mc-jump', 'mc-reload', 'mc-map'].map((id) => {
@@ -203,20 +208,38 @@ try {
     const key = window.goneGame.getActiveWeapon();
     return { key, magazine: window.goneWeapons.ammo[key].magazine };
   });
+  const fireDragYawBefore = await page.evaluate(() => window.goneMobileControls.snapshot().yaw);
   await page.evaluate(() => {
     const button = document.getElementById('mc-fire');
     const r = button.getBoundingClientRect();
     const x = r.left + r.width / 2;
     const y = r.top + r.height / 2;
     button.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, pointerId: 13, pointerType: 'touch', clientX: x, clientY: y }));
-    button.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, pointerId: 13, pointerType: 'touch', clientX: x, clientY: y }));
+    button.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, cancelable: true, pointerId: 13, pointerType: 'touch', clientX: x + 72, clientY: y - 12 }));
+  });
+  await page.waitForTimeout(90);
+  const fireDuringDrag = await page.evaluate(() => ({
+    mobile: window.goneMobileControls.snapshot(),
+    pubg: window.gonePubgTouchControls.snapshot(),
+  }));
+  const fireDragYawDuring = fireDuringDrag.mobile.yaw;
+  assert(fireDuringDrag.mobile.fire, 'touch fire-drag must keep firing while the same finger rotates the view');
+  assert(fireDuringDrag.pubg.pointerActive, 'PUBG fire-drag pointer must remain active while held');
+  assert(Math.abs(fireDragYawDuring - fireDragYawBefore) > 0.05, 'touch fire-drag did not rotate yaw while firing');
+  await page.evaluate(() => {
+    const button = document.getElementById('mc-fire');
+    const r = button.getBoundingClientRect();
+    button.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, pointerId: 13, pointerType: 'touch', clientX: r.left + r.width / 2 + 72, clientY: r.top + r.height / 2 - 12 }));
   });
   await page.waitForTimeout(120);
-  const ammoAfter = await page.evaluate(() => {
-    const key = window.goneGame.getActiveWeapon();
-    return window.goneWeapons.ammo[key].magazine;
-  });
-  assert(ammoAfter < ammoBefore.magazine, `touch fire did not consume ammo (${ammoBefore.magazine} -> ${ammoAfter})`);
+  const afterFireDrag = await page.evaluate(() => ({
+    key: window.goneGame.getActiveWeapon(),
+    magazine: window.goneWeapons.ammo[window.goneGame.getActiveWeapon()].magazine,
+    mobile: window.goneMobileControls.snapshot(),
+    pubg: window.gonePubgTouchControls.snapshot(),
+  }));
+  assert(afterFireDrag.magazine < ammoBefore.magazine, `touch fire did not consume ammo (${ammoBefore.magazine} -> ${afterFireDrag.magazine})`);
+  assert(!afterFireDrag.mobile.fire && !afterFireDrag.pubg.pointerActive, 'touch fire-drag must release fire and pointer state');
 
   await page.locator('#mc-map').click();
   await waitFor(page, () => page.evaluate(() => !document.getElementById('map-ui').classList.contains('hidden')), 'mobile map open');
@@ -230,7 +253,7 @@ try {
   assert(!paused.gameplayActive, 'mobile pause should deactivate gameplay controls');
 
   if (failures.length) throw new Error(failures.join('\n'));
-  console.log('[mobile-pwa] PASS: smartphone profile/HUD, configurable controls, left-handed layout, movement/look/fire/map/pause, safe areas and DPR verified.');
+  console.log('[mobile-pwa] PASS: smartphone profile/HUD, configurable PUBG-like controls, fire-drag aim, left-handed layout, movement/look/fire/map/pause, safe areas and DPR verified.');
   await context.close();
 } finally {
   await browser.close();
