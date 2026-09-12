@@ -75,9 +75,10 @@ function endFire(sourceId: number): void {
 }
 
 function endAllFire(): void {
-  if (fireSources.size === 0) return;
-  fireSources.clear();
-  dispatchMouse(0, false);
+  if (fireSources.size > 0) {
+    fireSources.clear();
+    dispatchMouse(0, false);
+  }
   attachedButton?.classList.remove('is-fire-aiming', 'is-fire-dragging');
   attachedButton?.closest('#gone-mobile-controls')?.classList.remove('pubg-fire-aim-active');
 }
@@ -262,7 +263,6 @@ function bindReliableTap(id: string, action: () => void): void {
   }, true);
   // Prevent the compatibility click handler from firing the action a second time.
   button.addEventListener('click', (event) => {
-    if (!gameplayActive()) return;
     event.preventDefault();
     event.stopImmediatePropagation();
   }, true);
@@ -386,11 +386,18 @@ export function startPubgTouchControls(): void {
   window.addEventListener('gone-touch-preferences-changed', () => {
     if (getTouchPreferences().gyroEnabled) void ensureGyroPermission();
     else {
+      gyroPermission = 'unknown';
       gyroLastBeta = null;
       gyroLastGamma = null;
     }
     window.setTimeout(attachWhenAvailable, 0);
   });
+  window.addEventListener('offline', () => {
+    endAllFire();
+    resetDrag(primaryDrag);
+    resetDrag(adsDrag);
+  });
+  window.addEventListener('blur', endAllFire);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') {
       endAllFire();
@@ -400,14 +407,20 @@ export function startPubgTouchControls(): void {
       gyroLastGamma = null;
     }
   });
+  document.addEventListener('pointerdown', () => {
+    if (getTouchPreferences().gyroEnabled && gyroPermission !== 'granted') void ensureGyroPermission();
+  }, { capture: true, passive: true });
   window.addEventListener('deviceorientation', onDeviceOrientation, { passive: true });
 
-  if (getTouchPreferences().gyroEnabled) void ensureGyroPermission();
+  if (getTouchPreferences().gyroEnabled && typeof (DeviceOrientationEvent as any)?.requestPermission !== 'function') {
+    gyroPermission = typeof DeviceOrientationEvent === 'undefined' ? 'unsupported' : 'granted';
+  }
 
   (window as any).gonePubgTouchControls = {
     enabled: true,
     snapshot,
     rebind: attachWhenAvailable,
+    release: endAllFire,
     requestGyroPermission: ensureGyroPermission,
   };
 }
