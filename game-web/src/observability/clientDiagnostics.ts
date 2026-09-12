@@ -53,6 +53,14 @@ function deviceBucket(): string {
   return 'other';
 }
 
+function uploadsEnabled(): boolean {
+  // Vite preview/dev does not expose the Vercel /api function. Keeping remote
+  // diagnostics disabled on loopback also avoids noisy 404s in browser CI and
+  // guarantees local development never emits telemetry by accident.
+  const host = location.hostname.toLowerCase();
+  return host !== 'localhost' && host !== '127.0.0.1' && host !== '::1' && !host.endsWith('.localhost');
+}
+
 function payload(kind: DiagnosticKind, message: string, stack?: string): DiagnosticPayload {
   return {
     kind,
@@ -81,7 +89,7 @@ function canSend(report: DiagnosticPayload): boolean {
 }
 
 function send(report: DiagnosticPayload): void {
-  if (!canSend(report)) return;
+  if (!uploadsEnabled() || !canSend(report)) return;
   const body = JSON.stringify(report);
   try {
     if (navigator.sendBeacon && body.length < 12_000) {
@@ -160,6 +168,6 @@ export function startClientDiagnostics(): void {
   (window as any).goneDiagnostics = {
     buildId: BUILD_ID,
     report: (kind: DiagnosticKind, message: string) => report(kind, message),
-    snapshot: () => ({ reportCount, maxReports: MAX_REPORTS, endpoint: ENDPOINT, buildId: BUILD_ID }),
+    snapshot: () => ({ reportCount, maxReports: MAX_REPORTS, endpoint: ENDPOINT, buildId: BUILD_ID, uploadsEnabled: uploadsEnabled() }),
   };
 }
