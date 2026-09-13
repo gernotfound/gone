@@ -15,7 +15,7 @@ import { healthHud } from '../ui/healthHud.ts';
 import { shieldVfxController } from '../vfx/shieldVfx.ts';
 import { addOrUpdateRemotePlayer, remotePlayers } from './remotePlayerRegistry.ts';
 import { presentLegacyRemoteHitscan } from '../net/legacyRemoteShotPresentation.ts';
-import { getPlayerSpawnY, getSpawnPointForSlot } from './spawnPolicy.ts';
+import { getPlayerSpawnY, getSafestRespawnPoint } from './spawnPolicy.ts';
 
 type LocalPlayerNetworkState = {
   position: THREE.Vector3;
@@ -171,7 +171,11 @@ export function bindClientGameplayNetworking(client: P2PClient, context: Gamepla
 export function bindHostGameplayNetworking(host: P2PHost, context: GameplayNetworkContext): void {
   setActiveP2PHost(host);
   host.setRespawnPositionResolver((slot) => {
-    const point = getSpawnPointForSlot(slot);
+    const point = getSafestRespawnPoint(slot, Array.from(host.playerRecords.values(), (record) => ({
+      slot: record.slot,
+      isAlive: record.isAlive,
+      position: record.position,
+    })));
     return {
       x: point.x,
       y: getPlayerSpawnY(undefined, point),
