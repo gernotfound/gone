@@ -56,7 +56,7 @@ export async function run(suite) {
 
   suite.test('Mobile resume starts only after the game runtime exists', () => {
     const client = main.indexOf('startClientRuntime();');
-    const resumeStart = main.indexOf('startMobileSessionResume();');
+    const resumeStart = main.indexOf("safeStart('mobileSessionResume', startMobileSessionResume);");
     assert(client >= 0 && resumeStart > client, 'mobile session repair must start after goneGame/network runtime initialization');
   });
 }
