@@ -3,6 +3,8 @@ import {
   BIONIC_SPIDER_APPROX_HEIGHT,
   createBionicSpiderModel,
   disposeBionicSpiderModel,
+  poseBionicSpiderLeg,
+  setBionicSpiderDamageVisual,
 } from '../../game-web/src/models/bionicSpider.ts';
 import {
   BIONIC_SPIDER_CONTACT_RADIUS,
@@ -15,17 +17,65 @@ import {
 import { assert, assertCloseTo, assertEqual, assertGreaterThan } from '../helpers/assertions.mjs';
 
 export async function run(suite) {
-  suite.test('Bionic spider juggernaut is exactly 4x the old silhouette with eight articulated two-bone legs', () => {
+  suite.test('Armored cyber spider keeps the 4x juggernaut gameplay rig and eight terrain-aware legs', () => {
     const model = createBionicSpiderModel(42);
     assertEqual(model.legs.length, 8, 'Spider must have exactly eight legs');
-    assertCloseTo(BIONIC_SPIDER_APPROX_HEIGHT, 2.95 * 4, 1e-6, 'Juggernaut silhouette must be 4x the original ~2.95m spider');
+    assertCloseTo(BIONIC_SPIDER_APPROX_HEIGHT, 2.95 * 4, 1e-6, 'Juggernaut gameplay scale must stay compatible');
+
     for (const leg of model.legs) {
-      assert(leg.upper.isMesh && leg.lower.isMesh, 'Each leg must expose articulated upper/lower segments');
+      assert(leg.upper.isMesh && leg.lower.isMesh, 'Each leg must expose articulated upper/lower segments to the IK solver');
       assertEqual(leg.upper.userData.bionicSpiderHitRegion, 'limb');
       assertEqual(leg.lower.userData.bionicSpiderHitRegion, 'limb');
     }
+
+    const chassis = model.root.getObjectByName('BionicSpiderChassis');
     const head = model.root.getObjectByName('BionicSpiderHead');
-    assert(head && head.userData.bionicSpiderHitRegion === 'head', 'Head hit region must be explicit');
+    const core = model.root.getObjectByName('BionicSpiderPowerCore');
+    const shield = model.root.getObjectByName('BionicSpiderLegShield-L-0');
+    const reactiveArmor = model.root.getObjectByName('BionicSpiderReactiveArmor-L-0');
+    const neon = model.root.getObjectByName('BionicSpiderLegNeon-L-0');
+    const talon = model.root.getObjectByName('BionicSpiderTalon-L-0');
+
+    assert(chassis && chassis.userData.bionicSpiderHitRegion === 'body', 'Armored chassis must remain a body hit region');
+    assert(head && head.userData.bionicSpiderHitRegion === 'head', 'Head hit region must stay explicit');
+    assert(core && core.userData.bionicSpiderHitRegion === 'body', 'Power core must participate in body raycasts');
+    assert(shield && shield.userData.bionicSpiderHitRegion === 'limb', 'Massive tibia shield must participate in limb raycasts');
+    assert(reactiveArmor && reactiveArmor.userData.bionicSpiderHitRegion === 'limb', 'Reactive armor must follow the limb hit region');
+    assert(neon && neon.userData.bionicSpiderHitRegion === 'limb', 'Leg neon strip must move with the armored tibia');
+    assert(talon && talon.userData.bionicSpiderHitRegion === 'limb', 'Mechanical talon must move with the foot rig');
+
+    const eyes = [];
+    model.root.traverse((object) => {
+      if (object.name.startsWith('BionicSpiderEye-')) eyes.push(object);
+      if (object.userData.bionicSpiderHitRegion) {
+        assertEqual(object.userData.bionicSpiderEnemyId, 42, 'Every raycastable part must carry the owning enemy id');
+      }
+    });
+    assertEqual(eyes.length, 6, 'Gemini armored head design uses six cyberpunk eyes');
+
+    const leg = model.legs[0];
+    const hip = leg.hipLocal.clone();
+    const footA = leg.homeFootLocal.clone();
+    const kneeA = hip.clone().lerp(footA, 0.5).add(new THREE.Vector3(-0.45, 0.82, 0));
+    poseBionicSpiderLeg(model, 0, hip, kneeA, footA);
+    model.root.updateMatrixWorld(true);
+    const shieldScaleA = shield.getWorldScale(new THREE.Vector3());
+
+    const footB = footA.clone().add(new THREE.Vector3(-0.30, 0.54, 0.72));
+    const kneeB = hip.clone().lerp(footB, 0.5).add(new THREE.Vector3(-0.60, 0.94, 0.16));
+    poseBionicSpiderLeg(model, 0, hip, kneeB, footB);
+    model.root.updateMatrixWorld(true);
+    const shieldScaleB = shield.getWorldScale(new THREE.Vector3());
+    assertCloseTo(shieldScaleB.x, shieldScaleA.x, 1e-5, 'IK extension must not squash shield width');
+    assertCloseTo(shieldScaleB.y, shieldScaleA.y, 1e-5, 'IK extension must not stretch shield thickness');
+    assertCloseTo(shieldScaleB.z, shieldScaleA.z, 1e-5, 'IK extension must not deform shield depth');
+
+    setBionicSpiderDamageVisual(model, 1);
+    assert(model.coreMaterial.color.r > model.coreMaterial.color.g, 'Damage flash must drive the orange core toward red');
+    assert(model.neonCyanMaterial.color.r > model.neonCyanMaterial.color.g, 'Damage flash must drive cyan emitters toward red');
+    setBionicSpiderDamageVisual(model, 0);
+    assert(model.neonCyanMaterial.color.g > model.neonCyanMaterial.color.r, 'Damage visuals must restore the cyan state');
+
     disposeBionicSpiderModel(model);
   });
 
