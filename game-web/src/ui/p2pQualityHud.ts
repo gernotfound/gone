@@ -1,3 +1,5 @@
+import { browserLifecycle } from '../runtime/browserLifecycle.ts';
+
 type HudState = {
   visible: boolean;
   role: 'host' | 'client' | 'none';
@@ -148,16 +150,18 @@ function render(): void {
   }
 }
 
+function stopTimer(): void {
+  if (timer !== null) window.clearInterval(timer);
+  timer = null;
+}
+
 export function startP2PQualityHud(): void {
   if ((window as any).__goneP2PQualityHudStarted) return;
   (window as any).__goneP2PQualityHudStarted = true;
   ensureUi();
   render();
   timer = window.setInterval(render, 400);
-  window.addEventListener('beforeunload', () => {
-    if (timer !== null) window.clearInterval(timer);
-    timer = null;
-  }, { once: true });
+  browserLifecycle.subscribe('beforeunload', 'p2pQualityHud', stopTimer, 5);
 
   (window as any).goneP2PQualityHud = {
     snapshot: () => ({ ...current }),
