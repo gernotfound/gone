@@ -24,8 +24,8 @@ export async function run(suite) {
   suite.test('PUBG touch layer starts after primary or fallback controls exist', () => {
     const source = fs.readFileSync(mainPath, 'utf-8');
     const client = source.indexOf('startClientRuntime();');
-    const guard = source.indexOf('startSmartphoneControlsGuard();');
-    const pubg = source.indexOf('startPubgTouchControls();');
+    const guard = source.indexOf("safeStart('smartphoneControlsGuard', startSmartphoneControlsGuard);");
+    const pubg = source.indexOf("safeStart('pubgTouchControls', startPubgTouchControls);");
     assert(client >= 0 && guard > client && pubg > guard, 'PUBG fire-drag layer must attach after normal/fallback touch controls initialize');
   });
 
