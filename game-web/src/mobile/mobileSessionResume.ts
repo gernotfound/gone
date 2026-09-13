@@ -1,4 +1,5 @@
 import { resetInputState } from '../controls/playerInput.ts';
+import { browserLifecycle } from '../runtime/browserLifecycle.ts';
 import { useOnScreenControls } from './inputMode.ts';
 import { isSmartphoneDevice } from './smartphoneProfile.ts';
 
@@ -151,17 +152,19 @@ export function startMobileSessionResume(): void {
   if ((window as any).__goneMobileSessionResumeStarted) return;
   (window as any).__goneMobileSessionResumeStarted = true;
 
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') scheduleResume('visibility');
-    else suspendTransientState('hidden');
-  });
-  window.addEventListener('pageshow', () => scheduleResume('pageshow', 120));
-  window.addEventListener('focus', () => scheduleResume('focus'));
-  window.addEventListener('online', () => {
+  // Input release is delivered by playerInput at a higher lifecycle priority.
+  // Session suspension/resume therefore sees a deterministic, already-safe
+  // control state on every browser instead of racing native event listeners.
+  browserLifecycle.subscribe('visible', 'mobileSessionResume', () => scheduleResume('visibility'), 60);
+  browserLifecycle.subscribe('hidden', 'mobileSessionResume', () => suspendTransientState('hidden'), 60);
+  browserLifecycle.subscribe('pageshow', 'mobileSessionResume', () => scheduleResume('pageshow', 120), 60);
+  browserLifecycle.subscribe('focus', 'mobileSessionResume', () => scheduleResume('focus'), 50);
+  browserLifecycle.subscribe('online', 'mobileSessionResume', () => {
     showStatus('RETE RIPRISTINATA · SINCRONIZZAZIONE');
     scheduleResume('online', 300);
-  });
-  window.addEventListener('offline', () => suspendTransientState('offline'));
+  }, 60);
+  browserLifecycle.subscribe('offline', 'mobileSessionResume', () => suspendTransientState('offline'), 80);
+
   window.addEventListener('gone-session-changed', () => scheduleResume('session-change', 80));
   window.addEventListener('gone-input-mode-changed', () => scheduleResume('input-mode', 80));
 
