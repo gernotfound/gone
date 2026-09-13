@@ -106,6 +106,13 @@ class RuntimeKernel {
     return this.records.get(name)?.state === 'ready';
   }
 
+  hasCriticalFailure(): boolean {
+    return [...this.records.values()].some(
+      (record) => Boolean(record.definition.critical) &&
+        (record.state === 'failed' || record.state === 'blocked'),
+    );
+  }
+
   start(name: string, stack: readonly string[] = []): boolean {
     const record = this.records.get(name);
     if (!record) {
@@ -153,19 +160,26 @@ class RuntimeKernel {
   }
 
   startPhase(phase: RuntimePhase): void {
+    if (this.hasCriticalFailure()) return;
     const records = [...this.records.values()]
       .filter((record) => record.definition.phase === phase)
       .sort((a, b) => a.order - b.order);
-    for (const record of records) this.start(record.definition.name);
+    for (const record of records) {
+      const started = this.start(record.definition.name);
+      if (!started && record.definition.critical) break;
+    }
   }
 
   startPhases(phases: readonly RuntimePhase[]): void {
-    for (const phase of phases) this.startPhase(phase);
+    for (const phase of phases) {
+      if (this.hasCriticalFailure()) break;
+      this.startPhase(phase);
+    }
   }
 
   reconcile(name: string): boolean {
     const record = this.records.get(name);
-    if (!record) return false;
+    if (!record || this.hasCriticalFailure()) return false;
     if (record.state !== 'ready' && !this.start(name)) return false;
     if (!record.definition.reconcile) return true;
 
@@ -191,6 +205,7 @@ class RuntimeKernel {
   }
 
   reconcilePhase(phase: RuntimePhase): void {
+    if (this.hasCriticalFailure()) return;
     const records = [...this.records.values()]
       .filter((record) => record.definition.phase === phase && record.definition.reconcile)
       .sort((a, b) => a.order - b.order);
