@@ -1,3 +1,5 @@
+import { browserLifecycle } from '../runtime/browserLifecycle.ts';
+
 const PACK_SCHEMA_VERSION = 2;
 const STORAGE_PREFIX = 'gone-performance-pack:';
 const CACHE_PREFIX = 'gone-performance-pack-';
@@ -18,6 +20,8 @@ type IntegrityState = {
 
 let frozenBuildToken = '';
 let state: IntegrityState = { status: 'checking', buildToken: '', expected: 0, cached: 0, missing: [], staleCachesRemoved: 0, lastCheckAt: 0 };
+let integrityTimer: number | null = null;
+let validationPromise: Promise<IntegrityState> | null = null;
 
 function fingerprint(text: string): string {
   let hash = 0x811c9dc5;
@@ -63,7 +67,7 @@ function updateButtonForIncomplete(missing: number): void {
   status.textContent = `Cache incompleta: ${missing} asset da ripristinare.`;
   status.className = status.className.replace(/text-(?:emerald|slate)-\d+/g, 'text-amber-400');
 }
-async function validate(): Promise<IntegrityState> {
+async function validateInternal(): Promise<IntegrityState> {
   if (!frozenBuildToken) frozenBuildToken = buildToken();
   const token = frozenBuildToken;
   const expected = collectExpectedAssets();
@@ -92,13 +96,32 @@ async function validate(): Promise<IntegrityState> {
   if (missing.length > 0) { localStorage.removeItem(markerKey); updateButtonForIncomplete(missing.length); }
   return state = { ...state, status: missing.length ? 'incomplete' : 'ready', cached: expected.length - missing.length, missing, staleCachesRemoved: staleTotal };
 }
+
+function validate(): Promise<IntegrityState> {
+  if (validationPromise) return validationPromise;
+  validationPromise = validateInternal().finally(() => { validationPromise = null; });
+  return validationPromise;
+}
+
+function runValidation(): void {
+  void validate().catch(() => { state = { ...state, status: 'missing', lastCheckAt: Date.now() }; });
+}
+
+function stopIntegrityTimer(): void {
+  if (integrityTimer !== null) window.clearInterval(integrityTimer);
+  integrityTimer = null;
+}
+
 export function startCacheIntegrity(): void {
   if ((window as any).__goneCacheIntegrityStarted) return;
   (window as any).__goneCacheIntegrityStarted = true;
-  const run = () => { void validate().catch(() => { state = { ...state, status: 'missing', lastCheckAt: Date.now() }; }); };
-  run();
-  document.getElementById('btn-performance-pack')?.addEventListener('click', () => { window.setTimeout(run, 1500); window.setTimeout(run, 8000); });
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') run(); });
-  window.setInterval(run, 30_000);
+  runValidation();
+  document.getElementById('btn-performance-pack')?.addEventListener('click', () => {
+    window.setTimeout(runValidation, 1500);
+    window.setTimeout(runValidation, 8000);
+  });
+  browserLifecycle.subscribe('visible', 'cacheIntegrity', runValidation, 5);
+  browserLifecycle.subscribe('beforeunload', 'cacheIntegrity', stopIntegrityTimer, 5);
+  integrityTimer = window.setInterval(runValidation, 30_000);
   (window as any).goneCacheIntegrity = { check: validate, snapshot: () => ({ ...state, missing: [...state.missing] }) };
 }
