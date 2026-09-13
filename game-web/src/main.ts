@@ -80,3 +80,10 @@ startClientRuntime();
 
 runtimeKernel.registerMany(DEVICE_MODULES);
 runtimeKernel.startPhase('device');
+
+// Input mode is an application-level configuration transition. Reconciliation
+// is delegated to modules that explicitly declare it; no module is restarted and
+// no private "started" flag is reset.
+window.addEventListener('gone-input-mode-changed', () => {
+  runtimeKernel.reconcilePhase('device');
+});
