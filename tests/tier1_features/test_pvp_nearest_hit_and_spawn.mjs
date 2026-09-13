@@ -1,6 +1,6 @@
 import { assertEqual, assertGreaterThan } from '../helpers/assertions.mjs';
 import { P2PHost } from '../../game-web/src/net/p2pHost.ts';
-import { getSafestRespawnPoint, SPAWN_POINTS } from '../../game-web/src/gameplay/spawnPolicy.ts';
+import { getSafestRespawnPoint, SPAWN_POINTS } from '../../game-web/src/gameplay/spawnSelection.ts';
 
 function combatRecord(id, slot, z) {
   return {
