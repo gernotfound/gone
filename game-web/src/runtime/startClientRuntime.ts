@@ -223,18 +223,21 @@ export function registerClientRuntimeModules(): void {
 }
 
 /**
- * Browser/game composition root. Startup ordering is declarative in the kernel:
- * independent optional systems can fail without aborting siblings, while
- * critical invariants are reflected in the global runtime health snapshot.
+ * Browser/game composition root. Startup ordering is declarative in the kernel.
+ * A critical gameplay invariant fails closed: later phases are not started and
+ * the client is never advertised as ready on top of a broken core contract.
  */
 export function startClientRuntime(): void {
+  (window as any).__goneClientRuntimeStarted = false;
   registerClientRuntimeModules();
   runtimeKernel.startPhase('foundation');
   runtimeKernel.startPhase('bootstrap');
+  if (!runtimeKernel.isReady('bootstrap')) return;
 
-  const bootstrapReady = runtimeKernel.isReady('bootstrap');
-  (window as any).__goneClientRuntimeStarted = bootstrapReady;
-  if (!bootstrapReady) return;
+  runtimeKernel.startPhase('gameplay');
+  const coreReady = runtimeKernel.isReady('bootstrap') && runtimeKernel.isReady('advancedWeaponController');
+  (window as any).__goneClientRuntimeStarted = coreReady;
+  if (!coreReady) return;
 
-  runtimeKernel.startPhases(['gameplay', 'network', 'presentation']);
+  runtimeKernel.startPhases(['network', 'presentation']);
 }
