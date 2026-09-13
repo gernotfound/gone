@@ -80,7 +80,12 @@ const DEVICE_MODULES: readonly RuntimeModuleDefinition[] = [
 runtimeKernel.registerMany(SHELL_MODULES);
 runtimeKernel.startPhase('foundation');
 
-startClientRuntime();
+const foundationHealth = runtimeKernel.snapshot();
+if (foundationHealth.status === 'failed') {
+  window.dispatchEvent(new CustomEvent('gone-runtime-unavailable', { detail: foundationHealth }));
+} else {
+  startClientRuntime();
+}
 
 runtimeKernel.registerMany(DEVICE_MODULES);
 if (runtimeKernel.isReady('advancedWeaponController')) {
