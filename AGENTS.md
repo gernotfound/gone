@@ -1,261 +1,236 @@
 # G.O.N.E. — AI engineering context
 
-Read this first. Dense project index intended to minimize repo search/tool spend and prevent regressions across desktop, iPhone/PWA and multiplayer.
+Read this first. This is the dense working context for `gernotfound/gone`; use it to minimize repo search and avoid regressions across desktop, iPhone/PWA, direct WebRTC and self-host.
 
-## Owner constraints
+## Owner / release constraints
 
-- Repo: `gernotfound/gone`.
-- Never write directly to `main`. Every change must live on a dedicated branch and reach `main` only through an explicit PR.
-- Vercel production builds are push-sensitive. Fully validate the branch first, then land **exactly one squash commit** on `main`.
-- Vercel is intentionally configured so only `main` deploys. Do not manually deploy feature branches.
-- The owner actively tests the deployed game on desktop browsers and physical iPhone/PWA. Treat reported iPhone behavior as hardware QA, not merely emulation feedback.
-- Do not ask the owner to edit code or run commands when connected tooling can perform the work.
+- Never write directly to `main`. Work on a dedicated branch and PR.
+- Vercel production builds are push-sensitive. Fully validate the branch, then land **exactly one squash commit** on `main`.
+- Vercel is configured for `main` deployment only. Never manually deploy a feature branch.
+- Recheck current `main` before branching/merging; do not rely on a remembered SHA.
+- The owner tests physical iPhone/PWA. Treat those reports as hardware QA; browser emulation is necessary but not equivalent.
 - No paid/external multiplayer runtime infrastructure: no hosted signaling/relay/database/STUN/TURN/PeerJS cloud/Firebase/Supabase.
-- Direct `iceServers: []` connectivity still depends on LAN/NAT/IPv6. Never claim universal Internet P2P or transparent reconnection after a terminal RTC close without renegotiation.
+- Direct `iceServers: []` connectivity still depends on LAN/NAT/IPv6. A terminal RTC close requires renegotiation; never claim magic reconnect.
 
 ## Production / Vercel
 
 - Team: `gnfcreator` (`team_1ZCv2fwzf1KEgunz53M5xtbo`).
-- Project: `gone` (`prj_wUtFswu415AIVQSlkks5BzlEtSUV`), framework Vite, linked to `gernotfound/gone`.
-- Primary production alias: `https://gone-gnf.vercel.app`.
-- Other aliases can include `gone-gnfcreator.vercel.app` and the main-branch alias.
-- `game-web/vercel.json` owns deployment policy and HTTP security headers.
-- After a merge, verify the actual Vercel production deployment is `READY`, its `githubCommitSha` equals the new `main` SHA, and `/version.json` reports the same build ID. Do not infer deploy success from GitHub alone.
-- `/version.json`, `/gone-cache-sw.js` and `/api/client-telemetry` are intentionally `no-store`.
+- Project: `gone` (`prj_wUtFswu415AIVQSlkks5BzlEtSUV`), Vite, linked to `gernotfound/gone`.
+- Primary alias: `https://gone-gnf.vercel.app`.
+- `game-web/vercel.json` owns main-only deployment and response security headers.
+- `/version.json`, `/gone-cache-sw.js`, `/api/client-telemetry` are intentionally `no-store`.
+- After the single merge verify independently: deployment `READY`, Git SHA == new main, `/version.json` build ID == new main, security headers and relevant runtime logs. GitHub CI alone is not production verification.
 
 ## Architecture discipline
 
-- `ARCHITECTURE.md` is the ownership map and future refactor direction.
-- `game-web/src/main.ts` must stay a small declarative composition entry point. It registers shell/device modules; it must not grow local startup wrappers, recovery polling or module-specific restart hacks.
-- `game-web/src/runtime/runtimeKernel.ts` is the canonical startup/reconciliation/health owner. New runtime modules declare phase, dependencies, criticality, start and optional reconcile behavior there or in a composition catalog.
-- `game-web/src/runtime/browserLifecycle.ts` is the cross-system browser lifecycle owner for visible/hidden, focus/blur, online/offline, pageshow/pagehide and beforeunload delivery. Use named priority subscribers instead of adding independent native listeners when ordering across systems matters.
-- `game-web/src/runtime/startClientRuntime.ts` is the declarative browser/game module catalog and starts foundation/bootstrap/gameplay/network/presentation phases through the runtime kernel.
-- One behavior should have one obvious owner. Fix owner modules directly instead of adding runtime monkey-patches.
-- Never reset another module's `__gone*Started` flag to force reinitialization. Configuration changes should call an explicit idempotent reconciliation operation.
-- Do not add `THREE.*.prototype` patches or per-frame state-repair polling.
-- `window.goneGame`, `window.goneWeapons`, `window.goneMobileControls` and related globals are compatibility/test facades. Preserve existing public members, but prefer typed imports/events/context objects for new internal code.
-- `window.goneRuntimeHealth` and `window.goneBrowserLifecycle` are diagnostics/verification facades, not alternate state authorities.
+`ARCHITECTURE.md` is canonical ownership documentation.
 
-## Stack / build / CI
+Rules:
 
-- Browser FPS: TypeScript + Vite 8 + Three.js under `game-web/`.
-- Core: Rust/WASM under `game-core/`; `game-web/pkg/game_core.js` remains a functional fallback while production build tooling can rebuild WASM.
-- Browser compile gate: `game-web/package.json` runs `tsc && vite build`; TS enables unused-code checks.
-- Vite/Rolldown build policy isolates Three.js into a stable `three-vendor` chunk using `build.rolldownOptions.output.codeSplitting` with `strictExecutionOrder: true`. Do not hide bundle warnings or broadly manual-split side-effect-heavy app modules without measuring behavior/cache effects.
-- Full PR gate is `.github/workflows/rescue-ci.yml`: TypeScript/Vite, all E2E tiers, Chromium browser multiplayer/mobile smokes, Rust, final quality gate.
-- Browser emulation is necessary but does not replace physical iPhone QA. Report that distinction precisely.
+- one behavior/state → one obvious owner;
+- fix owner modules, do not layer repair modules over them;
+- no runtime method monkey-patches for internal correctness;
+- no polling to repair state that should transition explicitly;
+- never reset another module's private `__gone*Started` flag;
+- no `THREE.*.prototype` patches;
+- compatibility `window.gone*` facades must remain stable for current consumers/tests, but new internal code should use typed imports/events/context/bridges.
 
-## Runtime composition / health
+## Runtime kernel / lifecycle
 
-Runtime module states are explicit: `registered`, `starting`, `ready`, `failed`, `blocked`.
+`game-web/src/main.ts` is declarative composition only.
 
-Health status is explicit: `booting`, `healthy`, `degraded`, `failed`.
+`runtime/runtimeKernel.ts` owns startup, dependencies, criticality, reconciliation and health. Module states: `registered`, `starting`, `ready`, `failed`, `blocked`. Health: `booting`, `healthy`, `degraded`, `failed`.
 
-- `main.ts` registers shell modules first: diagnostics, browser lifecycle, smartphone profile, input mode, touch preferences and PWA.
-- `startClientRuntime.ts` registers client modules and starts foundation → critical bootstrap → gameplay → network → presentation.
-- Device modules start after client bootstrap: smartphone guard → PUBG touch → competitive touch, layout editor and mobile session resume.
-- `bootstrap` is critical.
-- `advancedWeaponController` is critical because finite ammo/reload correctness is a gameplay invariant, not optional presentation.
-- Optional sibling failure must not abort unrelated modules; dependants of a failed prerequisite must be blocked instead of running on invalid state.
-- Runtime-kernel failures emit `gone-runtime-start-error`; lifecycle subscriber failures emit `gone-runtime-lifecycle-error`.
-- `gameplay/engine.ts` is the local game loop/physics/camera/viewmodel coordinator plus compatibility facade. Do not grow it back into a god object.
+Critical invariants:
 
-### Browser lifecycle ordering contract
+- `browserLifecycle`;
+- `bootstrap`;
+- `advancedWeaponController` — finite ammo is semantic authority, not optional UI.
 
-Cross-system native page lifecycle must flow through `browserLifecycle` when ordering matters.
+`runtime/startClientRuntime.ts` owns the client module graph. A critical failure emits `gone-runtime-unavailable`; `ui/runtimeAvailabilityUi.ts` presents fail-closed recovery. Device combat controls only start when both bootstrap and ammo authority are ready.
 
-Important priorities/semantics:
+`runtime/browserLifecycle.ts` owns shared visible/hidden, focus/blur, online/offline, pageshow/pagehide and beforeunload delivery. Subscribers have names/priorities and failures are isolated as `gone-runtime-lifecycle-error`. Input release must precede session/network resume. Device-local pointer/touch/resize/orientation/sensor events stay local.
 
-- held keyboard/mouse input releases before session recovery;
-- mobile fallback input releases before resume work;
-- mobile session resume happens after transient input is safe;
-- PWA version checks, audio foreground recovery and cache integrity are lower-priority lifecycle work;
-- subscriber exceptions are isolated and reported, not allowed to abort later subscribers;
-- timers owned by adaptive networking/render/PWA/cache/HUD systems must be cleaned up through the lifecycle owner.
+## Multiplayer session ownership — critical
 
-Device-local pointer/touch/resize/orientation/sensor events remain local to the device controller.
+`game-web/src/net/multiplayerSessionController.ts` is the **single browser owner** of multiplayer session lifecycle.
 
-## PWA / safe update
+It owns:
 
-- PWA manifest and icons live under `game-web/public/`.
-- `pwa/pwaRuntime.ts` compares the embedded generated `BUILD_ID` with `/version.json` using `no-store` checks on startup, foreground, online/focus and periodic polling.
-- PWA foreground/network checks use `browserLifecycle`; do not create a second visibility/online/focus lifecycle graph.
-- Version checks are single-flight and have an 8 s abort timeout.
-- `scripts/generate_build_version.mjs` generates both `src/generated/buildVersion.ts` and public `version.json` from the deployment/Git SHA.
-- Service-worker caches are build-aware. New versions may be prepared during live play, but page reload must not be forced mid-match; menu/lobby is the safe apply point.
-- Installed PWAs older than the first safe-update release may need one final manual restart; current releases should self-detect later deployments.
+- `activeP2PHost` / `activeP2PClient`;
+- local session id and local player color;
+- lobby roster snapshot;
+- direct WebRTC host offer / guest answer orchestration;
+- accepted host peer channels and deterministic teardown;
+- P2P guest callbacks: join/color/roster/status/game-start;
+- role transition generation and `gone-session-changed`;
+- presentation snapshots (`gone-session-state` / `window.goneSession`).
 
-## iPhone / mobile controls
+It must **not** import DOM or `engine.ts`.
 
-There are layered mobile owners by design:
+`ui/lobby.ts` is presentation + intent only. It may render roster/color/invite/answer controls and forward actions to `multiplayerSessionController`; it must not construct `P2PClient`, `P2PHost`, direct SDP sessions or lag compensators.
 
-1. `mobile/mobileRuntime.ts` — generic touch runtime for movement/look/actions, virtual pointer-lock compatibility, wake lock, orientation/fullscreen best effort and mobile DPR cap.
-2. `mobile/smartphoneControlsGuard.ts` — idempotent safety fallback if the primary runtime is unavailable or device heuristics are wrong. It exports `reconcileSmartphoneControlsGuard`; do not restart it by resetting flags.
-3. `mobile/pubgTouchControls.ts` — ammo-safe FIRE/drag, secondary claw FIRE, ADS drag, gyro and iOS-safe action taps.
-4. `mobile/competitiveTouchControls.ts` — competitive PUBG/CODM-style input composition: joystick sprint zone, independent left-move/right-look contacts, dedicated ADS/action ownership, live-map input continuity and map-open combat bridge.
+`gameplay/engine.ts` registers a typed `SessionRuntimeBridge` once. The bridge attaches host/client gameplay networking, clears/removes remote players, applies local color presentation and exposes gameplay readiness. Do not replace this with `window.goneGame` lookups from session code.
 
-Explicit `Comandi a schermo` in `mobile/inputMode.ts` is authoritative and must work even when UA/touch detection is wrong. `Mouse + tastiera` hides the touch overlay. Input-mode changes are application configuration transitions: `main.ts` asks `runtimeKernel.reconcilePhase('device')`; start attempts must remain at one.
+`gameplay/networkBindings.ts` imports session setters from `net/multiplayerSessionController.ts`, never from UI.
 
-Presentation/customization:
+`net/selfHostSession.ts` owns only relay transport/status UI. Host peers enter through `multiplayerSessionController.registerHostPeer`; relay guests use `startGuestOnChannel`. Do not reintroduce a separate self-host `P2PClient`, roster, color callback graph or rendering guard.
 
-- `mobile/smartphoneProfile.ts` owns smartphone presentation detection/classes.
-- `mobile/smartphone.css` owns compact phone HUD/menu layout.
-- `mobile/competitiveTouchControls.css` owns the competitive phone control geometry and non-modal map presentation. Keep the map below the touch HUD and preserve safe-area spacing.
-- `mobile/touchPreferences.ts` owns persistent touch tuning: look sensitivity, ADS sensitivity, FIRE drag dead-zone, gyro sensitivity/on-off, button scale/opacity, handedness, and secondary claw FIRE preference.
-- `mobile/touchLayoutEditor.ts` owns persistent draggable positions (`gone-touch-layout-v1`) and edit/reset UI. Do not encode user offsets back into base CSS.
+`net/sessionLifecycleHardening.ts` was intentionally removed. Do not reintroduce setter monkey-patches or periodic (`setInterval`) repair polling. Replacement/teardown/remote cleanup/session events are explicit controller transitions.
 
-### Competitive control contract
+`SessionP2PHost` inside the controller is an explicit compatibility adapter that observes existing lobby `COLOR_CHANGED` broadcast packets; it does not overwrite host methods at runtime.
 
-For current G.O.N.E. actions, follow modern PUBG Mobile / COD Mobile interaction principles rather than inventing unsupported buttons:
+## Direct WebRTC / network authority
 
-- left thumb owns joystick movement; pushing near the forward edge may engage auto-sprint while the explicit RUN control remains available;
-- right thumb owns free-look; FIRE and ADS may be dragged for camera correction;
-- optional secondary FIRE supports claw/index-finger play;
-- jump, crouch and reload remain separate actions so they can be combined with movement/fire;
-- weapon switching stays immediately reachable and must work through direct pointer input on iOS;
-- do **not** add prone/slide/lean/peek UI until the corresponding gameplay mechanics actually exist;
-- the live map is informational, not modal: while open on phone, movement, look, FIRE, ADS, reload and weapon controls remain usable; the map must remain partially transparent and below the touch-control z-layer;
-- MAP itself must always be able to close the overlay even while the overlay is already open.
+- `net/directWebRtc.ts`: manual offer/answer, `iceServers: []`, star host↔guests.
+- Browser host is authoritative.
+- Binary core opcodes: 0x01 CLIENT_STATE, 0x02 WORLD_SNAPSHOT, 0x03 FIRE_HITSCAN, 0x04 HIT_CONFIRMED.
+- `NativeRtcDataChannel`: ~3 s heartbeat, ~15 s timeout, ~6 s grace for transient `disconnected`.
+- `adaptiveSnapshotRate.ts`: host cadence adaptation; normal target ~30 Hz.
+- `mobileSessionResume.ts`: release input on hidden/offline and restore safe cadence on surviving RTC after foreground/online.
+- Terminal direct RTC failure still needs new SDP negotiation; `gone-reconnect-requested` is intent, not transparent reconnection.
 
-### Critical ammo/input rule
+## Self-host
 
-`gameplay/advancedWeaponController.ts` is the **only authoritative local owner** of magazine depletion/reload UX. Touch sustained FIRE must route through its synthetic mouse/controller path and must **not** leave `inputState.fire = true`, because `engine.ts` has a legacy direct-fire compatibility path that would otherwise bypass magazine accounting when cooldown reaches zero.
+- `gone-host/` is active infrastructure, not dead tooling.
+- `gone-host/server.mjs` serves `game-web/dist`, `/__gone_host/status`, `/__gone_host/ws` and relay traffic to the browser host.
+- Root launchers `.cmd`, `.ps1`, `.sh` are required.
+- Browser transport: `net/selfHostSession.ts` + `net/relayWebSocket.ts`.
+- Session state/callbacks still belong to `multiplayerSessionController`.
 
-When changing touch FIRE:
+## Mobile / iPhone controls
 
-- keep finite magazine/reserve state in `window.goneWeapons.ammo`;
-- ensure each successful shot decrements magazine exactly once;
-- never allow sustained touch hold to fire after magazine reaches zero;
-- preserve normal desktop mouse behavior;
-- browser-smoke reload and weapon switching via pointer events, because iOS click synthesis can be delayed/cancelled by pointer capture;
-- browser-smoke map-open firing separately, because mobile virtual pointer-lock and legacy map gating can otherwise silently block the magazine-aware controller.
+Owners:
+
+1. `mobile/mobileRuntime.ts` — generic touch movement/look/actions, virtual pointer lock, wake/orientation/fullscreen best effort, mobile DPR cap.
+2. `mobile/smartphoneControlsGuard.ts` — idempotent fallback; explicit reconcile, no startup-flag reset.
+3. `mobile/pubgTouchControls.ts` — ammo-safe FIRE drag, secondary claw FIRE, ADS drag, gyro, iOS-safe actions.
+4. `mobile/competitiveTouchControls.ts` — simultaneous joystick/look/actions and live-map combat composition.
+5. `mobile/touchPreferences.ts` — sensitivity, FIRE dead-zone, gyro, size/opacity, handedness, secondary FIRE.
+6. `mobile/touchLayoutEditor.ts` — draggable persistent HUD offsets.
+7. `mobile/mobileSessionResume.ts` — mobile background/network cadence repair.
+
+Explicit `Comandi a schermo` overrides device heuristics; `Mouse + tastiera` hides touch UI. Input mode changes reconcile device modules through the runtime kernel; start attempts must remain one.
+
+Competitive contract:
+
+- left thumb movement + forward auto-sprint zone;
+- right free-look;
+- FIRE/ADS can drag camera;
+- optional claw FIRE;
+- jump/crouch/reload separate and combinable;
+- weapon switching must work via pointer input on iOS;
+- do not add prone/slide/lean UI until gameplay exists;
+- map is non-modal on phone: movement/look/FIRE/ADS/reload/weapon switch remain usable; map stays partially transparent below touch controls; MAP must close itself while open.
+
+## Ammo authority
+
+`gameplay/advancedWeaponController.ts` is the only authoritative local owner of magazine/reserve/reload UX.
+
+Touch sustained FIRE must **not** leave `inputState.fire = true`; the legacy engine continuous-fire path can bypass magazine accounting. Successful ranged shots decrement magazine exactly once. Zero magazine produces no shot until reload succeeds.
 
 Canonical ammo:
 
-- AR: 30 magazine / 120 reserve.
-- Sniper: 5 / 25.
-- Shotgun: 6 / 30, shell reload.
-- SMG: 36 / 180.
-- Knife: no ammo/reload.
+- AR 30/120;
+- Sniper 5/25;
+- Shotgun 6/30 shell reload;
+- SMG 36/180;
+- Knife no ammo, damage 999, 2.6 m hard range.
 
-## Audio / iOS lifecycle
+Browser smoke mobile changes with pointerdown/pointermove; specifically verify reload, weapon switch, finite ammo and map-open fire.
 
-- Menu BGM is `/Colossus March.mp3` through `<audio id="bg-music">`.
-- `ui/menu.ts` owns media playback lifecycle and volume UI.
-- `audio/musicSourceGain.ts` owns the reduced source gain without changing displayed volume percentages.
-- iOS/Safari requires `HTMLAudioElement.play()` and Web Audio resume/unlock to originate from a real user gesture. Keep the persistent pointer/keyboard gesture recovery path; do not rely only on gameplay start or a delayed promise.
-- Foreground/pageshow recovery uses `browserLifecycle`; after iOS background/foreground audio may still require the next real user gesture.
+## Audio / iOS
 
-## Local player / spawn
+- BGM: `/Colossus March.mp3`, `<audio id="bg-music">`.
+- `ui/menu.ts` owns media lifecycle/volume UI.
+- `audio/musicSourceGain.ts` owns reduced source gain.
+- iOS requires `play()` / Web Audio unlock from a real gesture. Keep persistent gesture recovery; foreground recovery is best-effort and may still require the next gesture.
+
+## Local gameplay / spawn
 
 - 100 HP, ~10 s spawn shield, ~5 s death phase; host authoritative.
-- Spawn policy lives in `gameplay/spawnPolicy.ts`.
-- Slot 0 spawn is X=+1200, Z=+1200 (SE giant crater). Other multiplayer slots are deterministic across the map.
-- `engine.ts` handles initial local spawn/respawn with terrain-correct Y.
-- `gameplay/networkBindings.ts` installs host-authoritative per-slot respawn; `spawnController.ts` is diagnostics/manual compatibility only.
-- Never reintroduce `(0,17.5,0)` as intended gameplay spawn.
-- Solo PvE spiders are owned by `gameplay/bionicSpiderEnemies.ts` + `models/bionicSpider.ts`; they are disabled in P2P until enemy state/combat is host-authoritatively represented.
+- Spawn policy: `gameplay/spawnPolicy.ts`.
+- Slot 0 intended spawn: X=+1200, Z=+1200; never restore `(0,17.5,0)` as gameplay spawn.
+- `gameplay/networkBindings.ts` owns P2P↔gameplay state wiring and host per-slot respawn.
+- `remotePlayerRegistry.ts` owns remote model lifecycle/interpolation/shield presentation.
+- Solo spiders: `bionicSpiderEnemies.ts` + `models/bionicSpider.ts`; disabled in P2P until represented host-authoritatively.
 
-## Weapons / local shots
+## Weapons
 
-Canonical browser gameplay balance is `game-web/src/weapons/weaponConfig.ts`; Rust counterpart is `game-core/src/weapons.rs`. Shared gameplay values must stay aligned.
+Canonical browser balance: `game-web/src/weapons/weaponConfig.ts`; Rust counterpart `game-core/src/weapons.rs`.
 
-Current runtime contract:
+Current baseline:
 
-- AR: 30/120, 18 dmg, 180 m, falloff 35→140 to 10, head ×1.5, 6.25 rps.
-- Sniper: 5/25, 70 dmg, 550 m, falloff 180→450 to 50, head ×2, 1 rps.
-- Shotgun: 6/30, 64 dmg, 42 m, falloff 8→30 to 20, head ×1.25, 1.25 rps.
-- SMG: 36/180, 12 dmg, 90 m, falloff 15→65 to 7, head ×1.5, 10 rps.
-- Knife: **999 dmg**, 2.6 m hard range, no ammo.
+- AR 18 dmg, 180 m, 6.25 rps;
+- Sniper 70 dmg, 550 m, 1 rps;
+- Shotgun 64 dmg, 42 m, 1.25 rps;
+- SMG 12 dmg, 90 m, 10 rps;
+- Knife 999 dmg, 2.6 m.
 
-`gameplay/advancedWeaponController.ts` owns semi/auto trigger interception, ADS/FOV/sensitivity, finite magazine/reserve state, reload, ammo HUD and action animations. `weapons/weaponCombatStats.ts` owns recoil/viewmodel tuning and derives shared identity/cadence from `weaponConfig.ts`.
+`weaponCombatStats.ts` owns recoil/viewmodel tuning derived from canonical config. Tracers/VFX never become damage authority.
 
-## Tracer / shot presentation
+## World / terrain / rendering
 
-- `vfx/tracerPool.ts` owns tracer travel/fade behavior.
-- `net/remoteShotPresentation.ts` is current binary enemy-shot presentation.
-- `net/legacyRemoteShotPresentation.ts` is compatibility-only for old JSON FIRE_HITSCAN callbacks.
-- Tracers are visual only; host-authoritative hitscan owns damage.
+- Terrain math: `game-core/src/lib.rs`; JS fallback `game-web/pkg/game_core.js`.
+- Gameplay map ±2400 m; procedural terrain itself unbounded.
+- `world/worldConfig.ts`: chunk constants.
+- `world/chunkManager.ts`: distance-prioritized progressive streaming, bounded expensive work.
+- `terrainGeometryPool.ts`: geometry reuse.
+- `rockInstances.ts`: instanced rocks.
+- Terrain chunk edge normals are seam-safe; do not change terrain colors/palette without explicit request.
+- Do not introduce naive mixed-resolution terrain LOD; use stitched edges/skirts/clipmap/quadtree if measurement justifies LOD.
+- `rendering/scene.ts`: bounded DPR/high-performance profile.
+- `performance/adaptiveRenderScale.ts`: sole render-quality governor.
+- Vite/Rolldown isolates Three.js in `three-vendor` with `strictExecutionOrder: true`.
 
-## Remote players
+## PWA / safe update
 
-- `gameplay/remotePlayerRegistry.ts` owns remote model lifecycle/interpolation/shield presentation.
-- `gameplay/networkBindings.ts` owns P2P callback ↔ gameplay-state wiring.
-- Hitbox: `net/robotHitbox.ts` + `simpleLagCompensator.ts` using cheap torso/head AABBs.
-- `net/p2pHost.ts` owns shot sanity/cadence/origin validation and authoritative fallback damage logic.
-
-## Multiplayer / WebRTC resilience
-
-- Native direct mode: `net/directWebRtc.ts`, manual offer/answer, star host↔guests, `iceServers: []` by policy.
-- Browser host is authoritative. Binary core opcodes: 0x01 CLIENT_STATE, 0x02 WORLD_SNAPSHOT, 0x03 FIRE_HITSCAN, 0x04 HIT_CONFIRMED.
-- State/snapshots target ~30 Hz with adaptive snapshot-rate logic.
-- `net/adaptiveSnapshotRate.ts` owns host snapshot-rate adaptation and lifecycle-owned timer cleanup.
-- `NativeRtcDataChannel` uses ~3 s heartbeat, ~15 s heartbeat timeout and ~6 s transient `disconnected` grace before terminal teardown.
-- `mobile/mobileSessionResume.ts` clears held input when hidden/offline and restarts guest state tick / immediate state + host snapshot cadence on foreground/online recovery through `browserLifecycle`.
-- Once direct RTC is truly closed/failed, a new SDP negotiation is required; `gone-reconnect-requested` is a recovery signal, not magic renegotiation.
-- Tier-4 network churn tests must keep verifying repeated transient disconnect→connected cycles do not close the channel, while a grace-period expiry does.
-
-## Self-host mode
-
-- `gone-host/` is ACTIVE runtime infrastructure.
-- `gone-host/server.mjs` serves `game-web/dist`, exposes `/__gone_host/status` and `/__gone_host/ws`, and relays guest traffic to the browser host.
-- Root launchers `start-gone-host.cmd`, `.ps1`, `.sh` are required.
-- Browser counterparts: `net/selfHostSession.ts` and `net/relayWebSocket.ts`.
-- Do not delete self-host server/launchers unless intentionally replaced.
-
-## World / rendering / performance
-
-- Terrain: `game-core/src/lib.rs`; JS fallback: `game-web/pkg/game_core.js`.
-- Gameplay map window ±2400 m; procedural terrain itself is unbounded.
-- `world/worldConfig.ts` owns chunk-grid constants; `world/chunkManager.ts` owns progressive lifecycle/priority streaming and keeps expensive world work bounded per frame.
-- `world/terrainGeometryPool.ts` reuses geometry; `world/rockInstances.ts` owns instanced rocks.
-- `rendering/scene.ts`: antialias off, bounded DPR, shadows off, high-performance GPU preference.
-- `performance/adaptiveRenderScale.ts` owns adaptive render scaling; do not build a competing phone-only quality loop. Its timer cleanup belongs to `browserLifecycle`.
-- `performance/localTelemetry.ts` remains **local-only performance diagnostics**. It does not upload FPS/device telemetry.
-- `performance/performancePack.ts` precaches models/assets/audio/WASM.
-- `performance/cacheIntegrity.ts` owns pack validation. Validation is single-flight; foreground checks and interval cleanup use `browserLifecycle`.
+- `pwa/pwaRuntime.ts` compares embedded `BUILD_ID` with `/version.json` using no-store, single-flight, 8 s timeout checks on startup/lifecycle/polling.
+- `scripts/generate_build_version.mjs` writes both client build module and public beacon.
+- Service-worker caches are build-aware; do not force reload during gameplay.
+- `performance/cacheIntegrity.ts` is single-flight and lifecycle-owned.
 
 ## Security / observability
 
-- `game-web/vercel.json` owns global CSP, frame denial, nosniff, referrer and permissions policies. Any header change must be browser-smoked and then verified on the actual Vercel production response.
-- Gyroscope/accelerometer are allowed only for `self` because optional touch gyro uses them; camera/microphone/geolocation/payment/USB/magnetometer remain denied.
-- `observability/clientDiagnostics.ts` owns **bounded privacy-safe failure diagnostics**, distinct from local performance telemetry.
-- It may send only coarse device class, build ID, error kind/message/stack, path, input mode, standalone/online/visibility state. Do not add raw IP, account identity, full URL query strings, raw UA, gameplay position/chat/session codes, or continuous FPS telemetry.
-- `/api/client-telemetry` accepts bounded `runtime_start_error` and `runtime_lifecycle_error` records in addition to existing failure/recovery kinds; it sanitizes/limits payloads and emits structured Vercel runtime logs.
-- Client reporting is capped/deduplicated and must never become a gameplay failure source.
-- For production failures: first inspect Vercel runtime errors/logs by project/deployment, then correlate with build ID.
+- `vercel.json`: CSP, frame denial, nosniff, referrer/permissions policies and deployment rules.
+- Gyroscope/accelerometer self-only; camera/mic/geolocation/payment/USB/magnetometer denied.
+- `observability/clientDiagnostics.ts`: bounded privacy-safe failure diagnostics, not continuous analytics.
+- Allowed context is coarse: build, event kind/message/stack, pathname, device bucket, input mode, standalone/online/visibility.
+- Do not upload raw UA, full query URLs, identities, positions, chat/session codes or continuous FPS.
+- `/api/client-telemetry` sanitizes, caps, deduplicates and must fail-open.
 
 ## High-value files
 
-- Runtime architecture: `game-web/src/runtime/runtimeKernel.ts`, `browserLifecycle.ts`, `startClientRuntime.ts`, `game-web/src/main.ts`
-- Main loop/facade: `game-web/src/gameplay/engine.ts`
-- Weapon UX/ammo: `game-web/src/gameplay/advancedWeaponController.ts`, `game-web/src/weapons/weaponConfig.ts`
-- Touch: `game-web/src/mobile/mobileRuntime.ts`, `smartphoneControlsGuard.ts`, `pubgTouchControls.ts`, `competitiveTouchControls.ts`, `touchPreferences.ts`, `touchLayoutEditor.ts`
-- Mobile/PWA lifecycle: `mobile/mobileSessionResume.ts`, `pwa/pwaRuntime.ts`
-- Audio: `game-web/src/ui/menu.ts`, `game-web/src/audio/musicSourceGain.ts`
-- Diagnostics: `game-web/src/observability/clientDiagnostics.ts`, `game-web/api/client-telemetry.js`
-- Spawn: `game-web/src/gameplay/spawnPolicy.ts`, `spawnController.ts`
-- Remote players: `game-web/src/gameplay/remotePlayerRegistry.ts`
-- Gameplay↔network: `game-web/src/gameplay/networkBindings.ts`
-- Host/client: `game-web/src/net/p2pHost.ts`, `p2pClient.ts`
-- Direct RTC: `game-web/src/net/directWebRtc.ts`
-- Self-host: `gone-host/server.mjs`, `net/selfHostSession.ts`, `net/relayWebSocket.ts`
-- World: `game-web/src/world/chunkManager.ts`, `worldConfig.ts`
-- Deployment/security: `game-web/vercel.json`, `game-web/vite.config.ts`
+- Composition/health: `src/main.ts`, `runtime/runtimeKernel.ts`, `runtime/browserLifecycle.ts`, `runtime/startClientRuntime.ts`.
+- Session: `net/multiplayerSessionController.ts`, `ui/lobby.ts`, `net/directWebRtc.ts`, `net/selfHostSession.ts`, `net/relayWebSocket.ts`.
+- Gameplay/network bridge: `gameplay/engine.ts`, `gameplay/networkBindings.ts`, `gameplay/remotePlayerRegistry.ts`.
+- Ammo/weapons: `gameplay/advancedWeaponController.ts`, `weapons/weaponConfig.ts`, `weapons/weaponCombatStats.ts`.
+- Touch: `mobile/mobileRuntime.ts`, `smartphoneControlsGuard.ts`, `pubgTouchControls.ts`, `competitiveTouchControls.ts`, `touchPreferences.ts`, `touchLayoutEditor.ts`.
+- PWA/mobile lifecycle: `pwa/pwaRuntime.ts`, `mobile/mobileSessionResume.ts`.
+- Diagnostics: `observability/clientDiagnostics.ts`, `api/client-telemetry.js`.
+- World: `world/chunkManager.ts`, `world/worldConfig.ts`.
+
+## Current structural direction
+
+The runtime-kernel/browser-lifecycle foundation and lobby/session split are complete architecture directions. Next high-value structural work:
+
+1. split local death/respawn/shield lifecycle out of `engine.ts` into a focused service/controller;
+2. split per-weapon model builders behind stable exports;
+3. if `p2pHost.ts` grows further, separate peer bookkeeping from authoritative combat without creating multiple authorities;
+4. gradually migrate remaining internal `window.gone*` consumers to typed services/events.
+
+Do not refactor for line count alone.
 
 ## Change discipline
 
-1. Read this file and `ARCHITECTURE.md`, then only relevant owner files.
-2. Recheck current `main` SHA before branching.
-3. Dedicated branch only; never update `main` directly.
-4. Preserve host authority, finite ammo contracts and zero-external-service networking unless the task explicitly changes them.
-5. Decide whether a reported iPhone issue is mobile-specific or a global contract regression; fix at the narrowest correct owner without degrading desktop.
-6. Prefer owner fixes over patch layers; preserve compatibility facades where tests/UI depend on them.
-7. For runtime changes, declare dependencies/criticality in `runtimeKernel`; do not add a new `safeStart` wrapper or reset `__gone*Started` flags.
-8. For cross-system page lifecycle, subscribe through `browserLifecycle` with an explicit priority. Keep only device-local pointer/touch/sensor/resize events local.
-9. Keep expensive work out of per-frame paths and reuse/pool Three resources.
-10. Add deterministic Tier tests plus real Chromium smoke for browser interaction changes. Mobile controls must test pointerdown/pointermove behavior, not only DOM presence. Map changes must test simultaneous movement/FIRE while open. Architecture changes must assert health, dependency blocking/reconciliation and no duplicate control roots/listeners.
-11. Full CI must be green before merge. Multiple branch commits are fine.
-12. Squash merge exactly once to `main`.
-13. Verify the resulting `main` commit has the previous main as its sole parent and a valid signature when available.
-14. Verify Vercel production separately: READY deployment, matching Git SHA/build ID, security headers and relevant runtime logs. Do not claim physical-iPhone verification for behavior the owner has not retested after deployment.
+1. Read this file + `ARCHITECTURE.md`; inspect only relevant owners.
+2. Recheck `main`; dedicated branch only.
+3. Preserve host authority, finite ammo and zero-external-service networking unless task explicitly changes them.
+4. Fix the canonical owner; do not add a patch layer.
+5. Preserve compatibility facade members used by browser smokes/adapters.
+6. Add deterministic Tier tests for architecture/contracts and real Chromium smoke for affected interaction/network behavior.
+7. Full Rescue CI must be green on the final head: TypeScript/Vite, all E2E, browser multiplayer/direct/self-host/full-match/mobile, Rust, quality gate.
+8. Mark PR ready only after full green.
+9. Squash exactly once to `main`.
+10. Verify resulting main has previous main as sole parent and valid signature when available.
+11. Verify real Vercel deployment separately; do not claim physical-iPhone verification until owner retests that deployment.
