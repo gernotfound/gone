@@ -1,14 +1,10 @@
 import { DOM } from '../ui/dom.ts';
+import { setupLobby } from '../ui/lobby.ts';
 import {
-  activeP2PHost,
   localPlayerColor,
-  setActiveP2PClient,
-  setLocalPlayerColor,
-  setupLobby,
-} from '../ui/lobby.ts';
-import { P2PClient } from './p2pClient.ts';
+  multiplayerSessionController,
+} from './multiplayerSessionController.ts';
 import { createRelayGuestChannel, createRelayHostBridge, type RelayHostBridge } from './relayWebSocket.ts';
-import type { SessionPlayerInfo } from './protocol.ts';
 
 interface SelfHostLocation {
   role: 'host' | 'guest';
@@ -44,55 +40,6 @@ function openLobbyShell(): void {
   DOM.multiplayerLobby.classList.add('flex');
 }
 
-function setGuestButton(text: string, error = false): void {
-  DOM.btnPlayMultiplayer.textContent = text;
-  DOM.btnPlayMultiplayer.disabled = true;
-  DOM.btnPlayMultiplayer.className = error
-    ? 'w-2/3 bg-red-950/70 cursor-not-allowed text-red-200 font-black text-base py-3 rounded-xl shadow-md uppercase tracking-widest border border-red-700'
-    : 'w-2/3 bg-slate-700 cursor-not-allowed text-white font-black text-base py-3 rounded-xl shadow-md uppercase tracking-widest border border-slate-600';
-}
-
-function renderPlayers(players: SessionPlayerInfo[], localId: string): void {
-  DOM.lobbyPlayerList.innerHTML = '';
-  players.forEach((player, index) => {
-    const li = document.createElement('li');
-    li.className = 'flex items-center justify-between bg-slate-900/50 p-3 rounded-lg border border-slate-700/50';
-
-    const left = document.createElement('div');
-    left.className = 'flex items-center gap-3 min-w-0';
-    const dot = document.createElement('div');
-    dot.className = 'w-4 h-4 rounded-full shrink-0';
-    dot.style.backgroundColor = player.color;
-    dot.style.boxShadow = `0 0 8px ${player.color}`;
-    const name = document.createElement('span');
-    name.className = 'text-white font-bold tracking-wider truncate';
-    name.textContent = player.id === localId ? `${player.name} (TU)` : player.name;
-    left.append(dot, name);
-    li.appendChild(left);
-
-    if (index === 0 || player.slot === 0) {
-      const badge = document.createElement('span');
-      badge.className = 'text-xs font-black text-purple-400 bg-purple-900/30 px-2 py-1 rounded border border-purple-500/30 shrink-0';
-      badge.textContent = 'HOST / SERVER';
-      li.appendChild(badge);
-    }
-    DOM.lobbyPlayerList.appendChild(li);
-  });
-}
-
-function guardClientRenderingUntilGameplay(client: P2PClient): void {
-  const snapshot = client.config.onWorldSnapshot;
-  const hit = client.config.onHitConfirmed;
-  const legacyShot = client.config.onHitscanFired;
-  const binaryShot = client.config.onBinaryHitscanFired;
-  const ready = () => !DOM.gameCanvas.classList.contains('hidden');
-
-  if (snapshot) client.config.onWorldSnapshot = (value) => { if (ready()) snapshot(value); };
-  if (hit) client.config.onHitConfirmed = (value) => { if (ready()) hit(value); };
-  if (legacyShot) client.config.onHitscanFired = (value) => { if (ready()) legacyShot(value); };
-  if (binaryShot) client.config.onBinaryHitscanFired = (value) => { if (ready()) binaryShot(value); };
-}
-
 function closeRelaySession(): void {
   if (inviteGuardTimer !== null) {
     window.clearInterval(inviteGuardTimer);
@@ -116,10 +63,9 @@ async function fetchHostStatus(): Promise<HostStatus | null> {
 
 async function setupHost(token: string, onPlayMultiplayer: () => void): Promise<void> {
   openLobbyShell();
-  setupLobby(true, undefined, onPlayMultiplayer);
-  document.getElementById('direct-host-controls')?.remove();
+  setupLobby(true, undefined, onPlayMultiplayer, { prepareDirectInvite: false });
 
-  const host = activeP2PHost;
+  const host = multiplayerSessionController.getHost();
   if (!host) throw new Error('Host autorevole non inizializzato.');
 
   const status = await fetchHostStatus();
@@ -140,6 +86,7 @@ async function setupHost(token: string, onPlayMultiplayer: () => void): Promise<
   setInvite();
   inviteGuardTimer = window.setInterval(setInvite, 500);
 
+  document.getElementById('self-host-status')?.remove();
   const info = document.createElement('div');
   info.id = 'self-host-status';
   info.className = 'mt-3 rounded-xl border border-emerald-500/30 bg-emerald-950/20 p-3 text-xs leading-relaxed text-emerald-200';
@@ -156,13 +103,7 @@ async function setupHost(token: string, onPlayMultiplayer: () => void): Promise<
 
   relayHostBridge = createRelayHostBridge({
     token,
-    onPeer: (peerId, channel) => {
-      if (!activeP2PHost) {
-        channel.close?.();
-        throw new Error('Host autorevole non più attivo.');
-      }
-      activeP2PHost.registerPeer(peerId, channel);
-    },
+    onPeer: (peerId, channel) => multiplayerSessionController.registerHostPeer(peerId, channel),
     onReady: () => {
       info.textContent = `${info.textContent} BRIDGE WEBSOCKET PRONTO.`;
     },
@@ -188,72 +129,25 @@ function setupGuest(token: string, onPlayMultiplayer: () => void): void {
 
   const localId = makeGuestId();
   const playerName = DOM.playerUsernameInput.value.trim() || 'Giocatore';
-  let players: SessionPlayerInfo[] = [];
+  const channel = createRelayGuestChannel(token, localId);
+  relayGuestChannel = channel;
 
-  const client = new P2PClient({
+  multiplayerSessionController.startGuestOnChannel(channel, {
     playerId: localId,
     playerName,
-    onJoinAccepted: (data) => {
-      setLocalPlayerColor(data.assignedColor);
-      players = data.sessionPlayers.map((p) => ({ ...p }));
-      renderPlayers(players, localId);
-      setGuestButton('IN ATTESA DELL\'HOST...');
-    },
-    onColorRejected: (data) => {
-      const next = data.availableColors?.find((color) => color !== localPlayerColor);
-      if (next) {
-        setLocalPlayerColor(next);
-        window.setTimeout(() => {
-          if (client.status === 'rejected') client.retryWithColor(next);
-        }, 60);
-      } else {
-        setGuestButton('NESSUN COLORE DISPONIBILE', true);
-      }
-    },
-    onPlayerJoined: (player) => {
-      if (!players.some((p) => p.id === player.id)) players.push({ ...player });
-      renderPlayers(players, localId);
-    },
-    onPlayerLeft: ({ playerId }) => {
-      players = players.filter((p) => p.id !== playerId);
-      (window as any).goneGame?.removeRemotePlayer?.(playerId);
-      renderPlayers(players, localId);
-    },
-    onColorChanged: ({ playerId, newColor }) => {
-      const entry = players.find((p) => p.id === playerId);
-      if (entry) entry.color = newColor;
-      if (playerId === localId) setLocalPlayerColor(newColor);
-      renderPlayers(players, localId);
-    },
-    onStatusChange: (status) => {
-      if (status === 'connecting') setGuestButton('CONNESSIONE AL PC HOST...');
-      if (status === 'disconnected') setGuestButton('HOST DISCONNESSO', true);
-    },
+    color: localPlayerColor,
     onGameStart: () => {
       DOM.multiplayerLobby.classList.remove('flex');
       DOM.multiplayerLobby.classList.add('hidden');
       onPlayMultiplayer();
     },
-    onError: (error) => {
-      console.error('[G.O.N.E. relay client]', error);
-      setGuestButton('ERRORE DI RETE', true);
-    },
   });
-
-  setActiveP2PClient(client);
-  (window as any).goneGame?.setP2PClient?.(client);
-  guardClientRenderingUntilGameplay(client);
-
-  const channel = createRelayGuestChannel(token, localId);
-  relayGuestChannel = channel;
-  client.connect(channel, localPlayerColor);
-  setGuestButton('CONNESSIONE AL PC HOST...');
 }
 
 /**
  * Returns true when the current URL belongs to a local G.O.N.E. Host session.
- * In that case this function owns the lobby bootstrap and the caller should not
- * execute the direct WebRTC invite path.
+ * The shared multiplayer session controller owns host/client state and teardown;
+ * this adapter owns only the local relay transport and host status presentation.
  */
 export function setupSelfHostedSessionFromLocation(onPlayMultiplayer: () => void): boolean {
   const config = parseLocation();
@@ -264,7 +158,8 @@ export function setupSelfHostedSessionFromLocation(onPlayMultiplayer: () => void
     setupHost(config.token, onPlayMultiplayer).catch((error) => {
       console.error('[G.O.N.E. self-host]', error);
       openLobbyShell();
-      setGuestButton('ERRORE G.O.N.E. HOST', true);
+      DOM.btnPlayMultiplayer.textContent = 'ERRORE G.O.N.E. HOST';
+      DOM.btnPlayMultiplayer.disabled = true;
     });
   } else {
     setupGuest(config.token, onPlayMultiplayer);
