@@ -21,12 +21,12 @@ export async function run(suite) {
     assert(source.includes('fireSources'), 'PUBG layer must own held trigger sources without the legacy continuous fire flag');
   });
 
-  suite.test('PUBG touch layer starts after primary or fallback controls exist', () => {
+  suite.test('PUBG touch ownership depends declaratively on primary or fallback controls', () => {
     const source = fs.readFileSync(mainPath, 'utf-8');
-    const client = source.indexOf('startClientRuntime();');
-    const guard = source.indexOf("safeStart('smartphoneControlsGuard', startSmartphoneControlsGuard);");
-    const pubg = source.indexOf("safeStart('pubgTouchControls', startPubgTouchControls);");
-    assert(client >= 0 && guard > client && pubg > guard, 'PUBG fire-drag layer must attach after normal/fallback touch controls initialize');
+    assert(source.includes("name: 'smartphoneControlsGuard'"), 'touch guard must be registered as a device module');
+    assert(source.includes("name: 'pubgTouchControls'"), 'PUBG layer must be registered as a device module');
+    assert(source.includes("dependsOn: ['smartphoneControlsGuard']"), 'PUBG layer must not start before primary/fallback touch ownership exists');
+    assert(source.includes('runtimeKernel.startPhase(\'device\')'), 'device module dependencies must be resolved by the runtime kernel');
   });
 
   suite.test('PUBG control styling enlarges fire control and adds claw fire', () => {
