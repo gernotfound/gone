@@ -18,7 +18,11 @@ function fract(v) {
 }
 
 function hash(x, y) {
-  return fract(Math.sin(x * 12.9898 + y * 78.233) * 43758.5453123);
+  return fract(Math.sin(x * 12.9898 + y * 78.233) * 43758.5453);
+}
+
+function pseudoRandom(x, z) {
+  return fract(Math.sin(x * 12.9898 + z * 78.233) * 43758.5453123);
 }
 
 function fade(t) {
@@ -57,87 +61,145 @@ function fbm(x, z, octaves = 3, scale = 0.002, persistence = 0.5, lacunarity = 2
   return norm > 0 ? total / norm : 0;
 }
 
-function ridged(x, z, octaves = 3, scale = 0.003) {
+function ridged(x, z, octaves = 3, scale = 0.003, persistence = 0.5, lacunarity = 2) {
   let total = 0;
   let amplitude = 1;
   let frequency = scale;
   let norm = 0;
   for (let i = 0; i < octaves; i += 1) {
-    const n = 1 - Math.abs(noise2d(x * frequency, z * frequency));
-    total += n * n * amplitude;
+    let n = Math.abs(noise2d(x * frequency, z * frequency));
+    n = 1 - n;
+    n *= n;
+    total += n * amplitude;
     norm += amplitude;
-    amplitude *= 0.5;
-    frequency *= 2;
+    amplitude *= persistence;
+    frequency *= lacunarity;
   }
   return norm > 0 ? total / norm : 0;
 }
 
-function smoothstep01(t) {
-  const c = Math.max(0, Math.min(1, t));
-  return c * c * (3 - 2 * c);
-}
-
 function craterContribution(x, z) {
-  const grid = 210;
+  let depth = 0;
+
+  // Large procedural craters: mirror game-core/src/lib.rs exactly.
+  const grid = 200;
   const cellX = Math.floor(x / grid);
   const cellZ = Math.floor(z / grid);
-  let h = 0;
-
   for (let gx = -1; gx <= 1; gx += 1) {
     for (let gz = -1; gz <= 1; gz += 1) {
       const cx = cellX + gx;
       const cz = cellZ + gz;
-      const rx = cx * grid + hash(cx, cz) * grid;
-      const rz = cz * grid + hash(cx * 1.17, cz * 1.31) * grid;
-      const dx = x - rx;
-      const dz = z - rz;
-      const dist = Math.hypot(dx, dz);
-      const radius = 22 + hash(cx * 1.73, cz * 0.91) * 28;
-      const t = dist / radius;
-      if (t < 1) {
-        h += (t * t - 1) * radius * 0.28;
-      } else if (t < 1.35) {
-        h += Math.sin(((t - 1) / 0.35) * Math.PI) * radius * 0.08;
+      const rx = cx * grid + pseudoRandom(cx, cz) * grid;
+      const rz = cz * grid + pseudoRandom(cx * 1.1, cz * 1.1) * grid;
+      const dist = Math.hypot(x - rx, z - rz);
+      const radius = 20 + pseudoRandom(cx * 1.2, cz * 1.2) * 30;
+      if (dist < radius * 1.5) {
+        const t = dist / radius;
+        if (t < 1) {
+          depth += (t * t - 1) * radius * 0.4;
+        } else if (t < 1.5) {
+          depth += Math.sin(((t - 1) / 0.5) * Math.PI) * radius * 0.15;
+        }
       }
     }
   }
-  return h;
+
+  // Small impact craters were present in the canonical Rust terrain but had
+  // disappeared from the web fallback, which made production look smoothed.
+  const smallGrid = 30;
+  const smallCellX = Math.floor(x / smallGrid);
+  const smallCellZ = Math.floor(z / smallGrid);
+  const sx = smallCellX * smallGrid + pseudoRandom(smallCellX, smallCellZ) * smallGrid;
+  const sz = smallCellZ * smallGrid + pseudoRandom(smallCellX * 1.3, smallCellZ * 1.3) * smallGrid;
+  const smallDist = Math.hypot(x - sx, z - sz);
+  const smallRadius = 4 + pseudoRandom(smallCellX * 1.4, smallCellZ * 1.4) * 4;
+  if (smallDist < smallRadius * 1.5) {
+    const t = smallDist / smallRadius;
+    if (t < 1) {
+      depth += (t * t - 1) * smallRadius * 0.5;
+    } else if (t < 1.5) {
+      depth += Math.sin(((t - 1) / 0.5) * Math.PI) * smallRadius * 0.2;
+    }
+  }
+
+  return depth;
 }
 
 export function get_height_at(x, z) {
   const distCenter = Math.hypot(x, z);
+  let h = 0;
 
-  // Broad rolling landscape.
-  const warpX = fbm(x + 431, z - 117, 2, 0.0012) * 85;
-  const warpZ = fbm(x - 263, z + 719, 2, 0.0012) * 85;
+  // Domain warping and broad hills: keep the browser fallback in lockstep with
+  // the canonical Rust terrain instead of the softened production substitute.
+  const warpX = fbm(x, z, 2, 0.001, 0.5, 2) * 150;
+  const warpZ = fbm(x + 500, z - 500, 2, 0.001, 0.5, 2) * 150;
   const wx = x + warpX;
   const wz = z + warpZ;
+  h += fbm(wx, wz, 4, 0.002, 0.5, 2.13) * 40;
 
-  let h = fbm(wx, wz, 4, 0.0021, 0.52, 2.05) * 28;
-  h += ridged(wx + 900, wz - 500, 4, 0.0031) * Math.max(0, fbm(x + 1400, z - 800, 2, 0.0011) * 1.7) * 72;
-  h += craterContribution(x, z);
-
-  // Large south-east landmark crater.
-  const giantDist = Math.hypot(x - 1200, z - 1200);
-  const giantRadius = 250;
-  const gt = giantDist / giantRadius;
-  if (gt < 1) {
-    h += (gt * gt - 1) * giantRadius * 0.42;
-  } else if (gt < 1.45) {
-    h += Math.sin(((gt - 1) / 0.45) * Math.PI) * giantRadius * 0.14;
+  // High north-west massif.
+  const nwDist = Math.hypot(x + 1500, z + 1500);
+  let nwMask = 1 - Math.min(nwDist / 2000, 1);
+  nwMask = nwMask * nwMask * (3 - 2 * nwMask);
+  if (nwMask > 0) {
+    let peakNoise = ridged(x, z, 6, 0.0025, 0.5, 2) * 450;
+    const stepHeight = 25;
+    const index = peakNoise / stepHeight;
+    const floor = Math.floor(index);
+    const fraction = index - floor;
+    const smoothFraction = fraction * fraction * (3 - 2 * fraction);
+    peakNoise = (floor + smoothFraction) * stepHeight;
+    h += peakNoise * nwMask;
   }
 
-  // Small deterministic surface detail.
-  h += fbm(x, z, 2, 0.075, 0.5, 2) * 0.35;
+  // Normal mountain field.
+  const mountain = ridged(wx, wz, 5, 0.003, 0.5, 1.97) * 150;
+  let mountainMask = fbm(x + 1000, z - 500, 2, 0.001, 0.5, 2);
+  mountainMask = Math.max(mountainMask * 2, 0);
+  const rawMountain = mountain * mountainMask;
+  const mountainStep = 12;
+  const mountainIndex = rawMountain / mountainStep;
+  const mountainFloor = Math.floor(mountainIndex);
+  const mountainFraction = mountainIndex - mountainFloor;
+  const mountainSmooth = mountainFraction * mountainFraction * (3 - 2 * mountainFraction);
+  h += (mountainFloor + mountainSmooth) * mountainStep;
 
-  // Guaranteed flat and safe spawn platform, blended into the terrain.
-  if (distCenter < 48) {
+  // Water erosion and trenches add the harsher battlefield relief that was
+  // missing from the web fallback.
+  const erosionNoise = ridged(x, z, 4, 0.005, 0.5, 2);
+  const erosion = Math.max(1 - erosionNoise * 1.5, 0);
+  h -= erosion * erosion * 15;
+
+  const trench = Math.abs(fbm(x, z, 3, 0.005, 0.5, 2));
+  if (trench < 0.1) {
+    const t = trench / 0.1;
+    h -= (1 - t * t) * 30;
+  }
+
+  // Giant south-east landmark crater.
+  const giantRadius = 250;
+  const giantDist = Math.hypot(x - 1200, z - 1200);
+  if (giantDist < giantRadius * 1.5) {
+    const t = giantDist / giantRadius;
+    if (t < 1) {
+      h += (t * t - 1) * giantRadius * 0.5;
+    } else if (t < 1.5) {
+      h += Math.sin(((t - 1) / 0.5) * Math.PI) * giantRadius * 0.2;
+    }
+  }
+
+  h += craterContribution(x, z);
+  h += fbm(x, z, 2, 0.1, 0.5, 2) * 0.4;
+
+  // Preserve the canonical safe spawn island only around the world origin.
+  if (distCenter < 40) {
     const spawnHeight = 15;
-    if (distCenter <= 22) {
+    if (distCenter <= 15) {
       h = spawnHeight;
     } else {
-      const t = smoothstep01((distCenter - 22) / 26);
-      h = lerp(spawnHeight, h, t);
+      let t = (distCenter - 15) / 25;
+      t = t * t * (3 - 2 * t);
+      h = spawnHeight * (1 - t) + h * t;
     }
   }
 
