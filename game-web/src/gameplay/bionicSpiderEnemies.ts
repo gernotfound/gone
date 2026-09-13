@@ -2,7 +2,11 @@ import * as THREE from 'three';
 import { calculateWeaponDamageAtDistance } from '../weapons/weaponConfig.ts';
 import {
   BIONIC_SPIDER_BODY_HEIGHT,
+  BIONIC_SPIDER_FOOT_ANCHOR_HEIGHT,
   BIONIC_SPIDER_SCALE,
+  BIONIC_SPIDER_SOURCE_UNIT,
+  BIONIC_SPIDER_STEP_HEIGHT,
+  BIONIC_SPIDER_STEP_LENGTH,
   createBionicSpiderModel,
   disposeBionicSpiderModel,
   poseBionicSpiderLeg,
@@ -28,18 +32,18 @@ const DEATH_ANIM_DURATION = 1.25;
 const CORPSE_LIFETIME = 5.5;
 const ATTACK_COOLDOWN = 0.82;
 const ATTACK_ANIM_DURATION = 0.30;
-// The supplied armored-spider reference uses a 35% swing / 65% stance gait.
-const GAIT_HZ = 1.65;
+
+// The supplied preview advances actionTime by 0.02/frame and multiplies it by
+// 0.8 for the gait cycle. At its intended ~60 Hz that is 0.96 cycles/second.
+const GAIT_HZ = 0.96;
 const SWING_FRACTION = 0.35;
-const UPPER_LEG_LENGTH = 1.58;
-const LOWER_LEG_LENGTH = 1.68;
-const IDLE_BREATH_AMPLITUDE = 0.052;
 const DEATH_CURL_SCALE = 0.4;
 const TAU = Math.PI * 2;
 const DEAD_COLOR = new THREE.Color(0x111111);
 const POWER_CORE_COLOR = new THREE.Color(0xff6600);
 const CYAN_COLOR = new THREE.Color(0x00f3ff);
 const MAGENTA_COLOR = new THREE.Color(0xff00ea);
+const FOOT_ANCHOR_WORLD_HEIGHT = BIONIC_SPIDER_FOOT_ANCHOR_HEIGHT * BIONIC_SPIDER_SCALE;
 
 export interface CraterCenter {
   x: number;
@@ -61,10 +65,7 @@ type TerrainHeightFn = (x: number, z: number) => number;
 type MeleeDamageHandler = (damage: number, enemyId: number) => void;
 
 type LegState = {
-  footWorld: THREE.Vector3;
-  swingStartWorld: THREE.Vector3;
-  swingTargetWorld: THREE.Vector3;
-  wasSwinging: boolean;
+  targetWorld: THREE.Vector3;
   phaseOffset: number;
 };
 
@@ -83,22 +84,14 @@ type EnemyState = {
   attackCooldown: number;
   attackTimer: number;
   groundY: number;
-  terrainPitch: number;
-  terrainRoll: number;
   terrainProbeTimer: number;
   deathSide: number;
   flinchSide: number;
   legs: LegState[];
 };
 
-const tempForward = new THREE.Vector3();
-const tempRight = new THREE.Vector3();
-const tempFootLocal = new THREE.Vector3();
-const tempHipLocal = new THREE.Vector3();
-const tempKneeLocal = new THREE.Vector3();
-const tempDir = new THREE.Vector3();
-const tempBend = new THREE.Vector3();
-const tempMid = new THREE.Vector3();
+const tempLocalTarget = new THREE.Vector3();
+const tempDesiredWorld = new THREE.Vector3();
 
 function fract(value: number): number {
   return value - Math.floor(value);
@@ -135,72 +128,8 @@ function smooth01(value: number): number {
 function setDeathPowerDown(model: BionicSpiderModel, amount: number): void {
   const fade = THREE.MathUtils.clamp(amount, 0, 1);
   model.coreMaterial.color.copy(POWER_CORE_COLOR).lerp(DEAD_COLOR, fade);
-  model.coreMaterial.emissive.copy(POWER_CORE_COLOR).lerp(DEAD_COLOR, fade);
-  model.coreMaterial.emissiveIntensity = THREE.MathUtils.lerp(2.1, 0, fade);
   model.neonCyanMaterial.color.copy(CYAN_COLOR).lerp(DEAD_COLOR, fade);
-  model.neonCyanMaterial.emissive.copy(CYAN_COLOR).lerp(DEAD_COLOR, fade);
-  model.neonCyanMaterial.emissiveIntensity = THREE.MathUtils.lerp(3.0, 0, fade);
   model.neonMagentaMaterial.color.copy(MAGENTA_COLOR).lerp(DEAD_COLOR, fade);
-  model.neonMagentaMaterial.emissive.copy(MAGENTA_COLOR).lerp(DEAD_COLOR, fade);
-  model.neonMagentaMaterial.emissiveIntensity = THREE.MathUtils.lerp(2.8, 0, fade);
-}
-
-function worldFootToLocal(enemy: EnemyState, world: THREE.Vector3, out: THREE.Vector3): THREE.Vector3 {
-  const invScale = 1 / BIONIC_SPIDER_SCALE;
-  const dx = (world.x - enemy.model.root.position.x) * invScale;
-  const dy = (world.y - enemy.model.root.position.y) * invScale;
-  const dz = (world.z - enemy.model.root.position.z) * invScale;
-  const cos = Math.cos(enemy.yaw);
-  const sin = Math.sin(enemy.yaw);
-  out.set(
-    dx * cos - dz * sin,
-    dy,
-    dx * sin + dz * cos,
-  );
-  return out;
-}
-
-function localFootToWorld(enemy: EnemyState, local: THREE.Vector3, out: THREE.Vector3): THREE.Vector3 {
-  const cos = Math.cos(enemy.yaw);
-  const sin = Math.sin(enemy.yaw);
-  const lx = local.x * BIONIC_SPIDER_SCALE;
-  const ly = local.y * BIONIC_SPIDER_SCALE;
-  const lz = local.z * BIONIC_SPIDER_SCALE;
-  out.set(
-    enemy.model.root.position.x + lx * cos + lz * sin,
-    enemy.model.root.position.y + ly,
-    enemy.model.root.position.z - lx * sin + lz * cos,
-  );
-  return out;
-}
-
-function solveTwoBoneKnee(
-  hip: THREE.Vector3,
-  foot: THREE.Vector3,
-  outwardSign: number,
-  out: THREE.Vector3,
-): THREE.Vector3 {
-  tempDir.subVectors(foot, hip);
-  const rawDistance = Math.max(0.001, tempDir.length());
-  const maxReach = UPPER_LEG_LENGTH + LOWER_LEG_LENGTH - 0.02;
-  const distance = Math.min(maxReach, rawDistance);
-  tempDir.multiplyScalar(1 / rawDistance);
-
-  const along = (
-    UPPER_LEG_LENGTH * UPPER_LEG_LENGTH
-    - LOWER_LEG_LENGTH * LOWER_LEG_LENGTH
-    + distance * distance
-  ) / (2 * distance);
-  const height = Math.sqrt(Math.max(0, UPPER_LEG_LENGTH * UPPER_LEG_LENGTH - along * along));
-
-  tempBend.set(outwardSign, 0.82, 0.08);
-  tempBend.addScaledVector(tempDir, -tempBend.dot(tempDir));
-  if (tempBend.lengthSq() < 1e-5) tempBend.set(outwardSign, 1, 0);
-  tempBend.normalize();
-
-  tempMid.copy(hip).addScaledVector(tempDir, along);
-  out.copy(tempMid).addScaledVector(tempBend, height);
-  return out;
 }
 
 export class BionicSpiderEnemySystem {
@@ -307,8 +236,11 @@ export class BionicSpiderEnemySystem {
     const model = createBionicSpiderModel(id);
     const groundY = this.terrainHeightAt(x, z);
     const emergeDepth = 1.55 * BIONIC_SPIDER_SCALE;
+    const yaw = pseudoRandom(x * 0.17, z * 0.19) * TAU;
     model.root.position.set(x, groundY - emergeDepth, z);
-    model.root.rotation.y = pseudoRandom(x * 0.17, z * 0.19) * TAU;
+    // The supplied asset faces -Z. Add PI only at the root so the mesh itself is
+    // unchanged while gameplay yaw continues to mean "move along +Z at yaw=0".
+    model.root.rotation.y = yaw + Math.PI;
     model.root.visible = this.enabled;
     this.scene.add(model.root);
 
@@ -319,34 +251,29 @@ export class BionicSpiderEnemySystem {
       hp: BIONIC_SPIDER_MAX_HP,
       alive: true,
       speed: 0,
-      yaw: model.root.rotation.y,
-      gaitClock: pseudoRandom(x, z) * 2,
+      yaw,
+      gaitClock: pseudoRandom(x, z),
       emergeTime: 0,
       damageTimer: 0,
       deathTimer: 0,
       attackCooldown: 0.35,
       attackTimer: 0,
       groundY,
-      terrainPitch: 0,
-      terrainRoll: 0,
       terrainProbeTimer: (id % 4) * 0.025,
       deathSide: id % 2 === 0 ? 1 : -1,
       flinchSide: 1,
       legs: [],
     };
 
+    model.root.updateMatrixWorld(true);
     for (let i = 0; i < model.legs.length; i += 1) {
       const rig = model.legs[i];
-      const world = new THREE.Vector3();
-      localFootToWorld(enemy, rig.homeFootLocal, world);
-      world.y = this.terrainHeightAt(world.x, world.z);
+      const targetWorld = model.root.localToWorld(rig.defaultTargetLocal.clone());
+      targetWorld.y = this.terrainHeightAt(targetWorld.x, targetWorld.z) + FOOT_ANCHOR_WORLD_HEIGHT;
       enemy.legs.push({
-        footWorld: world,
-        swingStartWorld: world.clone(),
-        swingTargetWorld: world.clone(),
-        wasSwinging: false,
-        // Gemini reference group A is [0,2,5,7]; this mapping preserves it exactly.
-        phaseOffset: ((i % 4) % 2 === 0) !== (i < 4) ? 0.5 : 0,
+        targetWorld,
+        // Exact source tripod groups: A=[0,2,5,7], B=[1,3,4,6].
+        phaseOffset: [0, 2, 5, 7].includes(i) ? 0 : 0.5,
       });
     }
 
@@ -452,10 +379,11 @@ export class BionicSpiderEnemySystem {
     if (enemy.emergeTime < EMERGE_DURATION) {
       const emerge = smooth01(enemy.emergeTime / EMERGE_DURATION);
       enemy.model.root.position.y = enemy.groundY - (1 - emerge) * 1.55 * BIONIC_SPIDER_SCALE;
-      enemy.model.bodyRoot.position.y = BIONIC_SPIDER_BODY_HEIGHT - (1 - emerge) * 0.18;
-      enemy.model.bodyRoot.rotation.z = Math.sin(emerge * Math.PI) * 0.06 * enemy.deathSide;
-      this.updateLegs(enemy, delta, 0);
+      enemy.model.bodyRoot.position.set(0, BIONIC_SPIDER_BODY_HEIGHT, 0);
+      enemy.model.bodyRoot.rotation.set(0, 0, 0);
+      enemy.model.headRoot.rotation.set(0, 0, 0);
       setBionicSpiderDamageVisual(enemy.model, 0);
+      this.updateLegs(enemy, delta, 0);
       return;
     }
 
@@ -471,7 +399,7 @@ export class BionicSpiderEnemySystem {
       enemy.speed = moveTowards(enemy.speed, 0, 22 * delta);
     }
 
-    enemy.model.root.rotation.y = enemy.yaw;
+    enemy.model.root.rotation.y = enemy.yaw + Math.PI;
     enemy.model.root.position.x = THREE.MathUtils.clamp(
       enemy.model.root.position.x + Math.sin(enemy.yaw) * enemy.speed * delta,
       -WORLD_LIMIT,
@@ -490,34 +418,46 @@ export class BionicSpiderEnemySystem {
 
     const speedRatio = THREE.MathUtils.clamp(enemy.speed / BIONIC_SPIDER_MOVE_SPEED, 0, 1);
     enemy.gaitClock += delta * GAIT_HZ * (0.35 + speedRatio * 0.65);
-    this.updateLegs(enemy, delta, speedRatio);
 
     const damageFlash = enemy.damageTimer > 0 ? enemy.damageTimer / DAMAGE_ANIM_DURATION : 0;
     const damageProgress = 1 - damageFlash;
     const damageShock = damageFlash * Math.sin(damageProgress * Math.PI * 5);
     const attackPhase = enemy.attackTimer > 0 ? 1 - enemy.attackTimer / ATTACK_ANIM_DURATION : 0;
     const attackLunge = Math.sin(THREE.MathUtils.clamp(attackPhase, 0, 1) * Math.PI);
-    const idleWeight = 1 - speedRatio;
-    const idleBreath = Math.sin(this.elapsed * 2 + enemy.id * 0.67) * IDLE_BREATH_AMPLITUDE * idleWeight;
-    const walkBob = Math.sin(enemy.gaitClock * TAU * 2) * 0.035 * speedRatio;
+
+    // Source idle/walk body motion, expressed through the one global unit scale.
+    const idleBreath = Math.sin(this.elapsed * 2 + enemy.id * 0.67) * 1.5 * BIONIC_SPIDER_SOURCE_UNIT * (1 - speedRatio);
+    const walkBob = Math.sin(enemy.gaitClock * TAU * 2) * 1.0 * BIONIC_SPIDER_SOURCE_UNIT * speedRatio;
     const walkPitch = speedRatio * (0.05 + Math.sin(enemy.gaitClock * TAU) * 0.02);
+
+    // The original damage state jitters the chassis, but use deterministic
+    // oscillation so animation remains frame-rate stable and reproducible.
+    const damageX = Math.sin(this.elapsed * 67 + enemy.id) * 3 * BIONIC_SPIDER_SOURCE_UNIT * damageFlash;
+    const damageY = (-6 + Math.sin(this.elapsed * 83 + enemy.id * 0.7) * 4) * BIONIC_SPIDER_SOURCE_UNIT * damageFlash;
+    const damageRoll = Math.sin(this.elapsed * 71 + enemy.id) * 0.2 * damageFlash;
+    const damagePitch = (-0.2 + Math.sin(this.elapsed * 79 + enemy.id) * 0.2) * damageFlash;
+
     enemy.model.bodyRoot.position.set(
-      enemy.flinchSide * (damageFlash * 0.08 + damageShock * 0.05),
-      BIONIC_SPIDER_BODY_HEIGHT + idleBreath + walkBob - damageFlash * 0.13 + Math.abs(damageShock) * 0.035,
-      attackLunge * 0.24 - damageFlash * 0.16,
+      damageX,
+      BIONIC_SPIDER_BODY_HEIGHT + idleBreath + walkBob + damageY,
+      -attackLunge * 7.2 * BIONIC_SPIDER_SOURCE_UNIT,
     );
     enemy.model.bodyRoot.rotation.x = THREE.MathUtils.lerp(
       enemy.model.bodyRoot.rotation.x,
-      enemy.terrainPitch + walkPitch - damageFlash * 0.12 + damageShock * 0.08,
+      (speedRatio > 0.05 ? walkPitch : Math.sin(this.elapsed + enemy.id) * 0.01) + damagePitch + damageShock * 0.03,
       Math.min(1, delta * 12),
     );
     enemy.model.bodyRoot.rotation.z = THREE.MathUtils.lerp(
       enemy.model.bodyRoot.rotation.z,
-      enemy.terrainRoll + enemy.flinchSide * (damageFlash * 0.16 + damageShock * 0.10),
+      damageRoll + enemy.flinchSide * damageShock * 0.03,
       Math.min(1, delta * 12),
     );
-    enemy.model.headRoot.rotation.y = Math.sin(enemy.gaitClock * TAU) * 0.045 + enemy.flinchSide * damageFlash * 0.10;
+    enemy.model.headRoot.rotation.set(0, 0, 0);
     setBionicSpiderDamageVisual(enemy.model, damageFlash);
+
+    // Important: pose legs after the body transform so body.worldToLocal() sees
+    // this exact frame's bob/flinch/attack pose. That is what keeps joints joined.
+    this.updateLegs(enemy, delta, speedRatio);
 
     const verticalDistance = Math.abs(playerPosition.y - enemy.groundY);
     if (
@@ -534,57 +474,57 @@ export class BionicSpiderEnemySystem {
 
   private probeTerrain(enemy: EnemyState): void {
     if (!this.terrainHeightAt) return;
-    const x = enemy.model.root.position.x;
-    const z = enemy.model.root.position.z;
-    tempForward.set(Math.sin(enemy.yaw), 0, Math.cos(enemy.yaw));
-    tempRight.set(Math.cos(enemy.yaw), 0, -Math.sin(enemy.yaw));
-
-    const frontProbe = 1.45 * BIONIC_SPIDER_SCALE;
-    const sideProbe = 1.25 * BIONIC_SPIDER_SCALE;
-    const center = this.terrainHeightAt(x, z);
-    const front = this.terrainHeightAt(x + tempForward.x * frontProbe, z + tempForward.z * frontProbe);
-    const right = this.terrainHeightAt(x + tempRight.x * sideProbe, z + tempRight.z * sideProbe);
-    enemy.groundY = center;
-    enemy.terrainPitch = THREE.MathUtils.clamp(Math.atan2(center - front, frontProbe), -0.48, 0.48);
-    enemy.terrainRoll = THREE.MathUtils.clamp(Math.atan2(right - center, sideProbe), -0.42, 0.42);
+    enemy.groundY = this.terrainHeightAt(enemy.model.root.position.x, enemy.model.root.position.z);
   }
 
-  private updateLegs(enemy: EnemyState, _delta: number, speedRatio: number, collapse = 0): void {
+  private updateLegs(enemy: EnemyState, delta: number, speedRatio: number, collapse = 0): void {
     if (!this.terrainHeightAt) return;
+
+    enemy.model.root.updateMatrixWorld(true);
+    const moving = speedRatio > 0.05 && collapse <= 0;
+    // The source preview is stable because its body is stationary. In gameplay
+    // the whole spider translates and turns at speed, so feeding the same target
+    // directly into IK creates large joint deltas near full extension. Follow
+    // the exact source target with a frame-rate-independent world-space follower;
+    // this changes no geometry, proportions, gait frequency or target amplitude.
+    const follow = 1 - Math.exp(-delta * (moving ? 8 : 12));
+
     for (let i = 0; i < enemy.model.legs.length; i += 1) {
       const rig = enemy.model.legs[i];
       const state = enemy.legs[i];
-      const phase = fract(enemy.gaitClock + state.phaseOffset);
-      const swinging = speedRatio > 0.05 && phase < SWING_FRACTION;
+      tempLocalTarget.copy(rig.defaultTargetLocal);
+      let liftLocal = 0;
 
-      if (swinging && !state.wasSwinging) {
-        state.swingStartWorld.copy(state.footWorld);
-        localFootToWorld(enemy, rig.homeFootLocal, state.swingTargetWorld);
-        tempForward.set(Math.sin(enemy.yaw), 0, Math.cos(enemy.yaw));
-        const lead = (0.42 + speedRatio * 1.05) * BIONIC_SPIDER_SCALE;
-        state.swingTargetWorld.addScaledVector(tempForward, lead);
-        state.swingTargetWorld.y = this.terrainHeightAt(state.swingTargetWorld.x, state.swingTargetWorld.z);
-      }
-
-      if (swinging) {
-        const t = smooth01(phase / SWING_FRACTION);
-        state.footWorld.lerpVectors(state.swingStartWorld, state.swingTargetWorld, t);
-        state.footWorld.y += Math.sin(t * Math.PI) * (0.48 + speedRatio * 0.26) * BIONIC_SPIDER_SCALE;
-      } else if (state.wasSwinging) {
-        state.footWorld.copy(state.swingTargetWorld);
-      }
-      state.wasSwinging = swinging;
-
-      tempHipLocal.copy(rig.hipLocal);
-      tempHipLocal.y -= collapse * 0.94;
-      worldFootToLocal(enemy, state.footWorld, tempFootLocal);
       if (collapse > 0) {
         const curl = THREE.MathUtils.lerp(1, DEATH_CURL_SCALE, collapse);
-        tempFootLocal.x *= curl;
-        tempFootLocal.z *= curl;
+        tempLocalTarget.x *= curl;
+        tempLocalTarget.z *= curl;
+      } else if (moving) {
+        const phase = fract(enemy.gaitClock + state.phaseOffset);
+        const amplitude = speedRatio;
+        let zOffset = 0;
+
+        if (phase < SWING_FRACTION) {
+          const t = phase / SWING_FRACTION;
+          zOffset = Math.cos(t * Math.PI) * (BIONIC_SPIDER_STEP_LENGTH / 2) * amplitude;
+          liftLocal = Math.sin(t * Math.PI) * BIONIC_SPIDER_STEP_HEIGHT * amplitude;
+        } else {
+          const t = (phase - SWING_FRACTION) / (1 - SWING_FRACTION);
+          zOffset = -Math.cos(t * Math.PI) * (BIONIC_SPIDER_STEP_LENGTH / 2) * amplitude;
+        }
+
+        tempLocalTarget.z += zOffset;
+        tempLocalTarget.y = BIONIC_SPIDER_FOOT_ANCHOR_HEIGHT + liftLocal;
       }
-      solveTwoBoneKnee(tempHipLocal, tempFootLocal, Math.sign(rig.hipLocal.x), tempKneeLocal);
-      poseBionicSpiderLeg(enemy.model, i, tempHipLocal, tempKneeLocal, tempFootLocal);
+
+      tempDesiredWorld.copy(tempLocalTarget);
+      enemy.model.root.localToWorld(tempDesiredWorld);
+      tempDesiredWorld.y = this.terrainHeightAt(tempDesiredWorld.x, tempDesiredWorld.z)
+        + FOOT_ANCHOR_WORLD_HEIGHT
+        + liftLocal * BIONIC_SPIDER_SCALE;
+
+      state.targetWorld.lerp(tempDesiredWorld, follow);
+      poseBionicSpiderLeg(enemy.model, i, state.targetWorld);
     }
   }
 
@@ -592,11 +532,20 @@ export class BionicSpiderEnemySystem {
     enemy.deathTimer += delta;
     const collapse = smooth01(enemy.deathTimer / DEATH_ANIM_DURATION);
     enemy.model.root.position.y = THREE.MathUtils.lerp(enemy.model.root.position.y, enemy.groundY, Math.min(1, delta * 10));
-    enemy.model.bodyRoot.position.set(0, BIONIC_SPIDER_BODY_HEIGHT - collapse * 0.95, -collapse * 0.12);
-    enemy.model.bodyRoot.rotation.x = enemy.terrainPitch - collapse * 0.45;
-    enemy.model.bodyRoot.rotation.z = enemy.terrainRoll + enemy.deathSide * collapse * 0.20;
-    enemy.model.headRoot.rotation.x = collapse * 0.55;
-    enemy.model.headRoot.rotation.y = enemy.deathSide * collapse * 0.18;
+
+    // Exact supplied death pose: body drops toward source Y=14, pitches -0.45,
+    // rolls +0.2, while all eight legs curl to 40% of their rest spread.
+    enemy.model.bodyRoot.position.x = THREE.MathUtils.lerp(enemy.model.bodyRoot.position.x, 0, Math.min(1, delta * 8));
+    enemy.model.bodyRoot.position.y = THREE.MathUtils.lerp(
+      enemy.model.bodyRoot.position.y,
+      14 * BIONIC_SPIDER_SOURCE_UNIT,
+      Math.min(1, delta * 6),
+    );
+    enemy.model.bodyRoot.position.z = THREE.MathUtils.lerp(enemy.model.bodyRoot.position.z, 0, Math.min(1, delta * 8));
+    enemy.model.bodyRoot.rotation.x = THREE.MathUtils.lerp(enemy.model.bodyRoot.rotation.x, -0.45, Math.min(1, delta * 6));
+    enemy.model.bodyRoot.rotation.z = THREE.MathUtils.lerp(enemy.model.bodyRoot.rotation.z, 0.2, Math.min(1, delta * 6));
+    enemy.model.headRoot.rotation.set(0, 0, 0);
+
     this.updateLegs(enemy, delta, 0, collapse);
     const residualFlash = Math.max(0, 1 - enemy.deathTimer / 0.45);
     setBionicSpiderDamageVisual(enemy.model, residualFlash);
