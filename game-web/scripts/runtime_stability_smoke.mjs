@@ -54,6 +54,55 @@ try {
     assert(module?.state === 'ready', `critical runtime module ${critical} must be ready`);
   }
 
+  // Reproduce the user's first-load path: no reload between PRECARICA DATI and
+  // integrity validation, and the music asset must be part of the same pack.
+  await waitFor(page, () => page.evaluate(() => Boolean(
+    window.gonePerformancePack?.preload &&
+    window.goneCacheIntegrity?.check &&
+    document.getElementById('btn-performance-pack') &&
+    document.getElementById('btn-controls'),
+  )), 'performance pack and controls UI');
+
+  const menuLayout = await page.evaluate(() => {
+    const controls = document.getElementById('btn-controls');
+    const volume = document.getElementById('btn-music-toggle');
+    const settings = document.getElementById('btn-settings');
+    const preload = document.getElementById('performance-pack-controls');
+    const siblings = Array.from(volume?.parentElement?.children ?? []);
+    return {
+      controlsBeforeVolume: siblings.indexOf(controls) < siblings.indexOf(volume),
+      preloadAfterSettings: siblings.indexOf(preload) > siblings.indexOf(settings),
+    };
+  });
+  assert(menuLayout.controlsBeforeVolume, 'COMANDI must be above VOLUME');
+  assert(menuLayout.preloadAfterSettings, 'PRECARICA DATI must be below IMPOSTAZIONI');
+
+  await page.click('#btn-controls');
+  const legend = await page.evaluate(() => ({
+    visible: !document.getElementById('controls-menu')?.classList.contains('hidden'),
+    text: document.getElementById('controls-menu')?.textContent ?? '',
+  }));
+  assert(legend.visible && legend.text.includes('E') && legend.text.includes('Raccogli'), 'controls legend must document E pickup');
+  await page.click('#btn-back-controls');
+
+  const preload = await page.evaluate(async () => {
+    const result = await window.gonePerformancePack.preload();
+    const integrity = await window.goneCacheIntegrity.check();
+    const button = document.getElementById('btn-performance-pack');
+    return {
+      result,
+      integrity,
+      pack: window.gonePerformancePack.snapshot(),
+      musicIncluded: window.gonePerformancePack.assets().includes('/Colossus March.mp3'),
+      buttonDisabled: Boolean(button?.disabled),
+    };
+  });
+  assert(preload.result.failed === 0, 'fresh performance preload must not silently accept failed assets');
+  assert(preload.integrity.status === 'ready' && preload.integrity.missing.length === 0, 'cache integrity must be ready immediately after preload without page reload');
+  assert(preload.pack.status === 'ready', 'performance pack state must settle to ready');
+  assert(preload.musicIncluded, 'performance pack must explicitly include menu music');
+  assert(!preload.buttonDisabled, 'preload button must be re-enabled after completion');
+
   const duringLaunch = await page.evaluate(() => {
     const button = document.getElementById('btn-enter');
     if (!button) throw new Error('Missing enter button');
@@ -146,7 +195,7 @@ try {
   assert(recoveryUi.failedModules.includes('advancedWeaponController'), 'recovery UI must identify the failed critical module');
 
   assert(failures.length === 0, `Browser exceptions detected:\n${failures.join('\n')}`);
-  console.log('[runtime-stability] PASS', JSON.stringify({ duringLaunch, ready, released, reconciliation, finalHealth, recoveryUi }));
+  console.log('[runtime-stability] PASS', JSON.stringify({ bootHealth, menuLayout, preload, duringLaunch, ready, released, reconciliation, finalHealth, recoveryUi }));
   await context.close();
 } finally {
   await browser.close();
