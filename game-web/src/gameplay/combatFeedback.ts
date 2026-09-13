@@ -4,6 +4,9 @@ let markerRoot: HTMLDivElement | null = null;
 let markerLabel: HTMLDivElement | null = null;
 let feedRoot: HTMLDivElement | null = null;
 let impactRoot: HTMLDivElement | null = null;
+let deathRecapRoot: HTMLDivElement | null = null;
+let deathRecapKiller: HTMLDivElement | null = null;
+let deathRecapDetail: HTMLDivElement | null = null;
 let markerTimer: number | null = null;
 let labelTimer: number | null = null;
 let impactTimer: number | null = null;
@@ -13,6 +16,7 @@ let headshotCount = 0;
 let incomingHitCount = 0;
 let incomingShieldCount = 0;
 let incomingFatalCount = 0;
+let deathRecapCount = 0;
 
 function gameplayVisible(): boolean {
   const gameUi = document.getElementById('game-ui');
@@ -47,6 +51,36 @@ function nameForSlot(slot: number): string {
   return `P${slot}`;
 }
 
+function ensureDeathRecapUi(): void {
+  if (deathRecapRoot?.isConnected) return;
+  deathRecapRoot = null;
+  deathRecapKiller = null;
+  deathRecapDetail = null;
+
+  const overlay = document.getElementById('death-overlay');
+  const card = overlay?.firstElementChild;
+  if (!(card instanceof HTMLElement)) return;
+
+  const root = document.createElement('div');
+  root.id = 'gone-death-recap';
+  root.setAttribute('role', 'status');
+  root.setAttribute('aria-live', 'polite');
+
+  const killer = document.createElement('div');
+  killer.id = 'gone-death-recap-killer';
+  const detail = document.createElement('div');
+  detail.id = 'gone-death-recap-detail';
+  root.append(killer, detail);
+
+  const title = card.querySelector('h2');
+  if (title) title.insertAdjacentElement('afterend', root);
+  else card.prepend(root);
+
+  deathRecapRoot = root;
+  deathRecapKiller = killer;
+  deathRecapDetail = detail;
+}
+
 function ensureUi(): void {
   if (!document.getElementById('gone-combat-feedback-style')) {
     const style = document.createElement('style');
@@ -59,8 +93,11 @@ function ensureUi(): void {
 #gone-hit-label{position:fixed;left:50%;top:calc(50% + 31px);transform:translateX(-50%);z-index:72;pointer-events:none;opacity:0;color:#e2e8f0;font:900 11px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.12em;text-shadow:0 0 8px currentColor;transition:opacity 90ms linear}#gone-hit-label.show{opacity:1}
 #gone-incoming-impact{position:fixed;left:50%;top:50%;width:76px;height:76px;border:2px solid var(--impact,#ef4444);border-radius:50%;transform:translate(-50%,-50%) scale(.68);z-index:71;pointer-events:none;opacity:0;box-shadow:0 0 16px var(--impact,#ef4444),inset 0 0 14px var(--impact,#ef4444);transition:opacity 70ms linear,transform 105ms ease-out}
 #gone-incoming-impact.show{opacity:.92;transform:translate(-50%,-50%) scale(1.05)}
+#gone-death-recap{display:none;flex-direction:column;align-items:center;gap:4px;margin:-4px 0 14px;padding:8px 14px;border-radius:10px;border:1px solid rgba(251,113,133,.34);background:rgba(69,10,10,.38);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;text-align:center;max-width:min(460px,82vw)}
+#gone-death-recap.show{display:flex}#gone-death-recap-killer{color:#fecdd3;font-size:13px;font-weight:900;letter-spacing:.11em;text-transform:uppercase;text-shadow:0 0 9px rgba(251,113,133,.65)}#gone-death-recap-detail{color:#fda4af;font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}
 #gone-kill-feed{position:fixed;right:16px;top:110px;z-index:69;display:flex;flex-direction:column;gap:5px;align-items:flex-end;pointer-events:none;font:800 10px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace}
 .gone-kill-row{padding:5px 8px;border-radius:6px;background:rgba(2,6,23,.76);border:1px solid rgba(148,163,184,.22);color:#cbd5e1;box-shadow:0 0 12px rgba(15,23,42,.45);animation:goneKillIn .14s ease-out}@keyframes goneKillIn{from{opacity:0;transform:translateX(8px)}to{opacity:1;transform:none}}
+html.gone-smartphone #gone-death-recap{margin:-2px 0 8px;padding:6px 10px;max-width:min(420px,88vw)}html.gone-smartphone #gone-death-recap-killer{font-size:11px}html.gone-smartphone #gone-death-recap-detail{font-size:9px}
 @media (prefers-reduced-motion:reduce){#gone-hit-marker,#gone-hit-label,#gone-incoming-impact{transition:none}.gone-kill-row{animation:none}}
 `;
     document.head.appendChild(style);
@@ -88,6 +125,7 @@ function ensureUi(): void {
     feedRoot.id = 'gone-kill-feed';
     document.body.appendChild(feedRoot);
   }
+  ensureDeathRecapUi();
 }
 
 function showMarker(detail: CombatHitEventDetail): void {
@@ -151,6 +189,19 @@ function showIncomingImpact(detail: CombatHitEventDetail): void {
   );
 }
 
+function showDeathRecap(detail: CombatHitEventDetail): void {
+  const hit = detail.hit;
+  if (!(hit.isFatalKill || hit.isFatal) || localPlayerSlot() !== hit.victimSlot) return;
+  ensureUi();
+  if (!deathRecapRoot || !deathRecapKiller || !deathRecapDetail) return;
+
+  deathRecapCount += 1;
+  const killer = nameForSlot(hit.shooterSlot).trim() || `P${hit.shooterSlot}`;
+  deathRecapKiller.textContent = `ELIMINATO DA ${killer.toUpperCase()}`;
+  deathRecapDetail.textContent = `${hit.isHeadshot ? 'HEADSHOT' : 'COLPO LETALE'} · ${Math.max(0, Math.round(hit.damage))} DMG`;
+  deathRecapRoot.classList.add('show');
+}
+
 function addKillFeed(detail: CombatHitEventDetail): void {
   const hit = detail.hit;
   if (!(hit.isFatalKill || hit.isFatal)) return;
@@ -179,6 +230,7 @@ export function startCombatFeedback(): void {
   window.addEventListener('gone-hit-confirmed', ((event: CustomEvent<CombatHitEventDetail>) => {
     showMarker(event.detail);
     showIncomingImpact(event.detail);
+    showDeathRecap(event.detail);
     addKillFeed(event.detail);
   }) as EventListener);
 
@@ -190,6 +242,7 @@ export function startCombatFeedback(): void {
       incomingHitCount,
       incomingShieldCount,
       incomingFatalCount,
+      deathRecapCount,
     }),
   };
 }
