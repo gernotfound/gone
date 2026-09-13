@@ -43,6 +43,12 @@ export interface InputCallbacks {
 let callbacks: InputCallbacks = {};
 let inputListenersInstalled = false;
 
+function requestPickup(): void {
+    window.dispatchEvent(new CustomEvent('gone-pickup-requested', {
+        detail: { source: 'keyboard' },
+    }));
+}
+
 export function initInput(cb: InputCallbacks = {}) {
     // Re-initialization can legitimately update callbacks after a session/runtime
     // repair, but browser listeners must be installed exactly once.
@@ -136,6 +142,9 @@ function handleKey(e: KeyboardEvent, isDown: boolean) {
             break;
         case 'Space':
             inputState.jump = isDown;
+            break;
+        case 'KeyE':
+            if (isDown && !e.repeat) requestPickup();
             break;
         case 'KeyM':
             if (isDown && callbacks.onToggleMap) {
