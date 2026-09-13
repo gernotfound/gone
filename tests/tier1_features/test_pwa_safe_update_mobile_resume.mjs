@@ -23,7 +23,7 @@ export async function run(suite) {
   suite.test('PWA polls deployment version without browser caches and defers reload during gameplay', () => {
     assert(pwa.includes("cache: 'no-store'"), 'version beacon fetch must bypass browser caches');
     assert(pwa.includes('UPDATE_CHECK_MS = 45_000'), 'PWA must poll for deploy changes on a bounded cadence');
-    assert(pwa.includes("document.addEventListener('visibilitychange'") && pwa.includes("window.addEventListener('online'") && pwa.includes("window.addEventListener('focus'"), 'PWA must recheck after foreground/network resume');
+    assert(pwa.includes("browserLifecycle.subscribe('visible', 'pwaUpdate'") && pwa.includes("browserLifecycle.subscribe('online', 'pwaUpdate'") && pwa.includes("browserLifecycle.subscribe('focus', 'pwaUpdate'"), 'PWA must recheck through the shared foreground/network lifecycle');
     assert(pwa.includes('remoteBuildId === BUILD_ID'), 'PWA must compare remote and embedded build ids');
     assert(pwa.includes('registerWorkerForBuild(remoteBuildId)'), 'new deploy must register a worker keyed to the remote build');
     assert(pwa.includes('liveGameplayActive()') && pwa.includes('safeToReload()'), 'reload must be guarded by active gameplay state');
@@ -43,9 +43,9 @@ export async function run(suite) {
     assert(vercel.includes('Service-Worker-Allowed'), 'worker scope header must remain explicit');
   });
 
-  suite.test('Mobile resume restarts safe session cadence after background or network transitions', () => {
-    for (const hook of ["visibilitychange", "pageshow", "online", "offline", "focus"]) {
-      assert(resume.includes(hook), `mobile resume must handle ${hook}`);
+  suite.test('Mobile resume restarts safe session cadence after ordered lifecycle transitions', () => {
+    for (const hook of ['visible', 'hidden', 'pageshow', 'online', 'offline', 'focus']) {
+      assert(resume.includes(`browserLifecycle.subscribe('${hook}', 'mobileSessionResume'`), `mobile resume must subscribe to ${hook} through the lifecycle broker`);
     }
     assert(resume.includes('client.startStateTick?.(30)') && resume.includes('client.sendCurrentState?.()'), 'guest cadence must restart and send immediate state');
     assert(resume.includes('host.startSnapshotTick') && resume.includes('goneNetworkQuality'), 'host cadence must resume at the adaptive snapshot rate');
@@ -54,9 +54,9 @@ export async function run(suite) {
     assert(resume.includes('resetInputState()'), 'background/offline transitions must clear held combat/movement input');
   });
 
-  suite.test('Mobile resume starts only after the game runtime exists', () => {
-    const client = main.indexOf('startClientRuntime();');
-    const resumeStart = main.indexOf("safeStart('mobileSessionResume', startMobileSessionResume);");
-    assert(client >= 0 && resumeStart > client, 'mobile session repair must start after goneGame/network runtime initialization');
+  suite.test('Mobile resume is a device module that depends on bootstrap', () => {
+    assert(main.includes("name: 'mobileSessionResume'"), 'mobile session resume must be registered as a device module');
+    assert(main.includes("dependsOn: ['bootstrap']"), 'mobile session repair must require the game/menu runtime');
+    assert(main.includes("runtimeKernel.startPhase('device')"), 'device lifecycle must be started through dependency resolution');
   });
 }
