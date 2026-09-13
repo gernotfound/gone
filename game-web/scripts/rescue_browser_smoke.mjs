@@ -68,6 +68,15 @@ async function connectGuest(host, guest, label, previousInvite = null) {
   return invite;
 }
 
+async function moveGuestIncrementally(page, axis, deltaPerStep, steps = 4, stepDelayMs = 120) {
+  await page.evaluate(async ({ axisName, delta, count, delay }) => {
+    for (let index = 0; index < count; index += 1) {
+      window.goneGame.player.position[axisName] += delta;
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }, { axisName: axis, delta: deltaPerStep, count: steps, delay: stepDelayMs });
+}
+
 async function main() {
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1000, height: 700 } });
@@ -128,7 +137,7 @@ async function main() {
     // ticks and authoritative snapshots are independent from GPU/render startup;
     // keeping them separate prevents headless software-WebGL starvation from
     // being misdiagnosed as a WebRTC failure.
-    console.log('[smoke] Verifying both guests feed authoritative state to host');
+    console.log('[smoke] Verifying both guests feed plausible authoritative state to host');
     const before = await host.evaluate(([aId, bId]) => {
       const session = window.goneGame.getP2PHost();
       const a = session.playerRecords.get(aId);
@@ -140,8 +149,12 @@ async function main() {
       };
     }, [guestAId, guestBId]);
 
-    await guestA.evaluate(() => { window.goneGame.player.position.x += 7; });
-    await guestB.evaluate(() => { window.goneGame.player.position.z -= 8; });
+    // Move through several legal deltas instead of teleporting in one frame;
+    // the production host now rejects impossible client movement by design.
+    await Promise.all([
+      moveGuestIncrementally(guestA, 'x', 1.5),
+      moveGuestIncrementally(guestB, 'z', -1.5),
+    ]);
 
     await waitFor(async () => host.evaluate(([aId, bId, initial]) => {
       const session = window.goneGame.getP2PHost();
