@@ -13,17 +13,20 @@ export async function run(suite) {
 
   suite.test('Smartphone controls guard provides a functional fallback when primary mobile runtime is disabled', () => {
     const guard = fs.readFileSync(path.join(PROJECT_ROOT, 'game-web', 'src', 'mobile', 'smartphoneControlsGuard.ts'), 'utf8');
-    assert(guard.includes("primary?.enabled === true"), 'guard should prefer the primary mobile runtime when available');
-    assert(guard.includes('createFallbackControls()'), 'guard should create fallback touch controls when primary runtime is unavailable');
+    assert(guard.includes("controls?.enabled === true && controls.fallback !== true"), 'guard should prefer the primary mobile runtime when available');
+    assert(guard.includes('installFallbackInfrastructure()'), 'guard should install fallback touch infrastructure when primary runtime is unavailable');
     for (const id of ['mobile-stick', 'mobile-look-pad', 'mc-fire', 'mc-aim', 'mc-jump', 'mc-reload', 'mc-map', 'mc-menu']) {
       assert(guard.includes(id), `fallback should include ${id}`);
     }
   });
 
-  suite.test('Client startup runs smartphone controls guard after the normal client runtime', () => {
+  suite.test('Touch guard is started once after bootstrap and reconciles future mode changes', () => {
     const main = fs.readFileSync(path.join(PROJECT_ROOT, 'game-web', 'src', 'main.ts'), 'utf8');
-    const clientIndex = main.indexOf('startClientRuntime();');
-    const guardIndex = main.indexOf("safeStart('smartphoneControlsGuard', startSmartphoneControlsGuard);");
-    assert(clientIndex >= 0 && guardIndex > clientIndex, 'guard must run after the primary client/mobile runtime has had a chance to initialize');
+    const guard = fs.readFileSync(path.join(PROJECT_ROOT, 'game-web', 'src', 'mobile', 'smartphoneControlsGuard.ts'), 'utf8');
+    assert(main.includes("name: 'smartphoneControlsGuard'"), 'touch guard must be a device runtime module');
+    assert(main.includes("dependsOn: ['bootstrap']"), 'touch guard must wait for game/menu bootstrap');
+    assert(main.includes('reconcile: reconcileSmartphoneControlsGuard'), 'runtime must expose reconciliation instead of restart hacks');
+    assert(guard.includes('if (guardStarted)') && guard.includes('reconcileSmartphoneControlsGuard();'), 'repeat starts must reconcile rather than duplicate listeners');
+    assert(!main.includes('__goneSmartphoneControlsGuardStarted = false'), 'main must not mutate guard startup flags');
   });
 }
