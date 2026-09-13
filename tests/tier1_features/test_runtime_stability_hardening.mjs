@@ -8,12 +8,21 @@ function source(...parts) {
 }
 
 export async function run(suite) {
+  const main = source('game-web', 'src', 'main.ts');
   const engine = source('game-web', 'src', 'gameplay', 'engine.ts');
   const input = source('game-web', 'src', 'controls', 'playerInput.ts');
   const runtime = source('game-web', 'src', 'runtime', 'startClientRuntime.ts');
   const diagnostics = source('game-web', 'src', 'observability', 'clientDiagnostics.ts');
   const telemetry = source('game-web', 'api', 'client-telemetry.js');
   const pwa = source('game-web', 'src', 'pwa', 'pwaRuntime.ts');
+
+  suite.test('Top-level composition starts diagnostics first and isolates optional features', () => {
+    assert(main.includes('startClientDiagnostics();'), 'diagnostics must start before optional top-level features');
+    assert(main.includes("safeStart('smartphoneProfile', startSmartphoneProfile)"), 'smartphone profile startup must be isolated');
+    assert(main.includes("safeStart('pwaRuntime', startPwaRuntime)"), 'PWA startup must be isolated');
+    assert(main.includes("new CustomEvent('gone-runtime-start-error'"), 'top-level startup failures must emit diagnostics');
+    assert(main.includes("console.error('[main] client runtime failed'"), 'core runtime failure must not prevent recovery surfaces from remaining alive');
+  });
 
   suite.test('Gameplay preload is single-flight and render loop starts once', () => {
     assert(engine.includes('let preloadPromise: Promise<void> | null = null'), 'engine must track one in-flight preload');
