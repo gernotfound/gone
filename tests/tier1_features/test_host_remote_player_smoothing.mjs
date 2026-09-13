@@ -1,52 +1,38 @@
 import fs from 'fs';
 import path from 'path';
-import {
-  addOrUpdateRemotePlayer,
-  removeRemotePlayer,
-  updateRemotePlayerPresentation,
-} from '../../game-web/src/gameplay/remotePlayerRegistry.ts';
+import { InterpolationBuffer } from '../../game-web/src/net/interpolationBuffer.ts';
 import { assert, assertCloseTo } from '../helpers/assertions.mjs';
 import { PROJECT_ROOT } from '../helpers/asset_inspector.mjs';
 
 export async function run(suite) {
-  suite.test('Host remote samples stay buffered instead of snapping the rendered robot', () => {
-    const id = 'host-smoothing-regression';
-    const t0 = performance.now();
-    const remote = addOrUpdateRemotePlayer(
-      id,
-      0,
-      0,
-      0,
-      0,
-      '#00F0FF',
-      'assalto',
-      1,
-      { snapshotTimestamp: t0 },
-    );
+  suite.test('Host remote presentation interpolates between buffered network samples', () => {
+    const buffer = new InterpolationBuffer({
+      renderDelayMs: 90,
+      maxExtrapolationMs: 150,
+      teleportThresholdMeters: 10,
+    });
 
-    addOrUpdateRemotePlayer(
-      id,
-      6,
-      0,
-      0,
-      Math.PI / 2,
-      '#00F0FF',
-      'assalto',
-      1,
-      {
-        snapExistingTransform: false,
-        snapshotTimestamp: t0 + 100,
-      },
-    );
+    buffer.pushSnapshot({
+      timestamp: 1000,
+      x: 0,
+      y: 0,
+      z: 0,
+      yaw: 0,
+      pitch: 0,
+    });
+    buffer.pushSnapshot({
+      timestamp: 1100,
+      x: 6,
+      y: 0,
+      z: 0,
+      yaw: Math.PI / 2,
+      pitch: 0,
+    });
 
-    assertCloseTo(remote.group.position.x, 0, 1e-6, 'Fresh host packet must not snap presentation immediately');
-    assertCloseTo(remote.group.rotation.y, 0, 1e-6, 'Fresh host yaw must wait for presentation sampling');
-
-    updateRemotePlayerPresentation(t0 + 50);
-    assertCloseTo(remote.group.position.x, 3, 1e-6, 'Presentation should interpolate halfway between host samples');
-    assertCloseTo(remote.group.rotation.y, Math.PI / 4, 1e-6, 'Yaw should interpolate on the presentation timeline');
-
-    removeRemotePlayer(id);
+    const midpoint = buffer.sample(1050);
+    assert(midpoint, 'Buffered remote state must be sampleable between host packets');
+    assertCloseTo(midpoint.x, 3, 1e-6, 'Presentation should interpolate halfway between host samples');
+    assertCloseTo(midpoint.yaw, Math.PI / 4, 1e-6, 'Yaw should interpolate on the shortest presentation arc');
   });
 
   suite.test('Host sync applies the 90 ms delay once and keeps authority data separate from presentation', () => {
@@ -57,7 +43,10 @@ export async function run(suite) {
     assert(hostSync.includes('snapExistingTransform: false'), 'Host sync must not mutate the rendered transform on packet arrival');
     assert(hostSync.includes('snapshotTimestamp: now'), 'Host samples must use the local arrival/presentation clock without pre-subtracting delay');
     assert(registry.includes('if (options.snapExistingTransform !== false)'), 'Registry must preserve explicit snap behavior for non-buffered callers');
+    assert(registry.includes('timestamp: snapshotTimestamp'), 'Registry must push the caller-provided presentation timestamp into the interpolation buffer');
     assert(engine.includes('updateRemotePlayerPresentation(performance.now() - 90)'), 'Render loop remains the single owner of the 90 ms interpolation delay');
     assert(!hostSync.includes('snapshotTimestamp: now - 90'), 'Host sync must not double-apply interpolation delay');
+    assert(!hostSync.includes('remote.group.position.set('), 'Host sync must not directly snap remote position');
+    assert(!hostSync.includes('remote.group.rotation'), 'Host sync must not directly snap remote rotation');
   });
 }
