@@ -66,13 +66,13 @@ export function bootstrap(): void {
       }
       DOM.multiplayerLobby.classList.remove('flex');
       DOM.multiplayerLobby.classList.add('hidden');
-      if (!hasInitializedWasm) preLoadGame();
+      if (!hasInitializedGame) void preLoadGame();
       else startGameplay();
     },
     onEnter: async (event: MouseEvent) => {
       event.stopPropagation();
       soundSynth.unlock().catch(() => {});
-      if (!hasInitializedWasm) preLoadGame();
+      if (!hasInitializedGame) void preLoadGame();
       else startGameplay();
     },
     onExit: () => {
@@ -384,20 +384,28 @@ export function handleRemoteHitscan(message: FireHitscanMessage): void {
 
 // --- GAME INITIALIZATION / LOOP ---
 let hasInitializedWasm = false;
+let hasInitializedGame = false;
+let preloadPromise: Promise<void> | null = null;
+let renderLoopStarted = false;
 let isMapOpen = false;
 
-async function preLoadGame(): Promise<void> {
+async function performPreload(): Promise<void> {
   showLoadingScreen();
   try {
-    updateLoadingProgress(10, 'DOWNLOAD MOTORE WASM...');
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    await init();
-    hasInitializedWasm = true;
+    if (!hasInitializedWasm) {
+      updateLoadingProgress(10, 'DOWNLOAD MOTORE WASM...');
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      await init();
+      hasInitializedWasm = true;
+    }
 
     updateLoadingProgress(50, 'INIZIALIZZAZIONE SHADER THREE.JS...');
     await new Promise((resolve) => setTimeout(resolve, 200));
-    isGameRunning = true;
-    initGame();
+    if (!hasInitializedGame) {
+      isGameRunning = true;
+      initGame();
+      hasInitializedGame = true;
+    }
 
     updateLoadingProgress(80, 'GENERAZIONE CHUNK PROCEDURALI...');
     await new Promise((resolve) => setTimeout(resolve, 200));
@@ -407,7 +415,30 @@ async function preLoadGame(): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 300));
     hideLoadingScreen(startGameplay);
   } catch (error) {
+    isGameRunning = hasInitializedGame;
     showErrorLoading(error);
+  }
+}
+
+function preLoadGame(): Promise<void> {
+  if (hasInitializedGame) {
+    startGameplay();
+    return Promise.resolve();
+  }
+  if (preloadPromise) return preloadPromise;
+
+  preloadPromise = performPreload().finally(() => {
+    preloadPromise = null;
+  });
+  return preloadPromise;
+}
+
+function requestPointerLockSafely(): void {
+  try {
+    const promise = document.body.requestPointerLock();
+    if (promise) promise.catch(() => {});
+  } catch {
+    // Pointer lock may be denied when the browser has no matching user gesture.
   }
 }
 
@@ -424,12 +455,7 @@ function startGameplay(): void {
     DOM.musicStatus.className = 'text-emerald-400';
   }
 
-  try {
-    const promise = document.body.requestPointerLock();
-    if (promise) promise.catch(() => {});
-  } catch {
-    // Pointer lock may be denied when the browser has no matching user gesture.
-  }
+  requestPointerLockSafely();
 }
 
 function initGame(): void {
@@ -483,7 +509,7 @@ function initGame(): void {
         drawMinimap(player.position.x, player.position.z, inputState.yaw, getTerrainHeightAt);
       } else {
         DOM.mapUi.classList.add('hidden');
-        document.body.requestPointerLock();
+        requestPointerLockSafely();
       }
     },
     onInteract: () => {
@@ -494,7 +520,7 @@ function initGame(): void {
         DOM.mainMenu.classList.contains('hidden') &&
         DOM.settingsMenu.classList.contains('hidden') &&
         !isMapOpen
-      ) document.body.requestPointerLock();
+      ) requestPointerLockSafely();
     },
     onPointerLockLost: () => {
       if (!isGameRunning || isMapOpen) return;
@@ -511,7 +537,10 @@ function initGame(): void {
   });
 
   window.addEventListener('resize', () => sceneManager.resize(window.innerWidth, window.innerHeight));
-  animate();
+  if (!renderLoopStarted) {
+    renderLoopStarted = true;
+    requestAnimationFrame(animate);
+  }
 }
 
 function updatePhysics(delta: number): void {
@@ -742,6 +771,13 @@ export function bindP2PHostNetworking(host: P2PHost): void {
   getShotCooldown: () => shotCooldown,
   isShooting: () => inputState.fire,
   getRecoilShakeState,
+  runtimeSnapshot: () => ({
+    hasInitializedWasm,
+    hasInitializedGame,
+    preloadInFlight: Boolean(preloadPromise),
+    renderLoopStarted,
+    isGameRunning,
+  }),
   keys: inputState,
   clock,
 };
