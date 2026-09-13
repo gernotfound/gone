@@ -98,11 +98,14 @@ function errorMessage(error: unknown): string {
  * already emits so session presentation can react to peer color changes.
  */
 class SessionP2PHost extends P2PHost {
+  private readonly onRosterColorChanged: (playerId: string, color: string) => void;
+
   constructor(
     options: P2PHostOptions,
-    private readonly onRosterColorChanged: (playerId: string, color: string) => void,
+    onRosterColorChanged: (playerId: string, color: string) => void,
   ) {
     super(options);
+    this.onRosterColorChanged = onRosterColorChanged;
   }
 
   override broadcastBinary(buffer: ArrayBuffer, excludePlayerId?: string): void {
