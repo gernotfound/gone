@@ -12,6 +12,7 @@ export async function run(suite) {
   const kernel = source('game-web', 'src', 'runtime', 'runtimeKernel.ts');
   const lifecycle = source('game-web', 'src', 'runtime', 'browserLifecycle.ts');
   const runtime = source('game-web', 'src', 'runtime', 'startClientRuntime.ts');
+  const availabilityUi = source('game-web', 'src', 'ui', 'runtimeAvailabilityUi.ts');
   const guard = source('game-web', 'src', 'mobile', 'smartphoneControlsGuard.ts');
   const input = source('game-web', 'src', 'controls', 'playerInput.ts');
   const pwa = source('game-web', 'src', 'pwa', 'pwaRuntime.ts');
@@ -49,11 +50,28 @@ export async function run(suite) {
     }
   });
 
-  suite.test('Touch fallback uses reconciliation instead of startup-flag reset', () => {
+  suite.test('Touch fallback uses one kernel-owned reconciliation path', () => {
     assert(guard.includes('export function reconcileSmartphoneControlsGuard'), 'touch guard must expose reconciliation');
-    assert(guard.includes("window.addEventListener('gone-input-mode-changed', reconcileSmartphoneControlsGuard)"), 'guard must own its mode transition');
+    assert(!guard.includes("window.addEventListener('gone-input-mode-changed'"), 'touch guard must not install a second mode-change owner');
     assert(guard.includes('if (guardStarted)') && guard.includes('reconcileSmartphoneControlsGuard();'), 'repeat start must be idempotent');
     assert(main.includes('reconcile: reconcileSmartphoneControlsGuard'), 'kernel must know the device module can reconcile');
+    assert(main.includes("window.addEventListener('gone-input-mode-changed'"), 'composition must forward application configuration changes once');
+    assert(main.includes("runtimeKernel.reconcilePhase('device')"), 'device reconciliation must run through the kernel');
+  });
+
+  suite.test('Critical core failure blocks device controls and exposes a safe recovery UI', () => {
+    assert(main.includes("const COMBAT_SAFE_CORE = ['bootstrap', 'advancedWeaponController']"), 'device controls must depend on the combat-safe core');
+    assert(main.includes("if (runtimeKernel.isReady('advancedWeaponController'))"), 'device phase must never activate over a failed ammo authority');
+    assert(main.includes("name: 'runtimeAvailabilityUi'"), 'fail-closed recovery UI must start as shell infrastructure');
+    assert(availabilityUi.includes("window.addEventListener('gone-runtime-unavailable'"), 'recovery UI must consume explicit runtime-unavailable events');
+    assert(availabilityUi.includes('AVVIO SICURO INTERROTTO'), 'critical failure must present an actionable user-facing state');
+    assert(availabilityUi.includes('window.location.reload()'), 'recovery UI must provide a deterministic reload action');
+  });
+
+  suite.test('Fallback replaces half-owned touch DOM instead of stacking listeners', () => {
+    assert(guard.includes("existing.dataset.goneControlOwner === 'fallback'"), 'fallback must recognize its own control tree');
+    assert(guard.includes('existing.remove();'), 'unknown or partial control ownership must be replaced rather than patched');
+    assert(guard.includes("fallbackRoot.dataset.goneFallbackBound === '1'"), 'fallback handlers must be bound idempotently');
   });
 
   suite.test('Build isolates stable Three runtime without relaxing execution ordering', () => {
