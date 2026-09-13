@@ -89,8 +89,8 @@ export async function run(suite) {
     const repeated = getSafestRespawnPoint(0, threats);
     assertEqual(selected.id, repeated.id, 'same authoritative world state must select the same respawn');
     assertGreaterThan(
-      distanceSq(defaultPoint, threats[0].position),
       distanceSq(selected, threats[0].position),
+      distanceSq(defaultPoint, threats[0].position),
       'safe respawn must move farther from an alive opponent camping the slot spawn',
     );
     assertEqual(
