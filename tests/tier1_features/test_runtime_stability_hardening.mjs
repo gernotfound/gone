@@ -25,7 +25,8 @@ export async function run(suite) {
     assert(runtime.includes('runtimeKernel.registerMany(CLIENT_RUNTIME_MODULES)'), 'game modules must register with the same kernel');
     assert(!main.includes('function safeStart(') && !runtime.includes('function safeStart('), 'duplicated startup wrappers must be removed');
     assert(kernel.includes("status: 'booting' | 'healthy' | 'degraded' | 'failed'"), 'kernel must expose explicit health states');
-    assert(kernel.includes("state: 'blocked'"), 'dependency failures must block dependants explicitly');
+    assert(kernel.includes("record.state = 'blocked'"), 'dependency failures must block dependants explicitly');
+    assert(kernel.includes("operation: 'start' | 'reconcile' | 'dependency'"), 'dependency failures must be observable through the same failure channel');
   });
 
   suite.test('Gameplay preload is single-flight and render loop starts once', () => {
