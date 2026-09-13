@@ -34,7 +34,8 @@ try {
       window.goneGame?.runtimeSnapshot &&
       window.__goneClientRuntimeStarted &&
       window.goneRuntimeHealth?.snapshot &&
-      window.goneBrowserLifecycle?.snapshot,
+      window.goneBrowserLifecycle?.snapshot &&
+      window.goneRuntimeAvailability?.snapshot,
     )),
     'runtime kernel bootstrap',
   );
@@ -43,9 +44,11 @@ try {
   const bootHealth = await page.evaluate(() => ({
     health: window.goneRuntimeHealth.snapshot(),
     lifecycle: window.goneBrowserLifecycle.snapshot(),
+    availability: window.goneRuntimeAvailability.snapshot(),
   }));
   assert(bootHealth.health.failed === 0 && bootHealth.health.blocked === 0, 'runtime graph must boot without failed/blocked modules');
   assert(bootHealth.lifecycle.started, 'browser lifecycle broker must be active');
+  assert(!bootHealth.availability.visible, 'runtime recovery UI must stay hidden on a healthy boot');
   for (const critical of ['browserLifecycle', 'bootstrap', 'advancedWeaponController']) {
     const module = bootHealth.health.modules.find((candidate) => candidate.name === critical);
     assert(module?.state === 'ready', `critical runtime module ${critical} must be ready`);
@@ -104,7 +107,7 @@ try {
   });
   assert(reconciliation.before?.attempts === 1, 'touch guard must have exactly one startup attempt before mode changes');
   assert(reconciliation.after?.attempts === 1, 'input mode changes must not restart the touch guard');
-  assert(reconciliation.after?.reconciliations >= 2, 'input mode changes must use declared reconciliation');
+  assert(reconciliation.after?.reconciliations === (reconciliation.before?.reconciliations ?? 0) + 2, 'two mode changes must produce exactly two kernel reconciliations');
   assert(reconciliation.controlRoots <= 1, 'reconciliation must never duplicate the touch-control root');
   assert(reconciliation.healthAfter.status === 'healthy', 'runtime must remain healthy after repeated input-mode reconciliation');
 
@@ -124,8 +127,26 @@ try {
   }));
   assert(finalHealth.runtime.failed === 0 && finalHealth.runtime.blocked === 0, 'runtime health must remain clean after stress actions');
   assert(finalHealth.lifecycle.handlerFailures === 0, 'lifecycle subscribers must not throw during stress actions');
+
+  const recoveryUi = await page.evaluate(() => {
+    const healthy = window.goneRuntimeHealth.snapshot();
+    const syntheticFailure = {
+      ...healthy,
+      status: 'failed',
+      failed: 1,
+      modules: healthy.modules.map((module) => module.name === 'advancedWeaponController'
+        ? { ...module, state: 'failed', lastError: 'synthetic smoke failure' }
+        : module),
+    };
+    window.dispatchEvent(new CustomEvent('gone-runtime-unavailable', { detail: syntheticFailure }));
+    return window.goneRuntimeAvailability.snapshot();
+  });
+  assert(recoveryUi.visible, 'critical runtime-unavailable event must expose the fail-closed recovery UI');
+  assert(recoveryUi.status === 'failed', 'recovery UI snapshot must preserve failed runtime health');
+  assert(recoveryUi.failedModules.includes('advancedWeaponController'), 'recovery UI must identify the failed critical module');
+
   assert(failures.length === 0, `Browser exceptions detected:\n${failures.join('\n')}`);
-  console.log('[runtime-stability] PASS', JSON.stringify({ duringLaunch, ready, released, reconciliation, finalHealth }));
+  console.log('[runtime-stability] PASS', JSON.stringify({ duringLaunch, ready, released, reconciliation, finalHealth, recoveryUi }));
   await context.close();
 } finally {
   await browser.close();
