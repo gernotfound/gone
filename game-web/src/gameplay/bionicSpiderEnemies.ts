@@ -482,7 +482,12 @@ export class BionicSpiderEnemySystem {
 
     enemy.model.root.updateMatrixWorld(true);
     const moving = speedRatio > 0.05 && collapse <= 0;
-    const follow = 1 - Math.exp(-delta * (moving ? 28 : 12));
+    // The source preview is stable because its body is stationary. In gameplay
+    // the whole spider translates and turns at speed, so feeding the same target
+    // directly into IK creates packet-like target jumps. Follow the unmodified
+    // source target with frame-rate-independent damping; geometry/pose targets
+    // remain source-faithful while the integration can no longer whip a joint.
+    const follow = 1 - Math.exp(-delta * (moving ? 20 : 12));
 
     for (let i = 0; i < enemy.model.legs.length; i += 1) {
       const rig = enemy.model.legs[i];
@@ -518,9 +523,7 @@ export class BionicSpiderEnemySystem {
         + FOOT_ANCHOR_WORLD_HEIGHT
         + liftLocal * BIONIC_SPIDER_SCALE;
 
-      if (moving) state.targetWorld.copy(tempDesiredWorld);
-      else state.targetWorld.lerp(tempDesiredWorld, follow);
-
+      state.targetWorld.lerp(tempDesiredWorld, follow);
       poseBionicSpiderLeg(enemy.model, i, state.targetWorld);
     }
   }
