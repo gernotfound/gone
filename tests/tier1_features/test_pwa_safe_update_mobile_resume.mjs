@@ -54,9 +54,11 @@ export async function run(suite) {
     assert(resume.includes('resetInputState()'), 'background/offline transitions must clear held combat/movement input');
   });
 
-  suite.test('Mobile resume is a device module that depends on bootstrap', () => {
+  suite.test('Mobile resume starts only after the combat-safe client core', () => {
     assert(main.includes("name: 'mobileSessionResume'"), 'mobile session resume must be registered as a device module');
-    assert(main.includes("dependsOn: ['bootstrap']"), 'mobile session repair must require the game/menu runtime');
+    assert(main.includes("const COMBAT_SAFE_CORE = ['bootstrap', 'advancedWeaponController']"), 'device lifecycle must define its core readiness contract');
+    assert(main.includes('dependsOn: COMBAT_SAFE_CORE'), 'mobile session repair must require the combat-safe runtime');
+    assert(main.includes("if (runtimeKernel.isReady('advancedWeaponController'))"), 'device lifecycle must not start over a broken ammo authority');
     assert(main.includes("runtimeKernel.startPhase('device')"), 'device lifecycle must be started through dependency resolution');
   });
 }
