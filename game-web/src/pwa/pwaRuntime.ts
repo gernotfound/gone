@@ -1,4 +1,5 @@
 import { BUILD_ID } from '../generated/buildVersion.ts';
+import { browserLifecycle } from '../runtime/browserLifecycle.ts';
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
@@ -271,25 +272,25 @@ function checkForDeploymentUpdate(): Promise<void> {
   return updateCheckPromise;
 }
 
+function cleanupUpdateTimers(): void {
+  if (updateTimer !== null) window.clearInterval(updateTimer);
+  if (pendingApplyTimer !== null) window.clearInterval(pendingApplyTimer);
+  updateTimer = null;
+  pendingApplyTimer = null;
+}
+
 function bindAutoUpdate(): void {
   if (!('serviceWorker' in navigator)) return;
   navigator.serviceWorker.addEventListener('controllerchange', maybeApplyPendingUpdate);
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') {
-      void checkForDeploymentUpdate();
-      maybeApplyPendingUpdate();
-    }
-  });
-  window.addEventListener('online', () => { void checkForDeploymentUpdate(); });
-  window.addEventListener('focus', () => { void checkForDeploymentUpdate(); }, { passive: true });
+  browserLifecycle.subscribe('visible', 'pwaUpdate', () => {
+    void checkForDeploymentUpdate();
+    maybeApplyPendingUpdate();
+  }, 10);
+  browserLifecycle.subscribe('online', 'pwaUpdate', () => { void checkForDeploymentUpdate(); }, 10);
+  browserLifecycle.subscribe('focus', 'pwaUpdate', () => { void checkForDeploymentUpdate(); }, 5);
+  browserLifecycle.subscribe('beforeunload', 'pwaUpdate', cleanupUpdateTimers, 5);
   updateTimer = window.setInterval(() => { void checkForDeploymentUpdate(); }, UPDATE_CHECK_MS);
   pendingApplyTimer = window.setInterval(maybeApplyPendingUpdate, 1000);
-  window.addEventListener('beforeunload', () => {
-    if (updateTimer !== null) window.clearInterval(updateTimer);
-    if (pendingApplyTimer !== null) window.clearInterval(pendingApplyTimer);
-    updateTimer = null;
-    pendingApplyTimer = null;
-  }, { once: true });
   window.setTimeout(() => { void checkForDeploymentUpdate(); }, 1500);
 }
 

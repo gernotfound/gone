@@ -6,13 +6,15 @@ async function source(path) {
 }
 
 export async function run(suite) {
-  suite.test('iOS music is unlocked from persistent user gestures and resumes after foreground', async () => {
+  suite.test('iOS music is unlocked from persistent user gestures and resumes through the shared lifecycle owner', async () => {
     const menu = await source('game-web/src/ui/menu.ts');
     assert.match(menu, /document\.addEventListener\('pointerdown', resumeAudioFromGesture/);
     assert.match(menu, /soundSynth\.unlock\(\)/);
     assert.match(menu, /DOM\.bgMusic\.play\(\)/);
     assert.match(menu, /setAttribute\('playsinline'/);
-    assert.match(menu, /document\.addEventListener\('visibilitychange'/);
+    assert.match(menu, /browserLifecycle\.subscribe\('visible', 'menuAudio', resumeAudioAfterForeground/);
+    assert.match(menu, /browserLifecycle\.subscribe\('pageshow', 'menuAudio'/);
+    assert.ok(!menu.includes("document.addEventListener('visibilitychange'"), 'menu audio must not install a second native visibility lifecycle owner');
   });
 
   suite.test('PUBG v2 touch layer owns FIRE, reliable reload and weapon switching on iOS', async () => {

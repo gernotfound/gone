@@ -1,3 +1,5 @@
+import { browserLifecycle } from '../runtime/browserLifecycle.ts';
+
 export interface InputState {
     forward: boolean;
     backward: boolean;
@@ -78,11 +80,12 @@ export function initInput(cb: InputCallbacks = {}) {
         }
     });
 
-    window.addEventListener('blur', resetInputState);
-    window.addEventListener('pagehide', resetInputState);
-    document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState !== 'visible') resetInputState();
-    });
+    // Input release is a high-priority lifecycle concern. The broker owns the
+    // native page/visibility listeners so every subsystem observes one ordered
+    // suspension transition instead of racing independent browser callbacks.
+    browserLifecycle.subscribe('blur', 'playerInput', () => resetInputState(), 100);
+    browserLifecycle.subscribe('pagehide', 'playerInput', () => resetInputState(), 100);
+    browserLifecycle.subscribe('hidden', 'playerInput', () => resetInputState(), 100);
 
     document.addEventListener('click', () => {
         if (callbacks.onInteract) {

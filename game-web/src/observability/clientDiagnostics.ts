@@ -5,6 +5,7 @@ type DiagnosticKind =
   | 'window_error'
   | 'unhandled_rejection'
   | 'runtime_start_error'
+  | 'runtime_lifecycle_error'
   | 'webgl_context_lost'
   | 'webgl_context_restored'
   | 'network_disconnect'
@@ -156,7 +157,15 @@ export function startClientDiagnostics(): void {
     const detail = (event as CustomEvent).detail ?? {};
     const name = compactText(detail.name || 'unknown runtime', 100);
     const message = compactText(detail.message || 'startup failure');
-    report('runtime_start_error', `${name}: ${message}`, detail.stack);
+    const operation = compactText(detail.operation || 'start', 40);
+    report('runtime_start_error', `${operation} ${name}: ${message}`, detail.stack);
+  });
+  window.addEventListener('gone-runtime-lifecycle-error', (event) => {
+    const detail = (event as CustomEvent).detail ?? {};
+    const subscriber = compactText(detail.subscriber || 'unknown subscriber', 100);
+    const eventName = compactText(detail.eventName || 'unknown event', 40);
+    const message = compactText(detail.message || 'lifecycle failure');
+    report('runtime_lifecycle_error', `${eventName} ${subscriber}: ${message}`, detail.stack);
   });
   window.addEventListener('gone-reconnect-requested', (event) => {
     const reason = compactText((event as CustomEvent).detail?.reason ?? 'unknown');

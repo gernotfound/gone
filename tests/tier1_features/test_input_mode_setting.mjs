@@ -6,6 +6,7 @@ import { PROJECT_ROOT } from '../helpers/asset_inspector.mjs';
 export async function run(suite) {
   const inputModePath = path.join(PROJECT_ROOT, 'game-web', 'src', 'mobile', 'inputMode.ts');
   const profilePath = path.join(PROJECT_ROOT, 'game-web', 'src', 'mobile', 'smartphoneProfile.ts');
+  const guardPath = path.join(PROJECT_ROOT, 'game-web', 'src', 'mobile', 'smartphoneControlsGuard.ts');
   const mainPath = path.join(PROJECT_ROOT, 'game-web', 'src', 'main.ts');
 
   suite.test('Settings expose persistent keyboard and on-screen control modes', () => {
@@ -34,10 +35,14 @@ export async function run(suite) {
     assert(profile.includes('if (forcedOnScreenControls()) return true;'), 'explicit screen mode must win before UA/touch heuristics');
   });
 
-  suite.test('Input mode changes re-arm the touch controls guard without a reload', () => {
+  suite.test('Input mode changes reconcile touch ownership once without restarting modules', () => {
     const main = fs.readFileSync(mainPath, 'utf-8');
-    assert(main.includes("safeStart('inputModeSettings', startInputModeSettings);"), 'input mode settings must start with the client');
-    assert(main.includes("window.addEventListener('gone-input-mode-changed'"), 'runtime must react immediately to input mode changes');
-    assert(main.includes('__goneSmartphoneControlsGuardStarted = false') && main.includes("safeStart('smartphoneControlsGuard', startSmartphoneControlsGuard);"), 'mode changes must re-arm the touch guard');
+    const guard = fs.readFileSync(guardPath, 'utf-8');
+    assert(main.includes("name: 'inputModeSettings'") && main.includes('start: startInputModeSettings'), 'input mode settings must be a declared shell module');
+    assert(main.includes("name: 'smartphoneControlsGuard'") && main.includes('reconcile: reconcileSmartphoneControlsGuard'), 'touch guard must declare an explicit reconciliation operation');
+    assert(main.includes("window.addEventListener('gone-input-mode-changed'"), 'composition must own the application-level mode change');
+    assert(main.includes("runtimeKernel.reconcilePhase('device')"), 'mode changes must reconcile device modules through the kernel');
+    assert(!guard.includes("window.addEventListener('gone-input-mode-changed'"), 'guard must not duplicate the composition listener');
+    assert(!main.includes('__goneSmartphoneControlsGuardStarted = false'), 'composition must never reset startup flags to force a reinitialization');
   });
 }

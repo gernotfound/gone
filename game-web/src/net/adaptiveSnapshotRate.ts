@@ -1,3 +1,5 @@
+import { browserLifecycle } from '../runtime/browserLifecycle.ts';
+
 type PeerStats = {
   openPeers: number;
   totalBufferedBytes: number;
@@ -171,6 +173,11 @@ function snapshot(): AdaptiveNetworkState {
   };
 }
 
+function stopTimer(): void {
+  if (timer !== null) window.clearInterval(timer);
+  timer = null;
+}
+
 /**
  * Keeps normal host snapshots at 30 Hz, but backs off conservatively to 24/20
  * Hz when WebRTC send queues remain congested. It never changes packet format,
@@ -185,8 +192,5 @@ export function startAdaptiveSnapshotRate(): void {
   };
 
   timer = window.setInterval(evaluate, CHECK_INTERVAL_MS);
-  window.addEventListener('beforeunload', () => {
-    if (timer !== null) window.clearInterval(timer);
-    timer = null;
-  }, { once: true });
+  browserLifecycle.subscribe('beforeunload', 'adaptiveSnapshotRate', stopTimer, 5);
 }

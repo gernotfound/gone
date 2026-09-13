@@ -26,29 +26,61 @@ Read this first. Dense project index intended to minimize repo search/tool spend
 ## Architecture discipline
 
 - `ARCHITECTURE.md` is the ownership map and future refactor direction.
-- `game-web/src/main.ts` must stay a small composition entry point. Main browser/game composition belongs in `game-web/src/runtime/startClientRuntime.ts`; device/PWA bootstrap modules may run around it when they must precede or follow engine bootstrap.
+- `game-web/src/main.ts` must stay a small declarative composition entry point. It registers shell/device modules; it must not grow local startup wrappers, recovery polling or module-specific restart hacks.
+- `game-web/src/runtime/runtimeKernel.ts` is the canonical startup/reconciliation/health owner. New runtime modules declare phase, dependencies, criticality, start and optional reconcile behavior there or in a composition catalog.
+- `game-web/src/runtime/browserLifecycle.ts` is the cross-system browser lifecycle owner for visible/hidden, focus/blur, online/offline, pageshow/pagehide and beforeunload delivery. Use named priority subscribers instead of adding independent native listeners when ordering across systems matters.
+- `game-web/src/runtime/startClientRuntime.ts` is the declarative browser/game module catalog and starts foundation/bootstrap/gameplay/network/presentation phases through the runtime kernel.
 - One behavior should have one obvious owner. Fix owner modules directly instead of adding runtime monkey-patches.
+- Never reset another module's `__gone*Started` flag to force reinitialization. Configuration changes should call an explicit idempotent reconciliation operation.
 - Do not add `THREE.*.prototype` patches or per-frame state-repair polling.
 - `window.goneGame`, `window.goneWeapons`, `window.goneMobileControls` and related globals are compatibility/test facades. Preserve existing public members, but prefer typed imports/events/context objects for new internal code.
+- `window.goneRuntimeHealth` and `window.goneBrowserLifecycle` are diagnostics/verification facades, not alternate state authorities.
 
 ## Stack / build / CI
 
-- Browser FPS: TypeScript + Vite + Three.js under `game-web/`.
+- Browser FPS: TypeScript + Vite 8 + Three.js under `game-web/`.
 - Core: Rust/WASM under `game-core/`; `game-web/pkg/game_core.js` remains a functional fallback while production build tooling can rebuild WASM.
 - Browser compile gate: `game-web/package.json` runs `tsc && vite build`; TS enables unused-code checks.
+- Vite/Rolldown build policy isolates Three.js into a stable `three-vendor` chunk using `build.rolldownOptions.output.codeSplitting` with `strictExecutionOrder: true`. Do not hide bundle warnings or broadly manual-split side-effect-heavy app modules without measuring behavior/cache effects.
 - Full PR gate is `.github/workflows/rescue-ci.yml`: TypeScript/Vite, all E2E tiers, Chromium browser multiplayer/mobile smokes, Rust, final quality gate.
 - Browser emulation is necessary but does not replace physical iPhone QA. Report that distinction precisely.
 
-## Runtime composition
+## Runtime composition / health
 
-- `game-web/src/main.ts` currently initializes smartphone profile, explicit input mode, touch preferences, PWA runtime, client runtime, smartphone controls guard, PUBG touch controls, competitive mobile FPS controls, draggable touch layout, and mobile session resume.
-- `runtime/startClientRuntime.ts` owns explicit startup phases: diagnostics/guards, engine bootstrap, gameplay controllers, mobile runtime, network runtime, presentation/diagnostics.
+Runtime module states are explicit: `registered`, `starting`, `ready`, `failed`, `blocked`.
+
+Health status is explicit: `booting`, `healthy`, `degraded`, `failed`.
+
+- `main.ts` registers shell modules first: diagnostics, browser lifecycle, smartphone profile, input mode, touch preferences and PWA.
+- `startClientRuntime.ts` registers client modules and starts foundation → critical bootstrap → gameplay → network → presentation.
+- Device modules start after client bootstrap: smartphone guard → PUBG touch → competitive touch, layout editor and mobile session resume.
+- `bootstrap` is critical.
+- `advancedWeaponController` is critical because finite ammo/reload correctness is a gameplay invariant, not optional presentation.
+- Optional sibling failure must not abort unrelated modules; dependants of a failed prerequisite must be blocked instead of running on invalid state.
+- Runtime-kernel failures emit `gone-runtime-start-error`; lifecycle subscriber failures emit `gone-runtime-lifecycle-error`.
 - `gameplay/engine.ts` is the local game loop/physics/camera/viewmodel coordinator plus compatibility facade. Do not grow it back into a god object.
+
+### Browser lifecycle ordering contract
+
+Cross-system native page lifecycle must flow through `browserLifecycle` when ordering matters.
+
+Important priorities/semantics:
+
+- held keyboard/mouse input releases before session recovery;
+- mobile fallback input releases before resume work;
+- mobile session resume happens after transient input is safe;
+- PWA version checks, audio foreground recovery and cache integrity are lower-priority lifecycle work;
+- subscriber exceptions are isolated and reported, not allowed to abort later subscribers;
+- timers owned by adaptive networking/render/PWA/cache/HUD systems must be cleaned up through the lifecycle owner.
+
+Device-local pointer/touch/resize/orientation/sensor events remain local to the device controller.
 
 ## PWA / safe update
 
 - PWA manifest and icons live under `game-web/public/`.
 - `pwa/pwaRuntime.ts` compares the embedded generated `BUILD_ID` with `/version.json` using `no-store` checks on startup, foreground, online/focus and periodic polling.
+- PWA foreground/network checks use `browserLifecycle`; do not create a second visibility/online/focus lifecycle graph.
+- Version checks are single-flight and have an 8 s abort timeout.
 - `scripts/generate_build_version.mjs` generates both `src/generated/buildVersion.ts` and public `version.json` from the deployment/Git SHA.
 - Service-worker caches are build-aware. New versions may be prepared during live play, but page reload must not be forced mid-match; menu/lobby is the safe apply point.
 - Installed PWAs older than the first safe-update release may need one final manual restart; current releases should self-detect later deployments.
@@ -58,11 +90,11 @@ Read this first. Dense project index intended to minimize repo search/tool spend
 There are layered mobile owners by design:
 
 1. `mobile/mobileRuntime.ts` — generic touch runtime for movement/look/actions, virtual pointer-lock compatibility, wake lock, orientation/fullscreen best effort and mobile DPR cap.
-2. `mobile/smartphoneControlsGuard.ts` — safety fallback if the primary runtime is unavailable or device heuristics are wrong.
+2. `mobile/smartphoneControlsGuard.ts` — idempotent safety fallback if the primary runtime is unavailable or device heuristics are wrong. It exports `reconcileSmartphoneControlsGuard`; do not restart it by resetting flags.
 3. `mobile/pubgTouchControls.ts` — ammo-safe FIRE/drag, secondary claw FIRE, ADS drag, gyro and iOS-safe action taps.
 4. `mobile/competitiveTouchControls.ts` — competitive PUBG/CODM-style input composition: joystick sprint zone, independent left-move/right-look contacts, dedicated ADS/action ownership, live-map input continuity and map-open combat bridge.
 
-Explicit `Comandi a schermo` in `mobile/inputMode.ts` is authoritative and must work even when UA/touch detection is wrong. `Mouse + tastiera` hides the touch overlay.
+Explicit `Comandi a schermo` in `mobile/inputMode.ts` is authoritative and must work even when UA/touch detection is wrong. `Mouse + tastiera` hides the touch overlay. Input-mode changes are application configuration transitions: `main.ts` asks `runtimeKernel.reconcilePhase('device')`; start attempts must remain at one.
 
 Presentation/customization:
 
@@ -112,7 +144,7 @@ Canonical ammo:
 - `ui/menu.ts` owns media playback lifecycle and volume UI.
 - `audio/musicSourceGain.ts` owns the reduced source gain without changing displayed volume percentages.
 - iOS/Safari requires `HTMLAudioElement.play()` and Web Audio resume/unlock to originate from a real user gesture. Keep the persistent pointer/keyboard gesture recovery path; do not rely only on gameplay start or a delayed promise.
-- After iOS background/foreground, audio may be suspended again; foreground recovery is best-effort and the next real gesture must remain able to resume it.
+- Foreground/pageshow recovery uses `browserLifecycle`; after iOS background/foreground audio may still require the next real user gesture.
 
 ## Local player / spawn
 
@@ -157,8 +189,9 @@ Current runtime contract:
 - Native direct mode: `net/directWebRtc.ts`, manual offer/answer, star host↔guests, `iceServers: []` by policy.
 - Browser host is authoritative. Binary core opcodes: 0x01 CLIENT_STATE, 0x02 WORLD_SNAPSHOT, 0x03 FIRE_HITSCAN, 0x04 HIT_CONFIRMED.
 - State/snapshots target ~30 Hz with adaptive snapshot-rate logic.
+- `net/adaptiveSnapshotRate.ts` owns host snapshot-rate adaptation and lifecycle-owned timer cleanup.
 - `NativeRtcDataChannel` uses ~3 s heartbeat, ~15 s heartbeat timeout and ~6 s transient `disconnected` grace before terminal teardown.
-- `mobile/mobileSessionResume.ts` clears held input when hidden/offline and restarts guest state tick / immediate state + host snapshot cadence on foreground/online recovery.
+- `mobile/mobileSessionResume.ts` clears held input when hidden/offline and restarts guest state tick / immediate state + host snapshot cadence on foreground/online recovery through `browserLifecycle`.
 - Once direct RTC is truly closed/failed, a new SDP negotiation is required; `gone-reconnect-requested` is a recovery signal, not magic renegotiation.
 - Tier-4 network churn tests must keep verifying repeated transient disconnect→connected cycles do not close the channel, while a grace-period expiry does.
 
@@ -177,9 +210,10 @@ Current runtime contract:
 - `world/worldConfig.ts` owns chunk-grid constants; `world/chunkManager.ts` owns progressive lifecycle/priority streaming and keeps expensive world work bounded per frame.
 - `world/terrainGeometryPool.ts` reuses geometry; `world/rockInstances.ts` owns instanced rocks.
 - `rendering/scene.ts`: antialias off, bounded DPR, shadows off, high-performance GPU preference.
-- `performance/adaptiveRenderScale.ts` owns adaptive render scaling; do not build a competing phone-only quality loop.
+- `performance/adaptiveRenderScale.ts` owns adaptive render scaling; do not build a competing phone-only quality loop. Its timer cleanup belongs to `browserLifecycle`.
 - `performance/localTelemetry.ts` remains **local-only performance diagnostics**. It does not upload FPS/device telemetry.
 - `performance/performancePack.ts` precaches models/assets/audio/WASM.
+- `performance/cacheIntegrity.ts` owns pack validation. Validation is single-flight; foreground checks and interval cleanup use `browserLifecycle`.
 
 ## Security / observability
 
@@ -187,12 +221,13 @@ Current runtime contract:
 - Gyroscope/accelerometer are allowed only for `self` because optional touch gyro uses them; camera/microphone/geolocation/payment/USB/magnetometer remain denied.
 - `observability/clientDiagnostics.ts` owns **bounded privacy-safe failure diagnostics**, distinct from local performance telemetry.
 - It may send only coarse device class, build ID, error kind/message/stack, path, input mode, standalone/online/visibility state. Do not add raw IP, account identity, full URL query strings, raw UA, gameplay position/chat/session codes, or continuous FPS telemetry.
-- `/api/client-telemetry` sanitizes/limits payloads and emits structured Vercel runtime logs. Client reporting is capped/deduplicated and must never become a gameplay failure source.
+- `/api/client-telemetry` accepts bounded `runtime_start_error` and `runtime_lifecycle_error` records in addition to existing failure/recovery kinds; it sanitizes/limits payloads and emits structured Vercel runtime logs.
+- Client reporting is capped/deduplicated and must never become a gameplay failure source.
 - For production failures: first inspect Vercel runtime errors/logs by project/deployment, then correlate with build ID.
 
 ## High-value files
 
-- Composition: `game-web/src/runtime/startClientRuntime.ts`, `game-web/src/main.ts`
+- Runtime architecture: `game-web/src/runtime/runtimeKernel.ts`, `browserLifecycle.ts`, `startClientRuntime.ts`, `game-web/src/main.ts`
 - Main loop/facade: `game-web/src/gameplay/engine.ts`
 - Weapon UX/ammo: `game-web/src/gameplay/advancedWeaponController.ts`, `game-web/src/weapons/weaponConfig.ts`
 - Touch: `game-web/src/mobile/mobileRuntime.ts`, `smartphoneControlsGuard.ts`, `pubgTouchControls.ts`, `competitiveTouchControls.ts`, `touchPreferences.ts`, `touchLayoutEditor.ts`
@@ -206,7 +241,7 @@ Current runtime contract:
 - Direct RTC: `game-web/src/net/directWebRtc.ts`
 - Self-host: `gone-host/server.mjs`, `net/selfHostSession.ts`, `net/relayWebSocket.ts`
 - World: `game-web/src/world/chunkManager.ts`, `worldConfig.ts`
-- Deployment/security: `game-web/vercel.json`
+- Deployment/security: `game-web/vercel.json`, `game-web/vite.config.ts`
 
 ## Change discipline
 
@@ -216,9 +251,11 @@ Current runtime contract:
 4. Preserve host authority, finite ammo contracts and zero-external-service networking unless the task explicitly changes them.
 5. Decide whether a reported iPhone issue is mobile-specific or a global contract regression; fix at the narrowest correct owner without degrading desktop.
 6. Prefer owner fixes over patch layers; preserve compatibility facades where tests/UI depend on them.
-7. Keep expensive work out of per-frame paths and reuse/pool Three resources.
-8. Add deterministic Tier tests plus real Chromium smoke for browser interaction changes. Mobile controls must test pointerdown/pointermove behavior, not only DOM presence. Map changes must test simultaneous movement/FIRE while open.
-9. Full CI must be green before merge. Multiple branch commits are fine.
-10. Squash merge exactly once to `main`.
-11. Verify the resulting `main` commit has the previous main as its sole parent and a valid signature when available.
-12. Verify Vercel production separately: READY deployment, matching Git SHA/build ID, security headers and relevant runtime logs. Do not claim physical-iPhone verification for behavior the owner has not retested after deployment.
+7. For runtime changes, declare dependencies/criticality in `runtimeKernel`; do not add a new `safeStart` wrapper or reset `__gone*Started` flags.
+8. For cross-system page lifecycle, subscribe through `browserLifecycle` with an explicit priority. Keep only device-local pointer/touch/sensor/resize events local.
+9. Keep expensive work out of per-frame paths and reuse/pool Three resources.
+10. Add deterministic Tier tests plus real Chromium smoke for browser interaction changes. Mobile controls must test pointerdown/pointermove behavior, not only DOM presence. Map changes must test simultaneous movement/FIRE while open. Architecture changes must assert health, dependency blocking/reconciliation and no duplicate control roots/listeners.
+11. Full CI must be green before merge. Multiple branch commits are fine.
+12. Squash merge exactly once to `main`.
+13. Verify the resulting `main` commit has the previous main as its sole parent and a valid signature when available.
+14. Verify Vercel production separately: READY deployment, matching Git SHA/build ID, security headers and relevant runtime logs. Do not claim physical-iPhone verification for behavior the owner has not retested after deployment.

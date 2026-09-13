@@ -1,10 +1,12 @@
 import { inputState, resetInputState } from '../controls/playerInput.ts';
+import { browserLifecycle } from '../runtime/browserLifecycle.ts';
 import { useOnScreenControls } from './inputMode.ts';
 import { isSmartphoneDevice } from './smartphoneProfile.ts';
 import { getTouchPreferences } from './touchPreferences.ts';
 
 type MobileControlsApi = {
   enabled?: boolean;
+  fallback?: boolean;
   sync?: () => void;
 };
 
@@ -25,6 +27,9 @@ const state: TouchState = {
 let fallbackRoot: HTMLDivElement | null = null;
 let stick: HTMLDivElement | null = null;
 let knob: HTMLDivElement | null = null;
+let fallbackObserver: MutationObserver | null = null;
+let guardStarted = false;
+let fallbackWarningShown = false;
 
 function visible(id: string): boolean {
   const el = document.getElementById(id);
@@ -223,8 +228,45 @@ function switchWeapon(delta: number): void {
   window.setTimeout(updateWeaponLabel, 0);
 }
 
+function bindFallbackControls(): void {
+  if (!fallbackRoot || fallbackRoot.dataset.goneFallbackBound === '1') return;
+  fallbackRoot.dataset.goneFallbackBound = '1';
+  fallbackRoot.dataset.goneControlOwner = 'fallback';
+
+  stick = document.getElementById('mobile-stick') as HTMLDivElement | null;
+  knob = document.getElementById('mobile-stick-knob') as HTMLDivElement | null;
+  bindMove();
+  bindLook();
+  bindHold('mc-fire', () => { inputState.fire = true; dispatchMouse(0, true); }, () => { inputState.fire = false; dispatchMouse(0, false); });
+  bindHold('mc-aim', () => { inputState.aim = true; dispatchMouse(2, true); }, () => { inputState.aim = false; dispatchMouse(2, false); });
+  bindHold('mc-jump', () => { inputState.jump = true; }, () => { inputState.jump = false; });
+  bindHold('mc-crouch', () => { inputState.ctrl = true; }, () => { inputState.ctrl = false; });
+  bindHold('mc-sprint', () => { inputState.shift = true; }, () => { inputState.shift = false; });
+  bindTap('mc-reload', () => dispatchKey('KeyR'));
+  bindTap('mc-map', () => dispatchKey('KeyM'));
+  bindTap('mc-prev', () => switchWeapon(-1));
+  bindTap('mc-next', () => switchWeapon(1));
+  bindTap('mc-menu', () => {
+    releaseInputs();
+    resetInputState();
+    document.dispatchEvent(new Event('pointerlockchange'));
+  });
+}
+
 function createFallbackControls(): void {
-  if (document.getElementById('gone-mobile-controls')) return;
+  const existing = document.getElementById('gone-mobile-controls') as HTMLDivElement | null;
+  if (existing) {
+    if (existing.dataset.goneControlOwner === 'fallback') {
+      fallbackRoot = existing;
+      bindFallbackControls();
+      return;
+    }
+
+    // A primary runtime that throws after constructing its DOM can leave a
+    // half-owned control tree behind. Replacing that tree is safer than binding
+    // fallback listeners on top of unknown/partial primary listeners.
+    existing.remove();
+  }
 
   fallbackRoot = document.createElement('div');
   fallbackRoot.id = 'gone-mobile-controls';
@@ -247,67 +289,35 @@ function createFallbackControls(): void {
     <button type="button" id="mc-sprint" class="mc-small" aria-label="Scatta">RUN</button>
   `;
   document.body.appendChild(fallbackRoot);
-
-  stick = document.getElementById('mobile-stick') as HTMLDivElement;
-  knob = document.getElementById('mobile-stick-knob') as HTMLDivElement;
-  bindMove();
-  bindLook();
-  bindHold('mc-fire', () => { inputState.fire = true; dispatchMouse(0, true); }, () => { inputState.fire = false; dispatchMouse(0, false); });
-  bindHold('mc-aim', () => { inputState.aim = true; dispatchMouse(2, true); }, () => { inputState.aim = false; dispatchMouse(2, false); });
-  bindHold('mc-jump', () => { inputState.jump = true; }, () => { inputState.jump = false; });
-  bindHold('mc-crouch', () => { inputState.ctrl = true; }, () => { inputState.ctrl = false; });
-  bindHold('mc-sprint', () => { inputState.shift = true; }, () => { inputState.shift = false; });
-  bindTap('mc-reload', () => dispatchKey('KeyR'));
-  bindTap('mc-map', () => dispatchKey('KeyM'));
-  bindTap('mc-prev', () => switchWeapon(-1));
-  bindTap('mc-next', () => switchWeapon(1));
-  bindTap('mc-menu', () => {
-    releaseInputs();
-    resetInputState();
-    document.dispatchEvent(new Event('pointerlockchange'));
-  });
+  bindFallbackControls();
 }
 
 function syncFallbackVisibility(): void {
   if (!fallbackRoot) return;
-  const active = gameplayActive();
+  const allowed = useOnScreenControls() || isSmartphoneDevice();
+  const active = allowed && gameplayActive();
   fallbackRoot.classList.toggle('hidden', !active);
   fallbackRoot.classList.toggle('map-open', active && mapOpen());
   if (active) updateWeaponLabel();
   else releaseInputs();
 }
 
-export function startSmartphoneControlsGuard(): void {
-  if ((window as any).__goneSmartphoneControlsGuardStarted) return;
-  (window as any).__goneSmartphoneControlsGuardStarted = true;
-
-  // Explicit on-screen mode is authoritative. The smartphone heuristic remains
-  // the automatic fallback, but a user-selected screen mode must work even when
-  // a WebView/PWA reports misleading UA/touch capabilities.
-  if (!useOnScreenControls() && !isSmartphoneDevice()) return;
-
-  const primary = (window as any).goneMobileControls as MobileControlsApi | undefined;
-  if (primary?.enabled === true) {
-    primary.sync?.();
-    return;
-  }
-
-  console.warn('[Mobile] Primary touch runtime unavailable; enabling fallback on-screen controls.');
+function installFallbackInfrastructure(): void {
   createFallbackControls();
-  syncFallbackVisibility();
+  if (!fallbackRoot) return;
 
-  const observer = new MutationObserver(syncFallbackVisibility);
-  for (const id of ['game-ui', 'map-ui', 'main-menu', 'settings-menu', 'multiplayer-lobby', 'death-overlay']) {
-    const el = document.getElementById(id);
-    if (el) observer.observe(el, { attributes: true, attributeFilter: ['class', 'style'] });
+  if (!fallbackObserver) {
+    fallbackObserver = new MutationObserver(syncFallbackVisibility);
+    for (const id of ['game-ui', 'map-ui', 'main-menu', 'settings-menu', 'multiplayer-lobby', 'death-overlay']) {
+      const el = document.getElementById(id);
+      if (el) fallbackObserver.observe(el, { attributes: true, attributeFilter: ['class', 'style'] });
+    }
+
+    window.addEventListener('resize', syncFallbackVisibility, { passive: true });
+    window.addEventListener('orientationchange', syncFallbackVisibility, { passive: true });
+    browserLifecycle.subscribe('visible', 'smartphoneControlsGuard', syncFallbackVisibility, 40);
+    browserLifecycle.subscribe('hidden', 'smartphoneControlsGuard', releaseInputs, 90);
   }
-
-  window.addEventListener('resize', syncFallbackVisibility, { passive: true });
-  window.addEventListener('orientationchange', syncFallbackVisibility, { passive: true });
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') syncFallbackVisibility();
-    else releaseInputs();
-  });
 
   (window as any).goneMobileControls = {
     enabled: true,
@@ -315,4 +325,37 @@ export function startSmartphoneControlsGuard(): void {
     sync: syncFallbackVisibility,
     snapshot: () => ({ enabled: true, fallback: true, gameplayActive: gameplayActive(), mapOpen: mapOpen() }),
   };
+}
+
+export function reconcileSmartphoneControlsGuard(): void {
+  const allowed = useOnScreenControls() || isSmartphoneDevice();
+  if (!allowed) {
+    fallbackRoot?.classList.add('hidden');
+    releaseInputs();
+    return;
+  }
+
+  const controls = (window as any).goneMobileControls as MobileControlsApi | undefined;
+  if (controls?.enabled === true && controls.fallback !== true) {
+    fallbackRoot?.classList.add('hidden');
+    controls.sync?.();
+    return;
+  }
+
+  if (!fallbackWarningShown) {
+    fallbackWarningShown = true;
+    console.warn('[Mobile] Primary touch runtime unavailable; enabling fallback on-screen controls.');
+  }
+  installFallbackInfrastructure();
+  syncFallbackVisibility();
+}
+
+export function startSmartphoneControlsGuard(): void {
+  if (guardStarted) {
+    reconcileSmartphoneControlsGuard();
+    return;
+  }
+  guardStarted = true;
+  (window as any).__goneSmartphoneControlsGuardStarted = true;
+  reconcileSmartphoneControlsGuard();
 }

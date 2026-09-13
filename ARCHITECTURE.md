@@ -12,25 +12,43 @@ Avoid new code that:
 - replaces another module's methods after startup;
 - polls every animation frame only to repair state written incorrectly elsewhere;
 - duplicates canonical weapon/spawn/protocol/lifecycle constants;
+- resets another module's private `__gone*Started` flag to force a restart;
 - adds a new global facade dependency when a typed import/event/context is practical.
 
 Compatibility adapters are allowed, but their filename/comments must make that role explicit.
 
-## Composition roots
+## Composition and runtime health
 
-`game-web/src/main.ts` is intentionally small. It owns device/PWA composition that must surround the game runtime:
+`game-web/src/main.ts` is a declarative composition root. It registers shell/device modules; it does not own local try/catch startup wrappers or module-specific restart hacks.
 
-- smartphone profile;
-- explicit input mode;
-- touch preferences;
-- PWA runtime;
-- client runtime;
-- smartphone fallback controls;
-- PUBG-like touch actions;
-- draggable touch layout;
-- mobile session resume.
+`game-web/src/runtime/runtimeKernel.ts` is the canonical startup/reconciliation owner. Runtime modules declare:
 
-The game/browser runtime itself is owned by `game-web/src/runtime/startClientRuntime.ts`. It defines explicit phases: diagnostics/guards, bootstrap, gameplay systems, mobile runtime, networking, presentation/diagnostics. Ordering belongs there instead of import side effects.
+- a stable name;
+- phase (`foundation`, `bootstrap`, `gameplay`, `network`, `presentation`, `device`);
+- dependencies;
+- whether failure is critical;
+- one start operation;
+- optionally an idempotent reconciliation operation.
+
+The kernel starts each module once, recursively satisfies dependencies, marks dependants `blocked` when an upstream dependency is unavailable, and exposes a structured health snapshot (`booting`, `healthy`, `degraded`, `failed`). Critical invariants such as browser lifecycle, menu/game bootstrap and the finite-ammo weapon controller must never silently degrade.
+
+`game-web/src/runtime/startClientRuntime.ts` owns the client/game module catalog. It describes gameplay/network/presentation dependencies rather than relying on import order. Optional siblings can fail independently; dependent systems do not start on top of a broken prerequisite.
+
+### Browser lifecycle ownership
+
+`game-web/src/runtime/browserLifecycle.ts` is the cross-system owner for native page lifecycle delivery:
+
+- visible / hidden;
+- focus / blur;
+- online / offline;
+- pageshow / pagehide;
+- beforeunload.
+
+It installs one native listener per event family and dispatches to named subscribers in deterministic priority order. A subscriber failure is isolated, counted and reported as `gone-runtime-lifecycle-error`; it cannot prevent later subscribers from running.
+
+The priority contract matters on mobile/PWA: held movement/fire input is released before network/session resume work runs. PWA checks, audio recovery, cache-integrity checks and timer teardown consume this broker instead of racing independent browser callbacks.
+
+Device-local events such as pointer movement, touch capture, resize/orientation and `deviceorientation` remain with their device controller because they are not shared application lifecycle.
 
 ## Browser layers and ownership
 
@@ -38,7 +56,7 @@ The game/browser runtime itself is owned by `game-web/src/runtime/startClientRun
 
 Owns menus, HUD, lobby DOM, minimap UI and user-facing overlays. UI translates state into DOM/canvas output and emits intent; it should not own terrain math, hit validation or network authority.
 
-`ui/menu.ts` also owns HTML media lifecycle because the BGM element is a menu-level DOM resource. Its iOS gesture-unlock path must keep `HTMLAudioElement.play()` and Web Audio unlock close to a real user gesture. Source gain itself remains in `audio/musicSourceGain.ts`.
+`ui/menu.ts` owns HTML media lifecycle because the BGM element is a menu-level DOM resource. Its iOS gesture-unlock path must keep `HTMLAudioElement.play()` and Web Audio unlock close to a real user gesture. Foreground recovery and online/offline presentation consume the shared browser lifecycle broker.
 
 The lobby is still a secondary refactor target: `ui/lobby.ts` mixes DOM rendering and direct-WebRTC orchestration. Future work can extract session orchestration into a typed session controller while leaving rendering in UI.
 
@@ -49,13 +67,14 @@ Low-level keyboard/mouse state belongs in `controls/`. Device-specific gesture t
 Ownership:
 
 - `mobile/mobileRuntime.ts`: generic touch movement/look/actions, virtual pointer-lock compatibility, wake/orientation/fullscreen best effort, mobile render-DPR guard;
-- `mobile/smartphoneControlsGuard.ts`: fallback control tree if the primary touch runtime is unavailable or heuristics fail;
+- `mobile/smartphoneControlsGuard.ts`: idempotent fallback control owner if primary touch runtime is unavailable or heuristics fail; changes of explicit input mode use `reconcileSmartphoneControlsGuard`, never startup-flag resets;
 - `mobile/inputMode.ts`: persistent explicit `keyboard` vs `screen` choice; explicit screen mode is authoritative over detection;
 - `mobile/smartphoneProfile.ts` + `smartphone.css`: phone-specific presentation/HUD compaction;
 - `mobile/touchPreferences.ts`: persistent user tuning (look/ADS sensitivity, FIRE dead-zone, gyro, scale/opacity, handedness, secondary FIRE);
 - `mobile/pubgTouchControls.ts`: PUBG-like combat gestures and iOS-safe capture-phase action buttons;
+- `mobile/competitiveTouchControls.ts`: competitive simultaneous movement/look/ADS/map-open combat composition;
 - `mobile/touchLayoutEditor.ts`: persistent draggable control offsets;
-- `mobile/mobileSessionResume.ts`: background/offline input release and foreground/online session cadence repair.
+- `mobile/mobileSessionResume.ts`: background/offline session suspension and foreground/online cadence repair through the lifecycle broker.
 
 The PUBG touch layer intentionally intercepts the primary FIRE button before the legacy mobile handler. This is not a general monkey-patch: it is the device-input boundary required to route sustained touch fire into `advancedWeaponController` without setting the legacy continuous `inputState.fire` path that can bypass finite ammo accounting.
 
@@ -76,7 +95,7 @@ Focused ownership includes:
 
 `advancedWeaponController.ts` is the authoritative browser owner of local magazine/reserve/reload state. `engine.ts` still contains a legacy direct-fire compatibility path keyed from `inputState.fire`; new touch code must not use that path for sustained FIRE. Successful ranged shots must decrement magazine exactly once and no shot may be produced after magazine reaches zero until reload succeeds.
 
-This invariant applies regardless of desktop/mobile presentation. Desktop mouse interception already routes through the advanced weapon controller; mobile controls must preserve the same contract.
+Because violating this invariant produces semantically invalid gameplay rather than a cosmetic degradation, `advancedWeaponController` is health-critical in the runtime kernel.
 
 ### 4. Weapons (`game-web/src/weapons/`)
 
@@ -99,11 +118,15 @@ Direct WebRTC (`directWebRtc.ts`) intentionally uses no external ICE servers. `N
 
 `mobileSessionResume.ts` can restart state/snapshot cadence after the same RTC connection survives a background/network transition. It cannot recreate a terminally closed direct RTC session without a new SDP negotiation; `gone-reconnect-requested` is an intent/event boundary for that situation.
 
+`adaptiveSnapshotRate.ts` owns host snapshot-rate adaptation and lifecycle-owned timer cleanup. `p2pQualityHud.ts` is presentation only; it does not influence authority or cadence.
+
 `legacyRemoteShotPresentation.ts` exists only for older JSON FIRE_HITSCAN callbacks. Current binary enemy-shot presentation is `remoteShotPresentation.ts`.
 
 ### 6. PWA (`game-web/src/pwa/`, `game-web/public/`)
 
 `pwa/pwaRuntime.ts` owns install guidance, build-version polling and safe update application. Build identity is generated before build into both the client module and `/version.json`.
+
+Version checks are single-flight and time-bounded. Foreground/online/focus checks and timer cleanup are subscribed through `browserLifecycle`; PWA code must not create a second native lifecycle graph.
 
 Service-worker caches are build-aware. Updates may be prepared during a live match, but forced page reload belongs at a safe menu/lobby boundary, not mid-PvP.
 
@@ -123,13 +146,17 @@ World/runtime performance favors frame-time stability over synchronous throughpu
 - `adaptiveRenderScale.ts` owns render-scale adaptation. Do not create a competing mobile-only quality governor without first extending this owner.
 - `localTelemetry.ts` is local F3 diagnostics only and must remain non-uploading.
 - `performancePack.ts` owns explicit asset/model/audio/WASM warming/cache.
-- `cacheIntegrity.ts` owns cached-pack integrity checks.
+- `cacheIntegrity.ts` owns cached-pack integrity checks, coalesces concurrent validation and consumes lifecycle-owned foreground/timer cleanup.
+
+Build delivery is also a stability concern. Vite/Rolldown isolates Three.js into the stable `three-vendor` chunk with strict execution ordering. Do not broadly manual-split side-effect-heavy application modules without measuring execution-order and caching consequences.
 
 ### 9. Observability (`game-web/src/observability/`, `game-web/api/`)
 
 `observability/clientDiagnostics.ts` is the owner of bounded privacy-safe client failure reporting. It is intentionally separate from local performance telemetry.
 
 The client may report coarse failure context only: event kind, build ID, error message/stack, pathname, coarse device class, input mode, standalone/online/visibility. It must not upload continuous FPS, coordinates, lobby/session codes, identity, raw UA or URL query strings.
+
+Runtime-kernel start/dependency/reconciliation failures emit `gone-runtime-start-error`. Browser-lifecycle subscriber failures emit `gone-runtime-lifecycle-error`. Both feed the same bounded diagnostics endpoint.
 
 `api/client-telemetry.js` is the Vercel function boundary that validates/sanitizes payload size and event kind, then emits structured runtime logs. Reporting must be capped, deduplicated and fail-open so observability can never break gameplay.
 
@@ -160,9 +187,11 @@ World streaming is designed for stable frame times:
 
 Do not introduce naive mismatched-edge terrain LOD; use stitched edges/skirts or a clipmap/quadtree if LOD is later justified by measurement.
 
-## Compatibility facades
+## Compatibility and diagnostics facades
 
 Globals such as `window.goneGame`, `window.goneWeapons`, `window.goneMobileControls`, `window.gonePubgTouchControls`, `window.goneTouchPreferences`, `window.goneTouchLayout`, `window.gonePwa` and `window.goneDiagnostics` exist because UI/device adapters and browser smokes need stable inspection/action surfaces.
+
+`window.goneRuntimeHealth` and `window.goneBrowserLifecycle` are diagnostics/verification surfaces owned by the architecture layer. They expose snapshots/actions; they are not alternate state authorities.
 
 Rules:
 
@@ -175,7 +204,7 @@ Rules:
 Recommended future refactor order remains:
 
 1. **Lobby/session split** — extract direct-WebRTC/session orchestration from `ui/lobby.ts`.
-2. **Engine lifecycle split** — move local death/respawn/shield lifecycle into a focused controller.
+2. **Engine lifecycle split** — move local death/respawn/shield lifecycle into a focused controller and expose an engine lifecycle service to the kernel.
 3. **Weapon model builders** — split model construction per weapon behind stable exports.
 4. **Host internals** — if `p2pHost.ts` grows further, separate peer bookkeeping from authoritative combat while preserving one host authority boundary.
 5. **Global facade migration** — gradually replace new global lookups with typed services/events.
@@ -196,23 +225,37 @@ Browser / touch / sensor events
       -> UI state presentation
 
 Client failures
+   -> runtime kernel / browser lifecycle / WebGL / window errors
    -> observability/clientDiagnostics
    -> bounded POST /api/client-telemetry
    -> Vercel structured runtime logs
 ```
 
-Startup is separate:
+Startup and lifecycle are explicit:
 
 ```text
 main.ts
-  -> device/input/PWA setup
-  -> runtime/startClientRuntime.ts
-       -> diagnostics + guards
-       -> bootstrap engine/menu
-       -> gameplay + mobile runtime
-       -> network runtime
-       -> presentation/diagnostics
-  -> fallback/PUBG/layout/resume device layers
+  -> register shell modules
+  -> runtimeKernel foundation phase
+       -> diagnostics
+       -> browserLifecycle
+       -> profile/input preferences/PWA
+  -> startClientRuntime()
+       -> register client module graph
+       -> foundation guards
+       -> critical bootstrap
+       -> gameplay
+       -> network
+       -> presentation
+  -> register/start device module graph
+       -> mobile guard -> PUBG -> competitive controls
+       -> layout editor
+       -> session resume
+
+native browser lifecycle
+  -> browserLifecycle (one native listener per lifecycle event)
+       -> ordered subscribers
+       -> isolated subscriber failures + diagnostics
 ```
 
 ## Refactor / release checklist
@@ -220,6 +263,9 @@ main.ts
 Before merging a structural or browser-runtime change:
 
 - identify the canonical owner of every behavior/constant touched;
+- encode startup dependencies/criticality in `runtimeKernel`, not in incidental call order;
+- use `browserLifecycle` for cross-system visibility/network/page lifecycle behavior;
+- use module reconciliation for configuration changes instead of resetting startup flags;
 - decide whether a physical-iPhone report is device-specific or a global contract bug;
 - preserve host authority and finite-ammo semantics;
 - search for redundant patches/wrappers and dynamic/global consumers;
