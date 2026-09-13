@@ -35,12 +35,14 @@ export async function run(suite) {
     assert(profile.includes('if (forcedOnScreenControls()) return true;'), 'explicit screen mode must win before UA/touch heuristics');
   });
 
-  suite.test('Input mode changes reconcile touch ownership without restarting modules', () => {
+  suite.test('Input mode changes reconcile touch ownership once without restarting modules', () => {
     const main = fs.readFileSync(mainPath, 'utf-8');
     const guard = fs.readFileSync(guardPath, 'utf-8');
     assert(main.includes("name: 'inputModeSettings'") && main.includes('start: startInputModeSettings'), 'input mode settings must be a declared shell module');
     assert(main.includes("name: 'smartphoneControlsGuard'") && main.includes('reconcile: reconcileSmartphoneControlsGuard'), 'touch guard must declare an explicit reconciliation operation');
-    assert(guard.includes("window.addEventListener('gone-input-mode-changed', reconcileSmartphoneControlsGuard)"), 'touch guard must own mode-change reconciliation');
+    assert(main.includes("window.addEventListener('gone-input-mode-changed'"), 'composition must own the application-level mode change');
+    assert(main.includes("runtimeKernel.reconcilePhase('device')"), 'mode changes must reconcile device modules through the kernel');
+    assert(!guard.includes("window.addEventListener('gone-input-mode-changed'"), 'guard must not duplicate the composition listener');
     assert(!main.includes('__goneSmartphoneControlsGuardStarted = false'), 'composition must never reset startup flags to force a reinitialization');
   });
 }
