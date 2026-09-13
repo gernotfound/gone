@@ -24,6 +24,7 @@ let current: DeathmatchSnapshot = {
 
 function api(): any { return (window as any).goneGame; }
 function gameplayVisible(): boolean { const el = document.getElementById('game-ui'); return !!el && !el.classList.contains('hidden'); }
+function smartphoneHud(): boolean { return document.documentElement.classList.contains('gone-smartphone'); }
 function escapeHtml(value: string): string { return value.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] ?? char)); }
 function currentSessionKey(): string {
   const host = api()?.getP2PHost?.();
@@ -56,6 +57,7 @@ function clearScore(): void {
   current = { round: 1, targetKills: DEATHMATCH_TARGET_KILLS, winnerSlot: null, resetRemainingMs: 0, rows: [] };
   lastSyncAt = 0;
   syncSource = 'none';
+  boardVisible = false;
   render();
 }
 function ensureUi(): void {
@@ -81,7 +83,31 @@ function remainingResetMs(): number {
 function render(): void {
   ensureUi();
   const visible = gameplayVisible();
+  const smartphone = smartphoneHud();
   compactRoot!.style.display = visible ? 'block' : 'none';
+  compactRoot!.style.pointerEvents = smartphone ? 'auto' : 'none';
+  compactRoot!.style.touchAction = smartphone ? 'manipulation' : '';
+  compactRoot!.style.minHeight = smartphone ? '86px' : '';
+  compactRoot!.style.boxSizing = smartphone ? 'border-box' : '';
+  compactRoot!.tabIndex = smartphone ? 0 : -1;
+  if (smartphone) {
+    compactRoot!.setAttribute('role', 'button');
+    compactRoot!.setAttribute('aria-expanded', String(boardVisible));
+    compactRoot!.setAttribute('aria-label', boardVisible ? 'Chiudi classifica Deathmatch' : 'Apri classifica Deathmatch');
+  } else {
+    compactRoot!.removeAttribute('role');
+    compactRoot!.removeAttribute('aria-expanded');
+    compactRoot!.removeAttribute('aria-label');
+  }
+
+  boardRoot!.style.top = smartphone ? 'max(56px, calc(env(safe-area-inset-top) + 52px))' : '';
+  boardRoot!.style.minWidth = smartphone ? '0' : '';
+  boardRoot!.style.width = smartphone ? 'calc(100vw - 20px)' : '';
+  boardRoot!.style.maxWidth = smartphone ? '720px' : '';
+  boardRoot!.style.maxHeight = smartphone ? '62dvh' : '';
+  boardRoot!.style.overflow = smartphone ? 'auto' : '';
+  boardRoot!.style.boxSizing = smartphone ? 'border-box' : '';
+
   if (!visible) { boardRoot!.style.display = 'none'; winnerRoot!.style.display = 'none'; return; }
 
   const meSlot = localSlot();
@@ -89,7 +115,10 @@ function render(): void {
   const me = meSlot === null ? null : rows.find((row) => row.slot === meSlot) ?? null;
   const leader = rows[0] ?? me;
   const syncLabel = syncSource === 'none' ? 'SYNC…' : 'HOST SYNC';
-  compactRoot!.innerHTML = `<div style="color:#67e8f9;font-size:11px;letter-spacing:.1em">DEATHMATCH // R${current.round} // ${current.targetKills}</div><div>TU <b style="color:#f8fafc">${me?.kills ?? 0}K / ${me?.deaths ?? 0}D</b></div><div>LEADER <b style="color:#fbbf24">${escapeHtml(leader?.name ?? '—')} ${leader?.kills ?? 0}</b></div><div style="color:#64748b;font-size:9px">${syncLabel} · TAB CLASSIFICA</div>`;
+  const boardHint = smartphone
+    ? (boardVisible ? 'TOCCA PER CHIUDERE' : 'TOCCA CLASSIFICA')
+    : 'TAB CLASSIFICA';
+  compactRoot!.innerHTML = `<div style="color:#67e8f9;font-size:11px;letter-spacing:.1em">DEATHMATCH // R${current.round} // ${current.targetKills}</div><div>TU <b style="color:#f8fafc">${me?.kills ?? 0}K / ${me?.deaths ?? 0}D</b></div><div>LEADER <b style="color:#fbbf24">${escapeHtml(leader?.name ?? '—')} ${leader?.kills ?? 0}</b></div><div style="color:#64748b;font-size:9px">${syncLabel} · ${boardHint}</div>`;
   boardRoot!.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><span style="color:#67e8f9;font-size:13px">G.O.N.E. DEATHMATCH · ROUND ${current.round}</span><span style="color:#64748b">PRIMO A ${current.targetKills} · AUTORITÀ HOST</span></div><table><thead><tr><th>GIOCATORE</th><th>K</th><th>D</th><th>DMG</th><th>HS</th></tr></thead><tbody>${rows.map((row) => `<tr${row.slot === meSlot ? ' style="color:#67e8f9"' : ''}><td>${escapeHtml(row.name)}</td><td>${row.kills}</td><td>${row.deaths}</td><td>${Math.round(row.damage)}</td><td>${row.headshots}</td></tr>`).join('')}</tbody></table>`;
   boardRoot!.style.display = boardVisible ? 'block' : 'none';
 
@@ -110,6 +139,13 @@ function sessionWatch(): void {
   if (next !== sessionKey) { sessionKey = next; clearScore(); }
   render();
 }
+function toggleMobileBoard(event: Event): void {
+  if (!smartphoneHud() || !gameplayVisible()) return;
+  event.preventDefault();
+  event.stopPropagation();
+  boardVisible = !boardVisible;
+  render();
+}
 export function startDeathmatchScore(): void {
   if ((window as any).__goneDeathmatchScoreStarted) return;
   (window as any).__goneDeathmatchScoreStarted = true;
@@ -118,6 +154,11 @@ export function startDeathmatchScore(): void {
   window.addEventListener('gone-deathmatch-sync', ((event: CustomEvent<DeathmatchSyncEventDetail>) => applySync(event.detail)) as EventListener);
   window.addEventListener('keydown', (event) => { if (event.code !== 'Tab' || !gameplayVisible()) return; event.preventDefault(); boardVisible = true; render(); }, true);
   window.addEventListener('keyup', (event) => { if (event.code !== 'Tab') return; event.preventDefault(); boardVisible = false; render(); }, true);
+  compactRoot!.addEventListener('pointerdown', toggleMobileBoard);
+  compactRoot!.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    toggleMobileBoard(event);
+  });
   window.setInterval(sessionWatch, 500);
   render();
 
@@ -129,6 +170,8 @@ export function startDeathmatchScore(): void {
       authoritative: syncSource !== 'none',
       syncSource,
       resetRemainingMs: remainingResetMs(),
+      boardVisible,
+      mobileToggle: smartphoneHud(),
     }),
     reset: () => (window as any).goneDeathmatchAuthority?.reset?.() ?? false,
   };
