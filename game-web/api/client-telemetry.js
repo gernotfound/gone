@@ -2,7 +2,9 @@ const ALLOWED_KINDS = new Set([
   'client_boot',
   'window_error',
   'unhandled_rejection',
+  'runtime_start_error',
   'webgl_context_lost',
+  'webgl_context_restored',
   'network_disconnect',
   'network_resume',
 ]);
@@ -40,7 +42,7 @@ export default function handler(req, res) {
   const raw = bodyOf(req);
   const kind = ALLOWED_KINDS.has(raw.kind) ? raw.kind : 'window_error';
   const record = {
-    level: kind === 'client_boot' || kind === 'network_resume' ? 'info' : 'error',
+    level: kind === 'client_boot' || kind === 'network_resume' || kind === 'webgl_context_restored' ? 'info' : 'error',
     source: 'gone-client',
     kind,
     buildId: clean(raw.buildId, 80),
