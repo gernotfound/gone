@@ -1,10 +1,12 @@
 import { inputState, resetInputState } from '../controls/playerInput.ts';
+import { browserLifecycle } from '../runtime/browserLifecycle.ts';
 import { useOnScreenControls } from './inputMode.ts';
 import { isSmartphoneDevice } from './smartphoneProfile.ts';
 import { getTouchPreferences } from './touchPreferences.ts';
 
 type MobileControlsApi = {
   enabled?: boolean;
+  fallback?: boolean;
   sync?: () => void;
 };
 
@@ -25,6 +27,9 @@ const state: TouchState = {
 let fallbackRoot: HTMLDivElement | null = null;
 let stick: HTMLDivElement | null = null;
 let knob: HTMLDivElement | null = null;
+let fallbackObserver: MutationObserver | null = null;
+let guardStarted = false;
+let fallbackWarningShown = false;
 
 function visible(id: string): boolean {
   const el = document.getElementById(id);
@@ -224,7 +229,12 @@ function switchWeapon(delta: number): void {
 }
 
 function createFallbackControls(): void {
-  if (document.getElementById('gone-mobile-controls')) return;
+  if (document.getElementById('gone-mobile-controls')) {
+    fallbackRoot = document.getElementById('gone-mobile-controls') as HTMLDivElement | null;
+    stick = document.getElementById('mobile-stick') as HTMLDivElement | null;
+    knob = document.getElementById('mobile-stick-knob') as HTMLDivElement | null;
+    return;
+  }
 
   fallbackRoot = document.createElement('div');
   fallbackRoot.id = 'gone-mobile-controls';
@@ -270,44 +280,30 @@ function createFallbackControls(): void {
 
 function syncFallbackVisibility(): void {
   if (!fallbackRoot) return;
-  const active = gameplayActive();
+  const allowed = useOnScreenControls() || isSmartphoneDevice();
+  const active = allowed && gameplayActive();
   fallbackRoot.classList.toggle('hidden', !active);
   fallbackRoot.classList.toggle('map-open', active && mapOpen());
   if (active) updateWeaponLabel();
   else releaseInputs();
 }
 
-export function startSmartphoneControlsGuard(): void {
-  if ((window as any).__goneSmartphoneControlsGuardStarted) return;
-  (window as any).__goneSmartphoneControlsGuardStarted = true;
-
-  // Explicit on-screen mode is authoritative. The smartphone heuristic remains
-  // the automatic fallback, but a user-selected screen mode must work even when
-  // a WebView/PWA reports misleading UA/touch capabilities.
-  if (!useOnScreenControls() && !isSmartphoneDevice()) return;
-
-  const primary = (window as any).goneMobileControls as MobileControlsApi | undefined;
-  if (primary?.enabled === true) {
-    primary.sync?.();
-    return;
-  }
-
-  console.warn('[Mobile] Primary touch runtime unavailable; enabling fallback on-screen controls.');
+function installFallbackInfrastructure(): void {
   createFallbackControls();
-  syncFallbackVisibility();
+  if (!fallbackRoot) return;
 
-  const observer = new MutationObserver(syncFallbackVisibility);
-  for (const id of ['game-ui', 'map-ui', 'main-menu', 'settings-menu', 'multiplayer-lobby', 'death-overlay']) {
-    const el = document.getElementById(id);
-    if (el) observer.observe(el, { attributes: true, attributeFilter: ['class', 'style'] });
+  if (!fallbackObserver) {
+    fallbackObserver = new MutationObserver(syncFallbackVisibility);
+    for (const id of ['game-ui', 'map-ui', 'main-menu', 'settings-menu', 'multiplayer-lobby', 'death-overlay']) {
+      const el = document.getElementById(id);
+      if (el) fallbackObserver.observe(el, { attributes: true, attributeFilter: ['class', 'style'] });
+    }
+
+    window.addEventListener('resize', syncFallbackVisibility, { passive: true });
+    window.addEventListener('orientationchange', syncFallbackVisibility, { passive: true });
+    browserLifecycle.subscribe('visible', 'smartphoneControlsGuard', syncFallbackVisibility, 40);
+    browserLifecycle.subscribe('hidden', 'smartphoneControlsGuard', releaseInputs, 90);
   }
-
-  window.addEventListener('resize', syncFallbackVisibility, { passive: true });
-  window.addEventListener('orientationchange', syncFallbackVisibility, { passive: true });
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') syncFallbackVisibility();
-    else releaseInputs();
-  });
 
   (window as any).goneMobileControls = {
     enabled: true,
@@ -315,4 +311,39 @@ export function startSmartphoneControlsGuard(): void {
     sync: syncFallbackVisibility,
     snapshot: () => ({ enabled: true, fallback: true, gameplayActive: gameplayActive(), mapOpen: mapOpen() }),
   };
+}
+
+export function reconcileSmartphoneControlsGuard(): void {
+  const allowed = useOnScreenControls() || isSmartphoneDevice();
+  if (!allowed) {
+    fallbackRoot?.classList.add('hidden');
+    releaseInputs();
+    return;
+  }
+
+  const controls = (window as any).goneMobileControls as MobileControlsApi | undefined;
+  if (controls?.enabled === true && controls.fallback !== true) {
+    fallbackRoot?.classList.add('hidden');
+    controls.sync?.();
+    return;
+  }
+
+  if (!fallbackWarningShown) {
+    fallbackWarningShown = true;
+    console.warn('[Mobile] Primary touch runtime unavailable; enabling fallback on-screen controls.');
+  }
+  installFallbackInfrastructure();
+  syncFallbackVisibility();
+}
+
+export function startSmartphoneControlsGuard(): void {
+  if (guardStarted) {
+    reconcileSmartphoneControlsGuard();
+    return;
+  }
+  guardStarted = true;
+  (window as any).__goneSmartphoneControlsGuardStarted = true;
+
+  window.addEventListener('gone-input-mode-changed', reconcileSmartphoneControlsGuard);
+  reconcileSmartphoneControlsGuard();
 }
