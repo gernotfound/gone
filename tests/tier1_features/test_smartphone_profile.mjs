@@ -23,10 +23,10 @@ export async function run(suite) {
 
   suite.test('Smartphone and touch preferences are applied before gameplay runtime startup', () => {
     const source = fs.readFileSync(mainPath, 'utf-8');
-    const smartphone = source.indexOf('startSmartphoneProfile();');
-    const inputMode = source.indexOf('startInputModeSettings();');
-    const touchPreferences = source.indexOf('startTouchPreferences();');
-    const pwa = source.indexOf('startPwaRuntime();');
+    const smartphone = source.indexOf("safeStart('smartphoneProfile', startSmartphoneProfile);");
+    const inputMode = source.indexOf("safeStart('inputModeSettings', startInputModeSettings);");
+    const touchPreferences = source.indexOf("safeStart('touchPreferences', startTouchPreferences);");
+    const pwa = source.indexOf("safeStart('pwaRuntime', startPwaRuntime);");
     const client = source.indexOf('startClientRuntime();');
     assert(smartphone >= 0 && smartphone < inputMode && inputMode < touchPreferences && touchPreferences < pwa && pwa < client, 'phone profile and preferences must exist before PWA/game UI initializes');
   });
