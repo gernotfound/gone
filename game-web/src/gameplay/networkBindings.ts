@@ -6,6 +6,7 @@ import {
   STATE_FLAGS,
   type FireHitscanData,
   type HitConfirmedData,
+  type PlayerSnapshotEntry,
   type WorldSnapshotData,
 } from '../net/binaryProtocol.ts';
 import { CLIENT_STATE_EXT_FLAGS } from '../net/clientStateExtensions.ts';
@@ -18,8 +19,12 @@ import { presentLegacyRemoteHitscan } from '../net/legacyRemoteShotPresentation.
 import { getSafestRespawnPoint } from './spawnSelection.ts';
 import { getPlayerSpawnY } from './spawnPolicy.ts';
 
+const LOCAL_AUTHORITY_SNAP_DISTANCE = 8;
+const LOCAL_AUTHORITY_SNAP_DISTANCE_SQ = LOCAL_AUTHORITY_SNAP_DISTANCE * LOCAL_AUTHORITY_SNAP_DISTANCE;
+
 type LocalPlayerNetworkState = {
   position: THREE.Vector3;
+  velocity?: THREE.Vector3;
   isGrounded: boolean;
   hp: number;
   maxHp: number;
@@ -38,6 +43,27 @@ export type GameplayNetworkContext = {
   handleLocalPlayerDamage: (newHp: number) => void;
   localEyeHeight: number;
 };
+
+/**
+ * Local movement stays predicted during normal play. Large divergence means the
+ * host rejected/overrode our state (or selected an authoritative respawn), so
+ * the client must converge instead of resending the invalid position forever.
+ */
+export function applyAuthoritativeLocalPosition(
+  player: LocalPlayerNetworkState,
+  state: Pick<PlayerSnapshotEntry, 'x' | 'y' | 'z'>,
+  force = false,
+): boolean {
+  if (![state.x, state.y, state.z].every(Number.isFinite)) return false;
+  const dx = state.x - player.position.x;
+  const dy = state.y - player.position.y;
+  const dz = state.z - player.position.z;
+  if (!force && dx * dx + dy * dy + dz * dz <= LOCAL_AUTHORITY_SNAP_DISTANCE_SQ) return false;
+
+  player.position.set(state.x, state.y, state.z);
+  player.velocity?.set(0, 0, 0);
+  return true;
+}
 
 export function bindClientGameplayNetworking(client: P2PClient, context: GameplayNetworkContext): void {
   const { player } = context;
@@ -73,10 +99,15 @@ export function bindClientGameplayNetworking(client: P2PClient, context: Gamepla
       const isShielded = (state.flags & STATE_FLAGS.SHIELD_ACTIVE) !== 0;
 
       if (mySlot !== null && state.slot === mySlot) {
+        const respawnedByHost = isAlive && !player.isAlive;
         if (!isAlive && player.isAlive) {
           context.handleLocalPlayerDeath();
-        } else if (isAlive && !player.isAlive) {
+        } else if (respawnedByHost) {
           context.handleLocalPlayerRespawn();
+        }
+
+        if (isAlive) {
+          applyAuthoritativeLocalPosition(player, state, respawnedByHost);
         }
 
         player.hp = state.hp;
