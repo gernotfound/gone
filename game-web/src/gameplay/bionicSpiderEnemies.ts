@@ -28,13 +28,18 @@ const DEATH_ANIM_DURATION = 1.25;
 const CORPSE_LIFETIME = 5.5;
 const ATTACK_COOLDOWN = 0.82;
 const ATTACK_ANIM_DURATION = 0.30;
-// Large spiders keep an alternating tetrapod gait but with a longer stance
-// phase and lower cadence, giving the 4x body real weight instead of tiny-leg jitter.
+// The supplied armored-spider reference uses a 35% swing / 65% stance gait.
 const GAIT_HZ = 1.65;
-const SWING_FRACTION = 0.36;
+const SWING_FRACTION = 0.35;
 const UPPER_LEG_LENGTH = 1.58;
 const LOWER_LEG_LENGTH = 1.68;
+const IDLE_BREATH_AMPLITUDE = 0.052;
+const DEATH_CURL_SCALE = 0.4;
 const TAU = Math.PI * 2;
+const DEAD_COLOR = new THREE.Color(0x111111);
+const POWER_CORE_COLOR = new THREE.Color(0xff6600);
+const CYAN_COLOR = new THREE.Color(0x00f3ff);
+const MAGENTA_COLOR = new THREE.Color(0xff00ea);
 
 export interface CraterCenter {
   x: number;
@@ -125,6 +130,19 @@ function approachAngle(current: number, target: number, maxDelta: number): numbe
 function smooth01(value: number): number {
   const t = THREE.MathUtils.clamp(value, 0, 1);
   return t * t * (3 - 2 * t);
+}
+
+function setDeathPowerDown(model: BionicSpiderModel, amount: number): void {
+  const fade = THREE.MathUtils.clamp(amount, 0, 1);
+  model.coreMaterial.color.copy(POWER_CORE_COLOR).lerp(DEAD_COLOR, fade);
+  model.coreMaterial.emissive.copy(POWER_CORE_COLOR).lerp(DEAD_COLOR, fade);
+  model.coreMaterial.emissiveIntensity = THREE.MathUtils.lerp(2.1, 0, fade);
+  model.neonCyanMaterial.color.copy(CYAN_COLOR).lerp(DEAD_COLOR, fade);
+  model.neonCyanMaterial.emissive.copy(CYAN_COLOR).lerp(DEAD_COLOR, fade);
+  model.neonCyanMaterial.emissiveIntensity = THREE.MathUtils.lerp(3.0, 0, fade);
+  model.neonMagentaMaterial.color.copy(MAGENTA_COLOR).lerp(DEAD_COLOR, fade);
+  model.neonMagentaMaterial.emissive.copy(MAGENTA_COLOR).lerp(DEAD_COLOR, fade);
+  model.neonMagentaMaterial.emissiveIntensity = THREE.MathUtils.lerp(2.8, 0, fade);
 }
 
 function worldFootToLocal(enemy: EnemyState, world: THREE.Vector3, out: THREE.Vector3): THREE.Vector3 {
@@ -327,7 +345,7 @@ export class BionicSpiderEnemySystem {
         swingStartWorld: world.clone(),
         swingTargetWorld: world.clone(),
         wasSwinging: false,
-        // Alternating tetrapods: L1/L3 move with R2/R4, then the opposite set.
+        // Gemini reference group A is [0,2,5,7]; this mapping preserves it exactly.
         phaseOffset: ((i % 4) % 2 === 0) !== (i < 4) ? 0.5 : 0,
       });
     }
@@ -475,22 +493,27 @@ export class BionicSpiderEnemySystem {
     this.updateLegs(enemy, delta, speedRatio);
 
     const damageFlash = enemy.damageTimer > 0 ? enemy.damageTimer / DAMAGE_ANIM_DURATION : 0;
+    const damageProgress = 1 - damageFlash;
+    const damageShock = damageFlash * Math.sin(damageProgress * Math.PI * 5);
     const attackPhase = enemy.attackTimer > 0 ? 1 - enemy.attackTimer / ATTACK_ANIM_DURATION : 0;
     const attackLunge = Math.sin(THREE.MathUtils.clamp(attackPhase, 0, 1) * Math.PI);
+    const idleWeight = 1 - speedRatio;
+    const idleBreath = Math.sin(this.elapsed * 2 + enemy.id * 0.67) * IDLE_BREATH_AMPLITUDE * idleWeight;
     const walkBob = Math.sin(enemy.gaitClock * TAU * 2) * 0.035 * speedRatio;
+    const walkPitch = speedRatio * (0.05 + Math.sin(enemy.gaitClock * TAU) * 0.02);
     enemy.model.bodyRoot.position.set(
-      enemy.flinchSide * damageFlash * 0.08,
-      BIONIC_SPIDER_BODY_HEIGHT + walkBob + damageFlash * 0.07,
+      enemy.flinchSide * (damageFlash * 0.08 + damageShock * 0.05),
+      BIONIC_SPIDER_BODY_HEIGHT + idleBreath + walkBob - damageFlash * 0.13 + Math.abs(damageShock) * 0.035,
       attackLunge * 0.24 - damageFlash * 0.16,
     );
     enemy.model.bodyRoot.rotation.x = THREE.MathUtils.lerp(
       enemy.model.bodyRoot.rotation.x,
-      enemy.terrainPitch + damageFlash * 0.08,
+      enemy.terrainPitch + walkPitch - damageFlash * 0.12 + damageShock * 0.08,
       Math.min(1, delta * 12),
     );
     enemy.model.bodyRoot.rotation.z = THREE.MathUtils.lerp(
       enemy.model.bodyRoot.rotation.z,
-      enemy.terrainRoll + enemy.flinchSide * damageFlash * 0.16,
+      enemy.terrainRoll + enemy.flinchSide * (damageFlash * 0.16 + damageShock * 0.10),
       Math.min(1, delta * 12),
     );
     enemy.model.headRoot.rotation.y = Math.sin(enemy.gaitClock * TAU) * 0.045 + enemy.flinchSide * damageFlash * 0.10;
@@ -555,6 +578,11 @@ export class BionicSpiderEnemySystem {
       tempHipLocal.copy(rig.hipLocal);
       tempHipLocal.y -= collapse * 0.94;
       worldFootToLocal(enemy, state.footWorld, tempFootLocal);
+      if (collapse > 0) {
+        const curl = THREE.MathUtils.lerp(1, DEATH_CURL_SCALE, collapse);
+        tempFootLocal.x *= curl;
+        tempFootLocal.z *= curl;
+      }
       solveTwoBoneKnee(tempHipLocal, tempFootLocal, Math.sign(rig.hipLocal.x), tempKneeLocal);
       poseBionicSpiderLeg(enemy.model, i, tempHipLocal, tempKneeLocal, tempFootLocal);
     }
@@ -564,14 +592,15 @@ export class BionicSpiderEnemySystem {
     enemy.deathTimer += delta;
     const collapse = smooth01(enemy.deathTimer / DEATH_ANIM_DURATION);
     enemy.model.root.position.y = THREE.MathUtils.lerp(enemy.model.root.position.y, enemy.groundY, Math.min(1, delta * 10));
-    enemy.model.bodyRoot.position.set(0, BIONIC_SPIDER_BODY_HEIGHT - collapse * 1.08, -collapse * 0.12);
-    enemy.model.bodyRoot.rotation.x = enemy.terrainPitch + collapse * 0.34;
-    enemy.model.bodyRoot.rotation.z = enemy.terrainRoll + enemy.deathSide * collapse * 1.08;
+    enemy.model.bodyRoot.position.set(0, BIONIC_SPIDER_BODY_HEIGHT - collapse * 0.95, -collapse * 0.12);
+    enemy.model.bodyRoot.rotation.x = enemy.terrainPitch - collapse * 0.45;
+    enemy.model.bodyRoot.rotation.z = enemy.terrainRoll + enemy.deathSide * collapse * 0.20;
     enemy.model.headRoot.rotation.x = collapse * 0.55;
-    enemy.model.headRoot.rotation.y = enemy.deathSide * collapse * 0.32;
+    enemy.model.headRoot.rotation.y = enemy.deathSide * collapse * 0.18;
     this.updateLegs(enemy, delta, 0, collapse);
     const residualFlash = Math.max(0, 1 - enemy.deathTimer / 0.45);
     setBionicSpiderDamageVisual(enemy.model, residualFlash);
+    setDeathPowerDown(enemy.model, collapse);
   }
 
   private removeEnemy(id: number, cooldownSeconds: number): void {
