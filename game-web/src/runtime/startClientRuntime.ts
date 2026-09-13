@@ -19,7 +19,6 @@ import { startNetworkStabilityFix } from '../net/networkStabilityFix.ts';
 import { startAdaptiveSnapshotRate } from '../net/adaptiveSnapshotRate.ts';
 import { startCombatEventBridge } from '../net/combatEventBridge.ts';
 import { startDeathmatchAuthority } from '../net/deathmatchAuthority.ts';
-import { startSessionLifecycleHardening } from '../net/sessionLifecycleHardening.ts';
 import { startRemoteShotPresentation } from '../net/remoteShotPresentation.ts';
 import { startLiveMapOverlay } from '../gameplay/liveMapOverlay.ts';
 import { startMusicSourceGain } from '../audio/musicSourceGain.ts';
@@ -41,12 +40,6 @@ const CLIENT_RUNTIME_MODULES: readonly RuntimeModuleDefinition[] = [
 
   { name: 'bootstrap', phase: 'bootstrap', critical: true, start: bootstrap },
 
-  {
-    name: 'sessionLifecycleHardening',
-    phase: 'gameplay',
-    dependsOn: BOOTSTRAP_DEPENDENCY,
-    start: startSessionLifecycleHardening,
-  },
   {
     name: 'precisionShotRuntime',
     phase: 'gameplay',
