@@ -12,6 +12,10 @@ export function setLocalRobotPreview(preview: THREE.Group | null): void {
   localRobotPreview = preview;
 }
 
+export type LobbySetupOptions = {
+  prepareDirectInvite?: boolean;
+};
+
 let onGameStartCb: (() => void) | null = null;
 let sessionSubscriptionInstalled = false;
 
@@ -153,13 +157,18 @@ function renderSession(snapshot: MultiplayerSessionSnapshot): void {
   renderColorPicker(snapshot);
 
   if (snapshot.role === 'host') {
+    hostPlayButton();
+    if (snapshot.inviteKind !== 'host-link') {
+      document.getElementById('direct-host-controls')?.remove();
+      return;
+    }
+
     removeDirectControls();
     DOM.inviteLinkContainer.classList.remove('hidden');
     setInviteLabel('1. INVIA QUESTO LINK A UN AMICO');
     DOM.btnCopyLink.textContent = 'COPIA LINK';
     DOM.inviteLinkInput.value = snapshot.inviteValue || 'GENERAZIONE INVITO DIRETTO...';
     installHostDirectControls();
-    hostPlayButton();
 
     const status = document.getElementById('direct-host-status');
     if (status && snapshot.notice) {
@@ -205,14 +214,19 @@ export function resetMultiplayerSession(): void {
   removeDirectControls();
 }
 
-export function setupLobby(isHost: boolean, directOfferCode?: string, onPlayMultiplayer?: () => void): void {
+export function setupLobby(
+  isHost: boolean,
+  directOfferCode?: string,
+  onPlayMultiplayer?: () => void,
+  options: LobbySetupOptions = {},
+): void {
   ensureSessionSubscription();
   if (onPlayMultiplayer) onGameStartCb = onPlayMultiplayer;
   const name = playerName();
 
   if (isHost) {
     multiplayerSessionController.startHost(name);
-    if (!multiplayerSessionController.snapshot().inviteValue) {
+    if (options.prepareDirectInvite !== false && !multiplayerSessionController.snapshot().inviteValue) {
       void multiplayerSessionController.prepareHostInvite().catch((error) => {
         console.error('[G.O.N.E.] Invito diretto fallito', error);
       });
