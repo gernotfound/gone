@@ -1,0 +1,35 @@
+#gone-mobile-controls #mc-pickup {
+  position: fixed;
+  right: max(78px, calc(env(safe-area-inset-right) + 72px));
+  bottom: max(218px, calc(env(safe-area-inset-bottom) + 210px));
+  z-index: 125;
+  min-width: 54px;
+  min-height: 48px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(34, 211, 238, .72);
+  border-radius: 15px;
+  background: rgba(8, 47, 73, .72);
+  color: #cffafe;
+  font: 900 11px/1 ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: .08em;
+  box-shadow: 0 0 16px rgba(34, 211, 238, .24);
+  backdrop-filter: blur(5px);
+  touch-action: none;
+  user-select: none;
+}
+
+#gone-mobile-controls #mc-pickup.is-hidden {
+  display: none !important;
+}
+
+html.gone-touch-left-handed #gone-mobile-controls #mc-pickup {
+  right: auto;
+  left: max(78px, calc(env(safe-area-inset-left) + 72px));
+}
+
+@media (max-height: 430px) and (orientation: landscape) {
+  #gone-mobile-controls #mc-pickup {
+    bottom: max(194px, calc(env(safe-area-inset-bottom) + 188px));
+  }
+}
