@@ -1,7 +1,8 @@
 import { soundSynth } from '../audio/index.ts';
-import { setupLobby, initLobbyEvents, resetMultiplayerSession } from './lobby.ts';
 import { readDirectOfferFromLocation } from '../net/directWebRtc.ts';
 import { setupSelfHostedSessionFromLocation } from '../net/selfHostSession.ts';
+import { browserLifecycle } from '../runtime/browserLifecycle.ts';
+import { setupLobby, initLobbyEvents, resetMultiplayerSession } from './lobby.ts';
 
 import { DOM } from './dom.ts';
 export { DOM };
@@ -69,6 +70,16 @@ function resumeAudioFromGesture(): void {
     });
 }
 
+function resumeAudioAfterForeground(): void {
+    void soundSynth.unlock().catch(() => {});
+    if (musicEnabled() && DOM.bgMusic.paused) {
+        void DOM.bgMusic.play().then(() => setIsMusicPlaying(true)).catch(() => {
+            // A resumed iOS tab may still require one more user gesture;
+            // the persistent pointerdown listener below handles that path.
+        });
+    }
+}
+
 function installAudioLifecycle(): void {
     DOM.bgMusic.preload = 'auto';
     DOM.bgMusic.setAttribute('playsinline', '');
@@ -80,21 +91,10 @@ function installAudioLifecycle(): void {
 
     DOM.bgMusic.addEventListener('play', () => setIsMusicPlaying(true));
     DOM.bgMusic.addEventListener('pause', () => setIsMusicPlaying(false));
-    document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState !== 'visible') return;
-        void soundSynth.unlock().catch(() => {});
-        if (musicEnabled() && DOM.bgMusic.paused) {
-            void DOM.bgMusic.play().then(() => setIsMusicPlaying(true)).catch(() => {
-                // A resumed iOS tab may still require one more user gesture;
-                // the persistent pointerdown listener above handles that path.
-            });
-        }
-    });
-    window.addEventListener('pageshow', () => {
-        if (musicEnabled() && DOM.bgMusic.paused) {
-            void DOM.bgMusic.play().catch(() => {});
-        }
-    });
+    browserLifecycle.subscribe('visible', 'menuAudio', resumeAudioAfterForeground, 20);
+    browserLifecycle.subscribe('pageshow', 'menuAudio', () => {
+        if (musicEnabled() && DOM.bgMusic.paused) void DOM.bgMusic.play().catch(() => {});
+    }, 20);
 }
 
 function openJoinLobby(directOfferCode: string, onPlayMultiplayer: () => void) {
@@ -120,8 +120,8 @@ export function setupMenu(callbacks: {
     keepMenusAboveGameplayOverlays();
     installAudioLifecycle();
     initLobbyEvents();
-    window.addEventListener('online', updateNetworkStatus);
-    window.addEventListener('offline', updateNetworkStatus);
+    browserLifecycle.subscribe('online', 'menuNetworkStatus', updateNetworkStatus, 10);
+    browserLifecycle.subscribe('offline', 'menuNetworkStatus', updateNetworkStatus, 10);
     if ((navigator as any).connection) {
         (navigator as any).connection.addEventListener('change', updateNetworkStatus);
     }
