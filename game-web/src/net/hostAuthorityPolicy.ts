@@ -67,7 +67,6 @@ export function isPositionInsideAuthorityBounds(value: AuthorityPosition): boole
 /** Reliable ordered channels should only move sequence numbers forward, modulo their bit width. */
 export function isForwardSequence(previous: number, next: number, bits: 8 | 16): boolean {
   if (!Number.isInteger(previous) || !Number.isInteger(next)) return false;
-  if (previous === 0) return true;
   const modulus = bits === 8 ? 0x100 : 0x10000;
   const half = modulus / 2;
   const mask = modulus - 1;
