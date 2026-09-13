@@ -14,6 +14,7 @@ export async function run(suite) {
   const runtime = source('game-web', 'src', 'runtime', 'startClientRuntime.ts');
   const kernel = source('game-web', 'src', 'runtime', 'runtimeKernel.ts');
   const lifecycle = source('game-web', 'src', 'runtime', 'browserLifecycle.ts');
+  const availability = source('game-web', 'src', 'ui', 'runtimeAvailabilityUi.ts');
   const diagnostics = source('game-web', 'src', 'observability', 'clientDiagnostics.ts');
   const telemetry = source('game-web', 'api', 'client-telemetry.js');
   const pwa = source('game-web', 'src', 'pwa', 'pwaRuntime.ts');
@@ -45,10 +46,14 @@ export async function run(suite) {
     assert(lifecycle.includes('current.sort((a, b) => b.priority - a.priority'), 'lifecycle handlers must have deterministic priority ordering');
   });
 
-  suite.test('Critical runtime invariants are explicit dependencies rather than implicit ordering', () => {
+  suite.test('Critical runtime invariants fail closed instead of activating device combat partially', () => {
     assert(runtime.includes("name: 'bootstrap', phase: 'bootstrap', critical: true"), 'menu/game bootstrap must be critical');
     assert(runtime.includes("name: 'advancedWeaponController'"), 'ammo-authoritative weapon controller must be registered');
     assert(runtime.includes('critical: true') && runtime.includes("dependsOn: BOOTSTRAP_DEPENDENCY"), 'critical gameplay invariants must depend on bootstrap explicitly');
+    assert(runtime.includes("new CustomEvent('gone-runtime-unavailable'"), 'core failure must publish an explicit unavailable state');
+    assert(main.includes("const COMBAT_SAFE_CORE = ['bootstrap', 'advancedWeaponController']"), 'device modules must share one combat-safe dependency contract');
+    assert(main.includes("if (runtimeKernel.isReady('advancedWeaponController'))"), 'device controls must not start if ammo authority failed');
+    assert(availability.includes('AVVIO SICURO INTERROTTO') && availability.includes('window.location.reload()'), 'failed core must have an actionable fail-closed UI');
     assert(kernel.includes('criticalFailure'), 'kernel health must fail when a critical module is failed or blocked');
     assert(kernel.includes("new CustomEvent('gone-runtime-start-error'"), 'kernel failures must publish diagnostics');
   });
