@@ -164,6 +164,25 @@ function createMaterials(): {
   };
 }
 
+function wrapDetailsInScaleCompensator(segment: THREE.Mesh, name: string): THREE.Group {
+  const detailRoot = new THREE.Group();
+  detailRoot.name = name;
+  const details = [...segment.children];
+  segment.add(detailRoot);
+  for (const child of details) detailRoot.add(child);
+  return detailRoot;
+}
+
+function compensateDetailScale(segment: THREE.Mesh, detailRootName: string): void {
+  const detailRoot = segment.getObjectByName(detailRootName);
+  if (!detailRoot) return;
+  detailRoot.scale.set(
+    1 / Math.max(Math.abs(segment.scale.x), 0.001),
+    1 / Math.max(Math.abs(segment.scale.y), 0.001),
+    1 / Math.max(Math.abs(segment.scale.z), 0.001),
+  );
+}
+
 function addSegmentDetails(
   upper: THREE.Mesh,
   lower: THREE.Mesh,
@@ -245,6 +264,10 @@ function addSegmentDetails(
   spur.rotation.x = -Math.PI / 4;
   configureMesh(spur, 'limb');
   footPad.add(spur);
+
+  wrapDetailsInScaleCompensator(upper, `BionicSpiderUpperDetails-${suffix}`);
+  wrapDetailsInScaleCompensator(lower, `BionicSpiderLowerDetails-${suffix}`);
+  wrapDetailsInScaleCompensator(footPad, `BionicSpiderFootDetails-${suffix}`);
 }
 
 export function createBionicSpiderModel(enemyId: number): BionicSpiderModel {
@@ -424,12 +447,15 @@ export function poseBionicSpiderLeg(
   if (!leg) return;
   placeSegment(leg.upper, hipLocal, kneeLocal, 0.13);
   placeSegment(leg.lower, kneeLocal, footLocal, 0.11);
+  compensateDetailScale(leg.upper, `BionicSpiderUpperDetails-${leg.upper.name.split('-').slice(-2).join('-')}`);
+  compensateDetailScale(leg.lower, `BionicSpiderLowerDetails-${leg.lower.name.split('-').slice(-2).join('-')}`);
   leg.hipJoint.position.copy(hipLocal);
   leg.kneeJoint.position.copy(kneeLocal);
   leg.footPad.position.copy(footLocal);
   leg.footPad.position.y += 0.07;
   footDirection.subVectors(footLocal, kneeLocal);
   leg.footPad.rotation.set(0, Math.atan2(footDirection.x, footDirection.z), 0);
+  compensateDetailScale(leg.footPad, `BionicSpiderFootDetails-${leg.footPad.name.split('-').slice(-2).join('-')}`);
 }
 
 export function setBionicSpiderDamageVisual(model: BionicSpiderModel, amount: number): void {
