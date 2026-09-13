@@ -15,9 +15,11 @@ import { startPwaRuntime } from './pwa/pwaRuntime.ts';
 import { startBrowserLifecycle } from './runtime/browserLifecycle.ts';
 import { startClientRuntime } from './runtime/startClientRuntime.ts';
 import { runtimeKernel, type RuntimeModuleDefinition } from './runtime/runtimeKernel.ts';
+import { startRuntimeAvailabilityUi } from './ui/runtimeAvailabilityUi.ts';
 
 const SHELL_MODULES: readonly RuntimeModuleDefinition[] = [
   { name: 'clientDiagnostics', phase: 'foundation', start: startClientDiagnostics },
+  { name: 'runtimeAvailabilityUi', phase: 'foundation', start: startRuntimeAvailabilityUi },
   { name: 'browserLifecycle', phase: 'foundation', critical: true, start: startBrowserLifecycle },
   { name: 'smartphoneProfile', phase: 'foundation', start: startSmartphoneProfile },
   {
@@ -35,37 +37,39 @@ const SHELL_MODULES: readonly RuntimeModuleDefinition[] = [
   { name: 'pwaRuntime', phase: 'foundation', start: startPwaRuntime },
 ];
 
+const COMBAT_SAFE_CORE = ['bootstrap', 'advancedWeaponController'] as const;
+
 const DEVICE_MODULES: readonly RuntimeModuleDefinition[] = [
   {
     name: 'smartphoneControlsGuard',
     phase: 'device',
-    dependsOn: ['bootstrap'],
+    dependsOn: COMBAT_SAFE_CORE,
     start: startSmartphoneControlsGuard,
     reconcile: reconcileSmartphoneControlsGuard,
   },
   {
     name: 'pubgTouchControls',
     phase: 'device',
-    dependsOn: ['smartphoneControlsGuard'],
+    dependsOn: ['smartphoneControlsGuard', 'advancedWeaponController'],
     start: startPubgTouchControls,
     reconcile: () => (window as any).gonePubgTouchControls?.rebind?.(),
   },
   {
     name: 'competitiveTouchControls',
     phase: 'device',
-    dependsOn: ['pubgTouchControls'],
+    dependsOn: ['pubgTouchControls', 'advancedWeaponController'],
     start: startCompetitiveTouchControls,
   },
   {
     name: 'touchLayoutEditor',
     phase: 'device',
-    dependsOn: ['smartphoneControlsGuard'],
+    dependsOn: COMBAT_SAFE_CORE,
     start: startTouchLayoutEditor,
   },
   {
     name: 'mobileSessionResume',
     phase: 'device',
-    dependsOn: ['bootstrap'],
+    dependsOn: COMBAT_SAFE_CORE,
     start: startMobileSessionResume,
   },
 ];
@@ -79,11 +83,13 @@ runtimeKernel.startPhase('foundation');
 startClientRuntime();
 
 runtimeKernel.registerMany(DEVICE_MODULES);
-runtimeKernel.startPhase('device');
+if (runtimeKernel.isReady('advancedWeaponController')) {
+  runtimeKernel.startPhase('device');
+}
 
 // Input mode is an application-level configuration transition. Reconciliation
 // is delegated to modules that explicitly declare it; no module is restarted and
 // no private "started" flag is reset.
 window.addEventListener('gone-input-mode-changed', () => {
-  runtimeKernel.reconcilePhase('device');
+  if (runtimeKernel.isReady('advancedWeaponController')) runtimeKernel.reconcilePhase('device');
 });
