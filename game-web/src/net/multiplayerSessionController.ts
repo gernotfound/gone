@@ -1,4 +1,8 @@
-import { encodeLobbyColorChanged, encodeLobbyGameStart } from './binaryProtocol.ts';
+import {
+  decodeLobbyMessage,
+  encodeLobbyColorChanged,
+  encodeLobbyGameStart,
+} from './binaryProtocol.ts';
 import {
   buildDirectInviteUrl,
   createDirectGuestAnswer,
@@ -7,7 +11,7 @@ import {
   type DirectHostOffer,
 } from './directWebRtc.ts';
 import { P2PClient, type ClientConnectionStatus } from './p2pClient.ts';
-import { P2PHost } from './p2pHost.ts';
+import { P2PHost, type P2PHostOptions } from './p2pHost.ts';
 import { SimpleLagCompensator } from './simpleLagCompensator.ts';
 import type { IDataChannel, SessionPlayerInfo } from './protocol.ts';
 
@@ -86,6 +90,28 @@ function sessionPlayerToLobby(player: SessionPlayerInfo): LobbyPlayer {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error ?? 'Errore sessione');
+}
+
+/**
+ * Compatibility adapter around the canonical P2PHost. It does not replace or
+ * patch host methods at runtime: it only observes the lobby packets the host
+ * already emits so session presentation can react to peer color changes.
+ */
+class SessionP2PHost extends P2PHost {
+  constructor(
+    options: P2PHostOptions,
+    private readonly onRosterColorChanged: (playerId: string, color: string) => void,
+  ) {
+    super(options);
+  }
+
+  override broadcastBinary(buffer: ArrayBuffer, excludePlayerId?: string): void {
+    super.broadcastBinary(buffer, excludePlayerId);
+    const message = decodeLobbyMessage(buffer);
+    if (message?.type === 'COLOR_CHANGED') {
+      this.onRosterColorChanged(message.playerId, message.newColor);
+    }
+  }
 }
 
 class MultiplayerSessionController {
@@ -198,7 +224,7 @@ class MultiplayerSessionController {
 
     this.localSessionId = 'host';
     localPlayerColor = color;
-    const host = new P2PHost({
+    const host = new SessionP2PHost({
       hostPlayer: { id: 'host', name: playerName || 'Giocatore', color },
       lagCompensator: new SimpleLagCompensator(500),
       onPlayerJoined: (player) => {
@@ -210,15 +236,14 @@ class MultiplayerSessionController {
         runtimeBridge?.removeRemotePlayer(playerId);
         this.emit();
       },
-      onColorChanged: (playerId, colorChanged) => {
-        const player = this.players.find((entry) => entry.id === playerId);
-        if (player) player.color = colorChanged;
-        this.emit();
-      },
       onError: (error) => {
         console.error('[G.O.N.E. host]', error);
         this.setNotice('ERRORE HOST', 'error');
       },
+    }, (playerId, colorChanged) => {
+      const player = this.players.find((entry) => entry.id === playerId);
+      if (player) player.color = colorChanged;
+      this.emit();
     });
 
     localPlayerColor = host.hostPlayer.color;
@@ -343,11 +368,17 @@ class MultiplayerSessionController {
     this.emit(true);
   }
 
+  /** Used by typed gameplay binding functions after they adopt/clear a transport. */
+  notifyExternalBindingChange(): void {
+    this.emit();
+  }
+
   private createGuestClient(options: GuestStartOptions): P2PClient {
     if (activeP2PHost) this.reset();
     if (activeP2PClient) {
-      try { activeP2PClient.disconnect(); } catch { /* no-op */ }
-      this.detachClient(activeP2PClient);
+      const previous = activeP2PClient;
+      try { previous.disconnect(); } catch { /* no-op */ }
+      this.detachClient(previous);
     }
 
     const localId = options.playerId || makePeerId('guest');
@@ -509,7 +540,7 @@ export function setActiveP2PClient(client: P2PClient | null): void {
   if (previous && previous !== client) previous.stopStateTick();
   activeP2PClient = client;
   runtimeBridge?.clearRemotePlayers();
-  multiplayerSessionController['emit']();
+  multiplayerSessionController.notifyExternalBindingChange();
 }
 
 export function setActiveP2PHost(host: P2PHost | null): void {
@@ -518,7 +549,7 @@ export function setActiveP2PHost(host: P2PHost | null): void {
   if (previous && previous !== host) previous.destroy();
   activeP2PHost = host;
   runtimeBridge?.clearRemotePlayers();
-  multiplayerSessionController['emit']();
+  multiplayerSessionController.notifyExternalBindingChange();
 }
 
 export function setLocalPlayerColor(hex: string): void {
