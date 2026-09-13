@@ -15,7 +15,8 @@ import { healthHud } from '../ui/healthHud.ts';
 import { shieldVfxController } from '../vfx/shieldVfx.ts';
 import { addOrUpdateRemotePlayer, remotePlayers } from './remotePlayerRegistry.ts';
 import { presentLegacyRemoteHitscan } from '../net/legacyRemoteShotPresentation.ts';
-import { getPlayerSpawnY, getSafestRespawnPoint } from './spawnPolicy.ts';
+import { getSafestRespawnPoint } from './spawnSelection.ts';
+import { getPlayerSpawnY } from './spawnPolicy.ts';
 
 type LocalPlayerNetworkState = {
   position: THREE.Vector3;
