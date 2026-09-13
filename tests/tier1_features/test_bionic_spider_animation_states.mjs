@@ -41,7 +41,11 @@ export async function run(suite) {
     const emissiveBefore = core.material.emissiveIntensity;
 
     assert(system.damageEnemy(id, 75, new THREE.Vector3(1, 0, 0)), 'Lethal damage must enter death state');
-    system.update(0.8, new THREE.Vector3(0, 0, 30), false, true, false);
+    // The production animator clamps a single update to 100 ms for stability.
+    // Advance eight real animation frames rather than relying on one oversized delta.
+    for (let i = 0; i < 8; i += 1) {
+      system.update(0.1, new THREE.Vector3(0, 0, 30), false, true, false);
+    }
     scene.updateMatrixWorld(true);
     const rootAfter = root.getWorldPosition(new THREE.Vector3());
     const footAfter = foot.getWorldPosition(new THREE.Vector3());
