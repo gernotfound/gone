@@ -3,6 +3,7 @@ import { readDirectOfferFromLocation } from '../net/directWebRtc.ts';
 import { setupSelfHostedSessionFromLocation } from '../net/selfHostSession.ts';
 import { browserLifecycle } from '../runtime/browserLifecycle.ts';
 import { setupLobby, initLobbyEvents, resetMultiplayerSession } from './lobby.ts';
+import { startControlsLegend } from './controlsLegend.ts';
 
 import { DOM } from './dom.ts';
 export { DOM };
@@ -12,7 +13,11 @@ export function setIsMusicPlaying(val: boolean) { isMusicPlaying = val; }
 export let volumes = { master: 1.0, music: 1.0, sfx: 1.0 };
 
 export function isMenuOpen() {
-    return !DOM.mainMenu.classList.contains('hidden') || !DOM.settingsMenu.classList.contains('hidden') || !DOM.multiplayerLobby.classList.contains('hidden');
+    const controlsMenu = document.getElementById('controls-menu');
+    return !DOM.mainMenu.classList.contains('hidden') ||
+        !DOM.settingsMenu.classList.contains('hidden') ||
+        !DOM.multiplayerLobby.classList.contains('hidden') ||
+        Boolean(controlsMenu && !controlsMenu.classList.contains('hidden'));
 }
 
 export function updateNetworkStatus() {
@@ -107,8 +112,9 @@ function openJoinLobby(directOfferCode: string, onPlayMultiplayer: () => void) {
 function keepMenusAboveGameplayOverlays(): void {
     // Death/map overlays are intentionally below menus. ESC must always expose a
     // usable menu even while the elimination overlay is still visible.
-    for (const layer of [DOM.mainMenu, DOM.settingsMenu, DOM.multiplayerLobby]) {
-        layer.style.zIndex = '100';
+    const controlsMenu = document.getElementById('controls-menu');
+    for (const layer of [DOM.mainMenu, DOM.settingsMenu, DOM.multiplayerLobby, controlsMenu]) {
+        if (layer) layer.style.zIndex = '100';
     }
 }
 
@@ -117,6 +123,7 @@ export function setupMenu(callbacks: {
     onEnter: (e: MouseEvent) => void;
     onExit: () => void;
 }) {
+    startControlsLegend();
     keepMenusAboveGameplayOverlays();
     installAudioLifecycle();
     initLobbyEvents();

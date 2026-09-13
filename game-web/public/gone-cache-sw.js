@@ -4,7 +4,7 @@ const safeVersion = rawVersion.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80);
 const PWA_SHELL_CACHE = `gone-pwa-shell-${safeVersion}`;
 const PWA_RUNTIME_CACHE = `gone-pwa-runtime-${safeVersion}`;
 const PERFORMANCE_CACHE_PREFIX = 'gone-performance-pack-';
-const PERFORMANCE_CACHE_NAME = `${PERFORMANCE_CACHE_PREFIX}${safeVersion}`;
+const DEFAULT_PERFORMANCE_CACHE_NAME = `${PERFORMANCE_CACHE_PREFIX}${safeVersion}`;
 const MAX_PWA_CACHE_GENERATIONS = 4;
 
 const APP_SHELL = [
@@ -25,6 +25,13 @@ function isStaticAsset(request) {
   const path = new URL(request.url).pathname;
   return path.startsWith('/assets/') || path.startsWith('/pkg/') ||
     /\.(?:js|css|wasm|glb|svg|png|webp|jpg|jpeg|mp3|webmanifest)$/i.test(path);
+}
+
+function isSafePerformanceCacheName(value) {
+  return typeof value === 'string' &&
+    value.startsWith(PERFORMANCE_CACHE_PREFIX) &&
+    /^[a-zA-Z0-9._-]+$/.test(value) &&
+    value.length <= 140;
 }
 
 async function firstCached(request) {
@@ -107,8 +114,13 @@ self.addEventListener('message', (event) => {
 
   event.waitUntil((async () => {
     const urls = [...new Set(Array.isArray(event.data.urls) ? event.data.urls : [])];
-    if (event.data.refresh) await caches.delete(PERFORMANCE_CACHE_NAME);
-    const cache = await caches.open(PERFORMANCE_CACHE_NAME);
+    const requestedCacheName = event.data.cacheName;
+    const performanceCacheName = isSafePerformanceCacheName(requestedCacheName)
+      ? requestedCacheName
+      : DEFAULT_PERFORMANCE_CACHE_NAME;
+
+    if (event.data.refresh) await caches.delete(performanceCacheName);
+    const cache = await caches.open(performanceCacheName);
     let done = 0;
     let failed = 0;
     let bytes = 0;

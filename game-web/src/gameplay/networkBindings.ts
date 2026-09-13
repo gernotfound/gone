@@ -9,8 +9,8 @@ import {
   type WorldSnapshotData,
 } from '../net/binaryProtocol.ts';
 import { CLIENT_STATE_EXT_FLAGS } from '../net/clientStateExtensions.ts';
+import { setActiveP2PClient, setActiveP2PHost } from '../net/multiplayerSessionController.ts';
 import { inputState } from '../controls/playerInput.ts';
-import { setActiveP2PClient, setActiveP2PHost } from '../ui/lobby.ts';
 import { healthHud } from '../ui/healthHud.ts';
 import { shieldVfxController } from '../vfx/shieldVfx.ts';
 import { addOrUpdateRemotePlayer, remotePlayers } from './remotePlayerRegistry.ts';

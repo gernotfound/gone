@@ -1,21 +1,14 @@
 import { loadAllWeapons, loadRobotModel } from '../models/index.ts';
 import initGameCore from '../../pkg/game_core.js';
-
-const PACK_SCHEMA_VERSION = 2;
-const STORAGE_PREFIX = 'gone-performance-pack:';
-const CACHE_PREFIX = 'gone-performance-pack-';
-
-const STATIC_ASSETS = [
-  '/assets/modello.glb',
-  '/assets/assalto.glb',
-  '/assets/cecchino.glb',
-  '/assets/pompa.glb',
-  '/assets/mitraglietta.glb',
-  '/assets/coltello.glb',
-  '/favicon.svg',
-  '/icons.svg',
-  '/Colossus March.mp3',
-] as const;
+import { BUILD_ID } from '../generated/buildVersion.ts';
+import {
+  PERFORMANCE_CACHE_PREFIX,
+  PERFORMANCE_STORAGE_PREFIX,
+  collectPerformancePackAssets,
+  performanceCacheName,
+  performanceStorageKey,
+  performancePackToken,
+} from './performancePackManifest.ts';
 
 type PackProgress = {
   type: 'progress' | 'complete';
@@ -25,51 +18,35 @@ type PackProgress = {
   bytes: number;
 };
 
+type PackStatus = 'idle' | 'running' | 'ready' | 'error';
+
+type PackState = {
+  status: PackStatus;
+  token: string;
+  done: number;
+  total: number;
+  failed: number;
+  bytes: number;
+  lastError: string | null;
+};
+
 type PackUi = {
   button: HTMLButtonElement;
   status: HTMLDivElement;
   bar: HTMLDivElement;
 };
 
-function fingerprint(text: string): string {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < text.length; i++) {
-    hash ^= text.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(36);
-}
-
-function currentBuildToken(): string {
-  const candidates = new Set<string>();
-  const add = (raw: string | null | undefined) => {
-    if (!raw) return;
-    try {
-      const url = new URL(raw, location.href);
-      if (url.origin !== location.origin) return;
-      if (/\/(?:assets|pkg)\//.test(url.pathname) && /\.(?:js|css|wasm)$/i.test(url.pathname)) {
-        candidates.add(url.pathname + url.search);
-      }
-    } catch {
-      // Ignore malformed resource URLs.
-    }
-  };
-
-  document.querySelectorAll<HTMLScriptElement>('script[src]').forEach((el) => add(el.src));
-  document.querySelectorAll<HTMLLinkElement>('link[href]').forEach((el) => add(el.href));
-  for (const entry of performance.getEntriesByType('resource')) add((entry as PerformanceResourceTiming).name);
-
-  const signature = [...candidates].sort().join('|') || `${location.pathname}|runtime`;
-  return `v${PACK_SCHEMA_VERSION}-${fingerprint(signature)}`;
-}
-
-function storageKey(buildToken: string): string {
-  return `${STORAGE_PREFIX}${buildToken}`;
-}
-
-function cacheName(buildToken: string): string {
-  return `${CACHE_PREFIX}${buildToken.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80)}`;
-}
+let preloadPromise: Promise<PackProgress> | null = null;
+let uiRef: PackUi | null = null;
+let state: PackState = {
+  status: 'idle',
+  token: performancePackToken(),
+  done: 0,
+  total: 0,
+  failed: 0,
+  bytes: 0,
+  lastError: null,
+};
 
 function workerVersion(worker: ServiceWorker): string | null {
   try {
@@ -77,32 +54,6 @@ function workerVersion(worker: ServiceWorker): string | null {
   } catch {
     return null;
   }
-}
-
-function collectCurrentBuildAssets(): string[] {
-  const urls = new Set<string>(STATIC_ASSETS);
-  const add = (raw: string | null | undefined) => {
-    if (!raw) return;
-    try {
-      const url = new URL(raw, location.href);
-      if (url.origin !== location.origin) return;
-      const path = url.pathname;
-      if (
-        path.startsWith('/assets/') ||
-        path.startsWith('/pkg/') ||
-        /\.(?:js|css|wasm|glb|svg|mp3)$/i.test(path)
-      ) {
-        urls.add(url.pathname + url.search);
-      }
-    } catch {
-      // Ignore malformed/non-URL performance entries.
-    }
-  };
-
-  for (const entry of performance.getEntriesByType('resource')) add((entry as PerformanceResourceTiming).name);
-  document.querySelectorAll<HTMLScriptElement>('script[src]').forEach((el) => add(el.src));
-  document.querySelectorAll<HTMLLinkElement>('link[href]').forEach((el) => add(el.href));
-  return [...urls];
 }
 
 async function waitForWorkerActivation(worker: ServiceWorker): Promise<ServiceWorker> {
@@ -131,29 +82,29 @@ async function waitForWorkerActivation(worker: ServiceWorker): Promise<ServiceWo
   });
 }
 
-async function registerCacheWorker(buildToken: string): Promise<ServiceWorker | null> {
+/**
+ * The PWA runtime and performance pack deliberately register the exact same
+ * build-id worker. The performance pack must never replace the PWA worker with
+ * a second fingerprint/version namespace.
+ */
+async function getCacheWorker(): Promise<ServiceWorker | null> {
   if (!('serviceWorker' in navigator) || !('caches' in window)) return null;
+  if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') return null;
 
-  const workerUrl = `/gone-cache-sw.js?v=${encodeURIComponent(buildToken)}`;
-  const registration = await navigator.serviceWorker.register(workerUrl, { scope: '/' });
+  const workerUrl = `/gone-cache-sw.js?v=${encodeURIComponent(BUILD_ID)}`;
+  const registration = await navigator.serviceWorker.register(workerUrl, {
+    scope: '/',
+    updateViaCache: 'none',
+  });
 
-  const matchesVersion = (worker: ServiceWorker | null): worker is ServiceWorker =>
-    !!worker && workerVersion(worker) === buildToken;
+  const matchesBuild = (worker: ServiceWorker | null): worker is ServiceWorker =>
+    !!worker && workerVersion(worker) === BUILD_ID;
 
-  let target = [registration.installing, registration.waiting, registration.active].find(matchesVersion) ?? null;
-
+  let target = [registration.installing, registration.waiting, registration.active].find(matchesBuild) ?? null;
   if (!target) {
-    await new Promise<void>((resolve) => {
-      const timeout = window.setTimeout(resolve, 5_000);
-      const onUpdateFound = () => {
-        window.clearTimeout(timeout);
-        resolve();
-      };
-      registration.addEventListener('updatefound', onUpdateFound, { once: true });
-    });
-    target = [registration.installing, registration.waiting, registration.active].find(matchesVersion) ?? null;
+    await registration.update().catch(() => {});
+    target = [registration.installing, registration.waiting, registration.active].find(matchesBuild) ?? null;
   }
-
   if (!target) return null;
   return waitForWorkerActivation(target);
 }
@@ -204,10 +155,16 @@ function cacheViaWorker(
       }
     };
 
-    worker.postMessage({ type: 'CACHE_PERFORMANCE_PACK', urls, refresh: true }, [channel.port2]);
+    worker.postMessage({
+      type: 'CACHE_PERFORMANCE_PACK',
+      urls,
+      refresh: true,
+      cacheName: performanceCacheName(),
+    }, [channel.port2]);
   });
 }
 
+/** CacheStorage fallback used if the worker is temporarily unavailable. */
 async function cacheWithoutWorker(
   urls: string[],
   onProgress: (progress: PackProgress) => void,
@@ -215,13 +172,26 @@ async function cacheWithoutWorker(
   let done = 0;
   let failed = 0;
   let bytes = 0;
+  const cacheName = performanceCacheName();
+  let cache: Cache | null = null;
+
+  if ('caches' in window) {
+    await caches.delete(cacheName).catch(() => false);
+    cache = await caches.open(cacheName);
+  }
 
   for (const path of urls) {
     try {
-      const response = await fetch(path, { cache: 'force-cache', credentials: 'same-origin' });
+      const request = new Request(new URL(path, location.href).href, {
+        credentials: 'same-origin',
+        cache: 'reload',
+      });
+      const response = await fetch(request);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const copy = response.clone();
       const body = await response.arrayBuffer();
       bytes += body.byteLength;
+      if (cache) await cache.put(request, copy);
     } catch {
       failed += 1;
     }
@@ -238,16 +208,17 @@ function formatMb(bytes: number): string {
 
 function setCachedUi(ui: PackUi): void {
   ui.button.textContent = 'AGGIORNA DATI PRECARICATI';
-  ui.status.textContent = 'Pacchetto della build corrente già presente. Puoi aggiornarlo quando vuoi.';
+  ui.status.textContent = 'Dati della build pronti: modelli, core e musica sono disponibili localmente.';
   ui.status.className = ui.status.className.replace(/text-(?:slate|amber)-\d+/g, 'text-emerald-400');
 }
 
-function createUi(buildToken: string): PackUi | null {
+function createUi(): PackUi | null {
   const menu = document.getElementById('main-menu');
-  const musicButton = document.getElementById('btn-music-toggle');
-  if (!menu || !musicButton || document.getElementById('btn-performance-pack')) return null;
+  const settingsButton = document.getElementById('btn-settings');
+  if (!menu || !settingsButton || document.getElementById('btn-performance-pack')) return null;
 
   const wrapper = document.createElement('div');
+  wrapper.id = 'performance-pack-controls';
   wrapper.className = 'w-full flex flex-col gap-2';
 
   const button = document.createElement('button');
@@ -259,7 +230,7 @@ function createUi(buildToken: string): PackUi | null {
   const status = document.createElement('div');
   status.id = 'performance-pack-status';
   status.className = 'text-[11px] text-slate-400 font-mono text-center tracking-wide px-2';
-  status.textContent = 'Prepara modelli, audio e core del gioco prima del PvP.';
+  status.textContent = 'Prepara modelli, musica e core prima del PvP.';
 
   const track = document.createElement('div');
   track.className = 'w-full h-1.5 bg-slate-950 rounded-full overflow-hidden border border-slate-700/70 hidden';
@@ -269,17 +240,18 @@ function createUi(buildToken: string): PackUi | null {
   track.appendChild(bar);
 
   wrapper.append(button, status, track);
-  musicButton.parentElement?.insertBefore(wrapper, musicButton);
+  settingsButton.insertAdjacentElement('afterend', wrapper);
 
   const ui = { button, status, bar };
-  if (localStorage.getItem(storageKey(buildToken))) setCachedUi(ui);
+  const marker = localStorage.getItem(performanceStorageKey());
+  if (marker) setCachedUi(ui);
 
   if ('caches' in window) {
-    void caches.has(cacheName(buildToken)).then((exists) => {
-      if (!exists && localStorage.getItem(storageKey(buildToken))) {
-        localStorage.removeItem(storageKey(buildToken));
+    void caches.has(performanceCacheName()).then((exists) => {
+      if (!exists && localStorage.getItem(performanceStorageKey())) {
+        localStorage.removeItem(performanceStorageKey());
         button.textContent = 'PRECARICA DATI';
-        status.textContent = 'La cache locale è stata rimossa dal browser: puoi ricrearla.';
+        status.textContent = 'I dati locali non sono più presenti: puoi ricrearli senza ricaricare la pagina.';
         status.className = status.className.replace('text-emerald-400', 'text-slate-400');
       }
     }).catch(() => {});
@@ -288,70 +260,135 @@ function createUi(buildToken: string): PackUi | null {
   return ui;
 }
 
-function removeOldPackMarkers(currentKey: string): void {
-  const stale: string[] = [];
-  for (let i = 0; i < localStorage.length; i++) {
+function removeOldPackState(): void {
+  const currentStorageKey = performanceStorageKey();
+  const staleMarkers: string[] = [];
+  for (let i = 0; i < localStorage.length; i += 1) {
     const key = localStorage.key(i);
-    if (key?.startsWith(STORAGE_PREFIX) && key !== currentKey) stale.push(key);
+    if (key?.startsWith(PERFORMANCE_STORAGE_PREFIX) && key !== currentStorageKey) staleMarkers.push(key);
   }
-  stale.forEach((key) => localStorage.removeItem(key));
+  staleMarkers.forEach((key) => localStorage.removeItem(key));
+
+  if ('caches' in window) {
+    void caches.keys().then((names) => Promise.all(
+      names
+        .filter((name) => name.startsWith(PERFORMANCE_CACHE_PREFIX) && name !== performanceCacheName())
+        .map((name) => caches.delete(name)),
+    )).catch(() => {});
+  }
+}
+
+function updateProgress(progress: PackProgress): void {
+  state = {
+    ...state,
+    done: progress.done,
+    total: progress.total,
+    failed: progress.failed,
+    bytes: progress.bytes,
+  };
+  const ui = uiRef;
+  if (!ui) return;
+  const percent = progress.total > 0 ? Math.round((progress.done / progress.total) * 78) : 0;
+  ui.bar.style.width = `${Math.max(2, percent)}%`;
+  ui.status.textContent = `Cache dati ${progress.done}/${progress.total}${progress.failed ? ` · ${progress.failed} non disponibili` : ''}`;
+}
+
+async function performPreload(): Promise<PackProgress> {
+  const ui = uiRef;
+  if (!ui) throw new Error('Interfaccia precaricamento non disponibile.');
+
+  const track = ui.bar.parentElement as HTMLDivElement | null;
+  ui.button.disabled = true;
+  ui.button.textContent = 'PRECARICO...';
+  ui.status.className = ui.status.className.replace(/text-(?:emerald|amber)-\d+/g, 'text-slate-300');
+  ui.status.textContent = 'Preparazione cache locale...';
+  track?.classList.remove('hidden');
+  ui.bar.style.width = '2%';
+
+  state = { status: 'running', token: performancePackToken(), done: 0, total: 0, failed: 0, bytes: 0, lastError: null };
+  window.dispatchEvent(new CustomEvent('gone-performance-pack-started', { detail: { ...state } }));
+
+  try {
+    await requestPersistentStorage();
+    const urls = collectPerformancePackAssets();
+    state = { ...state, total: urls.length };
+    const worker = await getCacheWorker().catch((error) => {
+      console.warn('[PerformancePack] Worker temporarily unavailable, using direct CacheStorage:', error);
+      return null;
+    });
+
+    const result = worker
+      ? await cacheViaWorker(worker, urls, updateProgress)
+      : await cacheWithoutWorker(urls, updateProgress);
+
+    if (result.failed > 0) {
+      throw new Error(`${result.failed} asset non disponibili durante la precarica.`);
+    }
+
+    ui.bar.style.width = '82%';
+    ui.status.textContent = 'Inizializzo core e modelli 3D...';
+    await Promise.all([warmGameCore(), preloadParsedModels()]);
+
+    localStorage.setItem(performanceStorageKey(), JSON.stringify({
+      at: Date.now(),
+      buildId: BUILD_ID,
+      token: performancePackToken(),
+      assets: urls.length,
+    }));
+    removeOldPackState();
+
+    ui.bar.style.width = '100%';
+    ui.button.textContent = 'DATI PRECARICATI ✓';
+    ui.status.className = ui.status.className.replace('text-slate-300', 'text-emerald-400');
+    ui.status.textContent = result.bytes > 0
+      ? `Pronto: circa ${formatMb(result.bytes)} inclusa la musica del menu.`
+      : 'Pronto: modelli, musica e core sono preparati localmente.';
+
+    state = { ...state, status: 'ready', done: result.done, total: result.total, failed: 0, bytes: result.bytes, lastError: null };
+    window.dispatchEvent(new CustomEvent('gone-performance-pack-complete', { detail: { ...state } }));
+    return result;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error('[PerformancePack] Preload failed:', error);
+    localStorage.removeItem(performanceStorageKey());
+    ui.button.textContent = 'RIPROVA PRECARICA';
+    ui.status.className = ui.status.className.replace('text-slate-300', 'text-amber-400');
+    ui.status.textContent = `Precarica incompleta: ${message} Puoi riprovare senza ricaricare il sito.`;
+    ui.bar.style.width = '0%';
+    state = { ...state, status: 'error', lastError: message };
+    window.dispatchEvent(new CustomEvent('gone-performance-pack-error', { detail: { ...state } }));
+    throw error;
+  } finally {
+    ui.button.disabled = false;
+  }
+}
+
+export function preloadPerformancePack(): Promise<PackProgress> {
+  if (preloadPromise) return preloadPromise;
+  preloadPromise = performPreload().finally(() => {
+    preloadPromise = null;
+  });
+  return preloadPromise;
 }
 
 export function startPerformancePack(): void {
   if ((window as any).__gonePerformancePackStarted) return;
   (window as any).__gonePerformancePackStarted = true;
 
-  const buildToken = currentBuildToken();
-  const currentStorageKey = storageKey(buildToken);
-  const ui = createUi(buildToken);
-  if (!ui) return;
+  uiRef = createUi();
+  if (!uiRef) return;
+  removeOldPackState();
 
-  ui.button.addEventListener('click', async () => {
-    const track = ui.bar.parentElement as HTMLDivElement | null;
-    ui.button.disabled = true;
-    ui.button.textContent = 'PRECARICO...';
-    ui.status.className = ui.status.className.replace('text-emerald-400', 'text-slate-300');
-    ui.status.textContent = 'Preparazione cache locale...';
-    track?.classList.remove('hidden');
-    ui.bar.style.width = '2%';
-
-    try {
-      await requestPersistentStorage();
-      const urls = collectCurrentBuildAssets();
-      const worker = await registerCacheWorker(buildToken);
-
-      const result = worker
-        ? await cacheViaWorker(worker, urls, (progress) => {
-            const percent = progress.total > 0 ? Math.round((progress.done / progress.total) * 78) : 0;
-            ui.bar.style.width = `${Math.max(2, percent)}%`;
-            ui.status.textContent = `Cache dati ${progress.done}/${progress.total}${progress.failed ? ` · ${progress.failed} non disponibili` : ''}`;
-          })
-        : await cacheWithoutWorker(urls, (progress) => {
-            const percent = progress.total > 0 ? Math.round((progress.done / progress.total) * 78) : 0;
-            ui.bar.style.width = `${Math.max(2, percent)}%`;
-            ui.status.textContent = `Cache browser ${progress.done}/${progress.total}${progress.failed ? ` · ${progress.failed} non disponibili` : ''}`;
-          });
-
-      ui.bar.style.width = '82%';
-      ui.status.textContent = 'Inizializzo core e modelli 3D...';
-      await Promise.all([warmGameCore(), preloadParsedModels()]);
-
-      ui.bar.style.width = '100%';
-      localStorage.setItem(currentStorageKey, JSON.stringify({ at: Date.now(), buildToken }));
-      removeOldPackMarkers(currentStorageKey);
-      ui.button.textContent = 'DATI PRECARICATI ✓';
-      ui.status.className = ui.status.className.replace('text-slate-300', 'text-emerald-400');
-      ui.status.textContent = result.bytes > 0
-        ? `Pronto: circa ${formatMb(result.bytes)} trasferiti prima della fase realtime.`
-        : 'Pronto: asset, audio, modelli e core sono preparati localmente.';
-    } catch (error) {
-      console.error('[PerformancePack] Preload failed:', error);
-      ui.button.textContent = 'RIPROVA PRECARICA';
-      ui.status.className = ui.status.className.replace('text-slate-300', 'text-amber-400');
-      ui.status.textContent = 'Precarica incompleta. Il gioco resta utilizzabile normalmente.';
-      ui.bar.style.width = '0%';
-    } finally {
-      ui.button.disabled = false;
-    }
+  uiRef.button.addEventListener('click', () => {
+    void preloadPerformancePack().catch(() => {
+      // The UI already exposes a retryable error state.
+    });
   });
+
+  (window as any).gonePerformancePack = {
+    preload: preloadPerformancePack,
+    snapshot: () => ({ ...state, inFlight: Boolean(preloadPromise) }),
+    assets: () => collectPerformancePackAssets(),
+    cacheName: performanceCacheName(),
+  };
 }

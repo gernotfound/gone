@@ -1,5 +1,10 @@
 export {
-  soundSynth,
+  enhancedWeaponAudio as soundSynth,
+  EnhancedWeaponAudio,
+  WEAPON_LAYER_PROFILES,
+} from './enhancedWeaponAudio.ts';
+
+export {
   SoundSynthesizer,
   normalizeWeaponType,
 } from './soundSynth.ts';

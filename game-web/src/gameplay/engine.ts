@@ -14,22 +14,22 @@ import {
 import type { P2PClient } from '../net/p2pClient.ts';
 import type { P2PHost } from '../net/p2pHost.ts';
 import type { FireHitscanMessage } from '../net/protocol.ts';
+import {
+  activeP2PClient,
+  activeP2PHost,
+  configureSessionRuntimeBridge,
+  localPlayerColor,
+  multiplayerSessionController,
+  setActiveP2PClient,
+  setActiveP2PHost,
+  setLocalPlayerColor,
+} from '../net/multiplayerSessionController.ts';
 import { soundSynth } from '../audio/index.ts';
 import { vfxManager } from '../vfx/index.ts';
 import { healthHud } from '../ui/healthHud.ts';
 import { shieldVfxController } from '../vfx/shieldVfx.ts';
 import { setupMenu, isMusicPlaying, setIsMusicPlaying, volumes, DOM } from '../ui/menu.ts';
-import {
-  localPlayerColor,
-  setLocalPlayerColor,
-  activeP2PClient,
-  setActiveP2PClient,
-  activeP2PHost,
-  setActiveP2PHost,
-  localRobotPreview,
-  setLocalRobotPreview,
-} from '../ui/lobby.ts';
-import { encodeLobbyGameStart } from '../net/binaryProtocol.ts';
+import { localRobotPreview, setLocalRobotPreview } from '../ui/lobby.ts';
 import { updateWeaponHud } from '../ui/weaponHud.ts';
 import { updateLoadingProgress, showLoadingScreen, hideLoadingScreen, showErrorLoading } from '../ui/loading.ts';
 import { initMinimap, drawMinimap } from '../ui/minimap.ts';
@@ -59,11 +59,7 @@ export type { RemotePlayerInstance } from './remotePlayerRegistry.ts';
 export function bootstrap(): void {
   setupMenu({
     onPlayMultiplayer: async () => {
-      if (activeP2PHost) {
-        for (const peer of (activeP2PHost as any).peers.values()) {
-          peer.channel.send(encodeLobbyGameStart());
-        }
-      }
+      multiplayerSessionController.broadcastGameStart();
       DOM.multiplayerLobby.classList.remove('flex');
       DOM.multiplayerLobby.classList.add('hidden');
       if (!hasInitializedGame) void preLoadGame();
@@ -301,8 +297,6 @@ function fireWeapon(): void {
     );
   }
 
-  // Local muzzle flash is explicitly bound to the authored viewmodel socket.
-  // It must never be inferred from or coupled to the hitscan/tracer direction.
   if (!vfxManager.spawnLocalMuzzleFlash(currentWeaponType)) {
     vfxManager.spawnMuzzleFlash(muzzleWorldPos, currentWeaponType);
   }
@@ -718,6 +712,27 @@ export function bindP2PHostNetworking(host: P2PHost): void {
   bindHostGameplayNetworking(host, networkContext());
 }
 
+configureSessionRuntimeBridge({
+  attachClient: (client) => {
+    if (client) bindP2PClientNetworking(client);
+    else setActiveP2PClient(null);
+  },
+  attachHost: (host) => {
+    if (host) bindP2PHostNetworking(host);
+    else setActiveP2PHost(null);
+  },
+  clearRemotePlayers: () => {
+    for (const playerId of [...remotePlayers.keys()]) removeRemotePlayer(playerId);
+  },
+  removeRemotePlayer,
+  applyLocalColor: (hex) => {
+    player.color = hex;
+    if (localRobotPreview?.visible) applyFluoColor(localRobotPreview, hex);
+    if (activeP2PClient) activeP2PClient.proposedColor = hex;
+  },
+  gameplayReady: () => !DOM.gameCanvas.classList.contains('hidden'),
+});
+
 // Compatibility facade used by focused controllers, networking adapters and smoke tests.
 (window as any).goneGame = {
   switchWeapon,
@@ -738,12 +753,7 @@ export function bindP2PHostNetworking(host: P2PHost): void {
   handleLocalPlayerRespawn,
   handleLocalPlayerDamage,
   getLocalPlayerColor: () => localPlayerColor,
-  setLocalPlayerColor: (hex: string) => {
-    setLocalPlayerColor(hex);
-    player.color = hex;
-    if (localRobotPreview?.visible) applyFluoColor(localRobotPreview, hex);
-    if (activeP2PClient) activeP2PClient.proposedColor = hex;
-  },
+  setLocalPlayerColor: (hex: string) => setLocalPlayerColor(hex),
   getLocalRobotPreview: () => localRobotPreview,
   setLocalRobotPreview: (preview: THREE.Group | null) => setLocalRobotPreview(preview),
   getP2PClient: () => activeP2PClient,
