@@ -4,7 +4,9 @@ type DiagnosticKind =
   | 'client_boot'
   | 'window_error'
   | 'unhandled_rejection'
+  | 'runtime_start_error'
   | 'webgl_context_lost'
+  | 'webgl_context_restored'
   | 'network_disconnect'
   | 'network_resume';
 
@@ -121,6 +123,9 @@ function installCanvasGuard(): void {
     event.preventDefault();
     report('webgl_context_lost', 'WebGL context lost');
   });
+  canvas.addEventListener('webglcontextrestored', () => {
+    report('webgl_context_restored', 'WebGL context restored');
+  });
 }
 
 function sendBootOnce(): void {
@@ -146,6 +151,12 @@ export function startClientDiagnostics(): void {
       reason instanceof Error ? reason.message : compactText(reason || 'unhandled rejection'),
       reason instanceof Error ? reason.stack : undefined,
     );
+  });
+  window.addEventListener('gone-runtime-start-error', (event) => {
+    const detail = (event as CustomEvent).detail ?? {};
+    const name = compactText(detail.name || 'unknown runtime', 100);
+    const message = compactText(detail.message || 'startup failure');
+    report('runtime_start_error', `${name}: ${message}`, detail.stack);
   });
   window.addEventListener('gone-reconnect-requested', (event) => {
     const reason = compactText((event as CustomEvent).detail?.reason ?? 'unknown');
