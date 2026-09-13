@@ -3,6 +3,7 @@ const ALLOWED_KINDS = new Set([
   'window_error',
   'unhandled_rejection',
   'runtime_start_error',
+  'runtime_lifecycle_error',
   'webgl_context_lost',
   'webgl_context_restored',
   'network_disconnect',
