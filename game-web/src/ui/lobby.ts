@@ -18,6 +18,7 @@ export type LobbySetupOptions = {
 
 let onGameStartCb: (() => void) | null = null;
 let sessionSubscriptionInstalled = false;
+let nativeShareButton: HTMLButtonElement | null = null;
 
 function playerName(): string {
   return DOM.playerUsernameInput.value.trim() || 'Giocatore';
@@ -31,6 +32,86 @@ function removeDirectControls(): void {
 function setInviteLabel(text: string): void {
   const label = DOM.inviteLinkContainer.querySelector('label');
   if (label) label.textContent = text;
+}
+
+function nativeShareSupported(): boolean {
+  return typeof navigator.share === 'function';
+}
+
+function flashAction(button: HTMLButtonElement, text: string): void {
+  const original = button.textContent;
+  button.textContent = text;
+  button.classList.remove('bg-slate-800');
+  button.classList.add('bg-emerald-600', 'border-emerald-500');
+  window.setTimeout(() => {
+    button.textContent = original;
+    button.classList.add('bg-slate-800');
+    button.classList.remove('bg-emerald-600', 'border-emerald-500');
+  }, 1800);
+}
+
+async function copyInviteValue(feedbackButton: HTMLButtonElement = DOM.btnCopyLink): Promise<boolean> {
+  const value = DOM.inviteLinkInput.value;
+  if (!value) return false;
+  try {
+    await navigator.clipboard.writeText(value);
+    flashAction(feedbackButton, 'COPIATO!');
+    return true;
+  } catch {
+    DOM.inviteLinkInput.select();
+    return false;
+  }
+}
+
+async function shareCurrentInvite(): Promise<void> {
+  const snapshot = multiplayerSessionController.snapshot();
+  if (!nativeShareSupported() || !snapshot.inviteValue) return;
+  if (snapshot.inviteKind !== 'host-link' && snapshot.inviteKind !== 'guest-answer') return;
+
+  try {
+    if (snapshot.inviteKind === 'host-link') {
+      await navigator.share({
+        title: 'G.O.N.E. PvP',
+        text: 'Unisciti alla mia partita G.O.N.E.',
+        url: snapshot.inviteValue,
+      });
+    } else {
+      await navigator.share({
+        title: 'G.O.N.E. PvP — risposta connessione',
+        text: snapshot.inviteValue,
+      });
+    }
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') return;
+    if (nativeShareButton) await copyInviteValue(nativeShareButton);
+  }
+}
+
+function ensureNativeShareButton(): HTMLButtonElement {
+  if (nativeShareButton) return nativeShareButton;
+  const button = document.createElement('button');
+  button.id = 'btn-direct-native-share';
+  button.type = 'button';
+  button.className = 'hidden w-full bg-slate-800 hover:bg-slate-700 border border-cyan-500/40 px-4 py-3 rounded-xl text-cyan-100 font-black text-sm transition-colors active:scale-[.99]';
+  button.addEventListener('click', () => { void shareCurrentInvite(); });
+  DOM.inviteLinkContainer.appendChild(button);
+  nativeShareButton = button;
+  return button;
+}
+
+function syncNativeShareButton(snapshot: MultiplayerSessionSnapshot): void {
+  const button = ensureNativeShareButton();
+  const shareable = nativeShareSupported()
+    && Boolean(snapshot.inviteValue)
+    && (snapshot.inviteKind === 'host-link' || snapshot.inviteKind === 'guest-answer');
+  button.classList.toggle('hidden', !shareable);
+  if (!shareable) return;
+
+  const hostInvite = snapshot.inviteKind === 'host-link';
+  button.textContent = hostInvite ? 'CONDIVIDI INVITO' : 'INVIA RISPOSTA';
+  button.setAttribute('aria-label', hostInvite
+    ? 'Condividi invito multiplayer con le app del dispositivo'
+    : 'Invia risposta di connessione all’host con le app del dispositivo');
 }
 
 function hostPlayButton(): void {
@@ -155,6 +236,7 @@ function renderColorPicker(snapshot: MultiplayerSessionSnapshot): void {
 function renderSession(snapshot: MultiplayerSessionSnapshot): void {
   renderPlayers(snapshot.players);
   renderColorPicker(snapshot);
+  syncNativeShareButton(snapshot);
 
   if (snapshot.role === 'host') {
     hostPlayButton();
@@ -258,18 +340,6 @@ export function initLobbyEvents(): void {
   });
 
   DOM.btnCopyLink.addEventListener('click', () => {
-    navigator.clipboard.writeText(DOM.inviteLinkInput.value).then(() => {
-      const original = DOM.btnCopyLink.textContent;
-      DOM.btnCopyLink.textContent = 'COPIATO!';
-      DOM.btnCopyLink.classList.remove('bg-slate-800');
-      DOM.btnCopyLink.classList.add('bg-emerald-600', 'border-emerald-500');
-      window.setTimeout(() => {
-        DOM.btnCopyLink.textContent = original;
-        DOM.btnCopyLink.classList.add('bg-slate-800');
-        DOM.btnCopyLink.classList.remove('bg-emerald-600', 'border-emerald-500');
-      }, 1800);
-    }).catch(() => {
-      DOM.inviteLinkInput.select();
-    });
+    void copyInviteValue();
   });
 }
