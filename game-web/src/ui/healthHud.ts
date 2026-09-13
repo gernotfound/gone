@@ -96,6 +96,15 @@ export class HealthHUDController {
     this.damageVignetteEl = overlay;
   }
 
+  private clearDeathRecap(): void {
+    if (typeof document === 'undefined') return;
+    document.getElementById('gone-death-recap')?.classList.remove('show');
+    const killer = document.getElementById('gone-death-recap-killer');
+    const detail = document.getElementById('gone-death-recap-detail');
+    if (killer) killer.textContent = '';
+    if (detail) detail.textContent = '';
+  }
+
   /** Brief red edge flash when authoritative HP drops. */
   public showDamageFeedback(damage: number): void {
     if (!this.damageVignetteEl) this.ensureDamageVignette();
@@ -201,6 +210,7 @@ export class HealthHUDController {
   public hideDeathOverlay(): void {
     this.isDeathOverlayVisible = false;
     this.deathCountdownSeconds = 0;
+    this.clearDeathRecap();
 
     if (this.deathOverlayEl) {
       this.deathOverlayEl.classList.add('hidden');
