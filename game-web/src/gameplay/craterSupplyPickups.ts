@@ -1,3 +1,4 @@
+import './craterSupplyPickups.css';
 import * as THREE from 'three';
 import { sceneManager } from '../rendering/scene.ts';
 import { getTerrainHeightAt } from '../world/chunkManager.ts';
@@ -226,12 +227,44 @@ function ensurePrompt(): HTMLDivElement | null {
   return pickupPrompt;
 }
 
+function ensureTouchPickupButton(): HTMLButtonElement | null {
+  const root = document.getElementById('gone-mobile-controls');
+  if (!root) return null;
+  let button = document.getElementById('mc-pickup') as HTMLButtonElement | null;
+  if (button) return button;
+
+  button = document.createElement('button');
+  button.id = 'mc-pickup';
+  button.type = 'button';
+  button.className = 'mc-small is-hidden';
+  button.setAttribute('aria-label', 'Raccogli item vicino');
+  button.textContent = 'TAKE';
+  button.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    try { navigator.vibrate?.(7); } catch { /* optional */ }
+    window.dispatchEvent(new CustomEvent('gone-pickup-requested', {
+      detail: { source: 'touch' },
+    }));
+  }, { capture: true });
+  root.appendChild(button);
+  return button;
+}
+
 function renderPrompt(pickup: SupplyPickup | null): void {
   const prompt = ensurePrompt();
-  if (!prompt) return;
-  prompt.classList.toggle('hidden', !pickup);
-  if (!pickup) return;
-  prompt.innerHTML = `<span class="text-cyan-300">E</span> · RACCOGLI ${SUPPLY_LABELS[pickup.kind]}`;
+  if (prompt) {
+    prompt.classList.toggle('hidden', !pickup);
+    if (pickup) {
+      prompt.innerHTML = `<span class="text-cyan-300">E</span> · RACCOGLI ${SUPPLY_LABELS[pickup.kind]}`;
+    }
+  }
+
+  const touchButton = ensureTouchPickupButton();
+  if (touchButton) {
+    touchButton.classList.toggle('is-hidden', !pickup);
+    touchButton.textContent = pickup ? `TAKE ${pickup.kind === 'health' ? 'HP' : ''}`.trim() : 'TAKE';
+  }
 }
 
 function findNearestCollectible(player: LocalPlayer): SupplyPickup | null {
