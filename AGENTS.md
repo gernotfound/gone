@@ -11,6 +11,7 @@ Read this first. This is the dense working context for `gernotfound/gone`; use i
 - The owner tests physical iPhone/PWA. Treat those reports as hardware QA; browser emulation is necessary but not equivalent.
 - No paid/external multiplayer runtime infrastructure: no hosted signaling/relay/database/STUN/TURN/PeerJS cloud/Firebase/Supabase.
 - Direct `iceServers: []` connectivity still depends on LAN/NAT/IPv6. A terminal RTC close requires renegotiation; never claim magic reconnect.
+- There are currently no production users requiring data migrations/backfills. Prefer current-state cleanup and canonical contracts over retroactive compatibility migrations unless explicitly requested.
 
 ## Production / Vercel
 
@@ -34,6 +35,14 @@ Rules:
 - never reset another module's private `__gone*Started` flag;
 - no `THREE.*.prototype` patches;
 - compatibility `window.gone*` facades must remain stable for current consumers/tests, but new internal code should use typed imports/events/context/bridges.
+
+## Stack / build / CI
+
+- Browser FPS: TypeScript + Vite 8 + Three.js under `game-web/`.
+- Core: Rust/WASM under `game-core/`; `game-web/pkg/game_core.js` remains the functional browser fallback.
+- Browser compile gate: `tsc && vite build` with unused-code checks and `erasableSyntaxOnly`; do not use TypeScript syntax that requires runtime erasure transforms such as parameter properties.
+- Full PR gate: `.github/workflows/rescue-ci.yml` — TypeScript/Vite, all E2E tiers, Chromium runtime/direct multiplayer/scale/combat/session/self-host/full-match/mobile smokes, Rust and final quality gate.
+- Vite/Rolldown keeps Three.js in the stable `three-vendor` chunk with strict execution order. Do not broadly split side-effect-heavy application modules without measurement.
 
 ## Runtime kernel / lifecycle
 
@@ -98,6 +107,13 @@ It must **not** import DOM or `engine.ts`.
 - Browser transport: `net/selfHostSession.ts` + `net/relayWebSocket.ts`.
 - Session state/callbacks still belong to `multiplayerSessionController`.
 
+## Main menu / controls legend
+
+- `ui/menu.ts` owns main/settings/lobby visibility and media UX.
+- `ui/controlsLegend.ts` owns the `COMANDI` button and keyboard/mouse legend. It is inserted immediately above `VOLUME`.
+- The legend must document movement, mouse look, FIRE, ADS, R reload, **E pickup**, Shift sprint, Space jump, C/Ctrl crouch, 1–5 weapons, M map and Esc pause.
+- `PRECARICA DATI` belongs below `IMPOSTAZIONI`; do not move it back above volume/settings.
+
 ## Mobile / iPhone controls
 
 Owners:
@@ -139,12 +155,35 @@ Canonical ammo:
 
 Browser smoke mobile changes with pointerdown/pointermove; specifically verify reload, weapon switch, finite ammo and map-open fire.
 
+## Supply pickup interaction
+
+- `gameplay/craterSupplyPickups.ts` owns crater ammo/health crates and the interaction candidate.
+- Proximity only selects the nearest useful crate and shows a prompt; it must **never auto-collect** in the animation loop.
+- `controls/playerInput.ts` translates `KeyE` into `gone-pickup-requested`.
+- Desktop collection requires `E`. Smartphone collection uses the contextual `TAKE` button created by the pickup owner and emits the same intent.
+- `gameplay/craterSupplyPickups.css` owns contextual TAKE placement/handedness. The button must remain hidden when there is no useful nearby supply.
+- Health pickup authority/network semantics remain unchanged; only the local interaction trigger changed.
+
 ## Audio / iOS
 
 - BGM: `/Colossus March.mp3`, `<audio id="bg-music">`.
 - `ui/menu.ts` owns media lifecycle/volume UI.
 - `audio/musicSourceGain.ts` owns reduced source gain.
+- `audio/soundSynth.ts` remains the verified procedural weapon signature and compatibility surface.
+- `audio/enhancedWeaponAudio.ts` is the application weapon-audio layer. It reuses the canonical `soundSynth` singleton / AudioContext and adds HEAD, BODY, LFE, MECHANICAL and TAIL layers with bounded pitch/filter variation.
+- AR/SMG tails stay deliberately short so automatic fire remains articulate; sniper/shotgun may use longer decay/body. Do not add external weapon audio assets unless explicitly requested/licensed.
 - iOS requires `play()` / Web Audio unlock from a real gesture. Keep persistent gesture recovery; foreground recovery is best-effort and may still require the next gesture.
+
+## Performance preload / cache integrity
+
+- `performance/performancePackManifest.ts` is the canonical preload identity/manifest owner.
+- Pack identity is generated from the same `BUILD_ID` as the PWA service worker plus the current pack schema. Do not fingerprint Resource Timing entries to create a second worker/cache build identity.
+- Required pack assets are deterministic: current Vite JS/CSS discovered from DOM plus explicit game models/icons and `/Colossus March.mp3`.
+- Including the menu music is intentional: it is first-party, used immediately, and improves PWA/offline/first-play consistency.
+- `performance/performancePack.ts` owns the user transaction and is single-flight. Any failed asset means the transaction is incomplete and retryable; never write a ready marker for partial success.
+- `performance/cacheIntegrity.ts` validates the exact canonical manifest and reacts to `gone-performance-pack-complete`; do not race a running preload with arbitrary delayed timers.
+- `public/gone-cache-sw.js` may cache a requested safe `gone-performance-pack-*` cache name, while its own registration version remains the PWA `BUILD_ID`.
+- No legacy user migration/backfill is required; stale local performance-pack markers/caches can be discarded in favor of the current canonical pack.
 
 ## Local gameplay / spawn
 
@@ -188,7 +227,7 @@ Current baseline:
 - `pwa/pwaRuntime.ts` compares embedded `BUILD_ID` with `/version.json` using no-store, single-flight, 8 s timeout checks on startup/lifecycle/polling.
 - `scripts/generate_build_version.mjs` writes both client build module and public beacon.
 - Service-worker caches are build-aware; do not force reload during gameplay.
-- `performance/cacheIntegrity.ts` is single-flight and lifecycle-owned.
+- PWA runtime and performance preload must register `/gone-cache-sw.js?v=<BUILD_ID>` consistently; performance-pack schema belongs in its cache name, not a competing worker version.
 
 ## Security / observability
 
@@ -205,6 +244,9 @@ Current baseline:
 - Session: `net/multiplayerSessionController.ts`, `ui/lobby.ts`, `net/directWebRtc.ts`, `net/selfHostSession.ts`, `net/relayWebSocket.ts`.
 - Gameplay/network bridge: `gameplay/engine.ts`, `gameplay/networkBindings.ts`, `gameplay/remotePlayerRegistry.ts`.
 - Ammo/weapons: `gameplay/advancedWeaponController.ts`, `weapons/weaponConfig.ts`, `weapons/weaponCombatStats.ts`.
+- Interaction/menu: `gameplay/craterSupplyPickups.ts`, `controls/playerInput.ts`, `ui/controlsLegend.ts`, `ui/menu.ts`.
+- Audio: `audio/soundSynth.ts`, `audio/enhancedWeaponAudio.ts`, `audio/musicSourceGain.ts`.
+- Preload: `performance/performancePackManifest.ts`, `performance/performancePack.ts`, `performance/cacheIntegrity.ts`, `public/gone-cache-sw.js`.
 - Touch: `mobile/mobileRuntime.ts`, `smartphoneControlsGuard.ts`, `pubgTouchControls.ts`, `competitiveTouchControls.ts`, `touchPreferences.ts`, `touchLayoutEditor.ts`.
 - PWA/mobile lifecycle: `pwa/pwaRuntime.ts`, `mobile/mobileSessionResume.ts`.
 - Diagnostics: `observability/clientDiagnostics.ts`, `api/client-telemetry.js`.
