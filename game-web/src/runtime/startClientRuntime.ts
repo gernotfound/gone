@@ -28,6 +28,7 @@ import { startLocalTelemetry } from '../performance/localTelemetry.ts';
 import { startAdaptiveRenderScale } from '../performance/adaptiveRenderScale.ts';
 import { startTelemetryDetails } from '../performance/telemetryDetails.ts';
 import { startP2PQualityHud } from '../ui/p2pQualityHud.ts';
+import { startTerminalSessionRecovery } from '../ui/terminalSessionRecovery.ts';
 import { startMobileRuntime } from '../mobile/mobileRuntime.ts';
 import { runtimeKernel, type RuntimeModuleDefinition } from './runtimeKernel.ts';
 
@@ -138,6 +139,12 @@ const CLIENT_RUNTIME_MODULES: readonly RuntimeModuleDefinition[] = [
     phase: 'presentation',
     dependsOn: BOOTSTRAP_DEPENDENCY,
     start: startDeathmatchScore,
+  },
+  {
+    name: 'terminalSessionRecovery',
+    phase: 'presentation',
+    dependsOn: BOOTSTRAP_DEPENDENCY,
+    start: startTerminalSessionRecovery,
   },
   {
     name: 'spawnController',
