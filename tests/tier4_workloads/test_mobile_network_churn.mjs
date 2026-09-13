@@ -121,12 +121,14 @@ export async function run(suite) {
     }
   });
 
-  suite.test('mobile resume source explicitly clears inputs and resyncs online sessions', async () => {
+  suite.test('mobile resume source clears inputs and resyncs through the shared lifecycle broker', async () => {
     const fs = await import('node:fs/promises');
     const resume = await fs.readFile(new URL('../../game-web/src/mobile/mobileSessionResume.ts', import.meta.url), 'utf8');
     assert.match(resume, /resetInputState\(\)/, 'background/offline handling must clear transient input');
-    assert.match(resume, /window\.addEventListener\('offline'/, 'offline transitions must be handled');
-    assert.match(resume, /window\.addEventListener\('online'/, 'online transitions must be handled');
+    assert.match(resume, /browserLifecycle\.subscribe\('offline', 'mobileSessionResume'/, 'offline transitions must use the lifecycle owner');
+    assert.match(resume, /browserLifecycle\.subscribe\('online', 'mobileSessionResume'/, 'online transitions must use the lifecycle owner');
+    assert.ok(!resume.includes("window.addEventListener('offline'"), 'mobile resume must not install a second native offline listener');
+    assert.ok(!resume.includes("window.addEventListener('online'"), 'mobile resume must not install a second native online listener');
     assert.match(resume, /sendCurrentState\?\.\(\)/, 'online recovery must send an immediate state frame');
     assert.match(resume, /startSnapshotTick/, 'host snapshot cadence must resume after foreground/network recovery');
     assert.match(resume, /gone-reconnect-requested/, 'terminal disconnects must publish a reconnect request');
