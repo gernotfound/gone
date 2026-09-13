@@ -21,12 +21,13 @@ export async function run(suite) {
     assert(source.includes('fireSources'), 'PUBG layer must own held trigger sources without the legacy continuous fire flag');
   });
 
-  suite.test('PUBG touch ownership depends declaratively on primary or fallback controls', () => {
+  suite.test('PUBG touch ownership depends on fallback ownership and ammo authority', () => {
     const source = fs.readFileSync(mainPath, 'utf-8');
     assert(source.includes("name: 'smartphoneControlsGuard'"), 'touch guard must be registered as a device module');
     assert(source.includes("name: 'pubgTouchControls'"), 'PUBG layer must be registered as a device module');
-    assert(source.includes("dependsOn: ['smartphoneControlsGuard']"), 'PUBG layer must not start before primary/fallback touch ownership exists');
-    assert(source.includes('runtimeKernel.startPhase(\'device\')'), 'device module dependencies must be resolved by the runtime kernel');
+    assert(source.includes("dependsOn: ['smartphoneControlsGuard', 'advancedWeaponController']"), 'PUBG layer must require both touch ownership and finite-ammo authority');
+    assert(source.includes("if (runtimeKernel.isReady('advancedWeaponController'))"), 'device controls must be disabled if ammo authority cannot start');
+    assert(source.includes("runtimeKernel.startPhase('device')"), 'device module dependencies must be resolved by the runtime kernel');
   });
 
   suite.test('PUBG control styling enlarges fire control and adds claw fire', () => {
