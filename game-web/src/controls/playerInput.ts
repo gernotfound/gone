@@ -39,9 +39,14 @@ export interface InputCallbacks {
 }
 
 let callbacks: InputCallbacks = {};
+let inputListenersInstalled = false;
 
 export function initInput(cb: InputCallbacks = {}) {
+    // Re-initialization can legitimately update callbacks after a session/runtime
+    // repair, but browser listeners must be installed exactly once.
     callbacks = cb;
+    if (inputListenersInstalled) return;
+    inputListenersInstalled = true;
 
     document.addEventListener('mousemove', (e) => {
         if (document.pointerLockElement === document.body) {
@@ -74,6 +79,10 @@ export function initInput(cb: InputCallbacks = {}) {
     });
 
     window.addEventListener('blur', resetInputState);
+    window.addEventListener('pagehide', resetInputState);
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState !== 'visible') resetInputState();
+    });
 
     document.addEventListener('click', () => {
         if (callbacks.onInteract) {
