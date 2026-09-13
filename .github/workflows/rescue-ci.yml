@@ -91,6 +91,7 @@ jobs:
             sleep 0.25
           done
           curl -fsS http://127.0.0.1:4173/ >/dev/null
+          node scripts/runtime_stability_smoke.mjs 2>&1 | tee ../rescue-runtime-stability.log
           node scripts/rescue_browser_smoke.mjs 2>&1 | tee ../rescue-browser-smoke.log
           node scripts/rescue_webrtc_scale_smoke.mjs 2>&1 | tee ../rescue-webrtc-scale.log
           node scripts/rescue_combat_network_smoke.mjs 2>&1 | tee ../rescue-combat-network.log
@@ -107,6 +108,7 @@ jobs:
         with:
           name: rescue-browser-smoke-log
           path: |
+            rescue-runtime-stability.log
             rescue-browser-smoke.log
             rescue-webrtc-scale.log
             rescue-combat-network.log
