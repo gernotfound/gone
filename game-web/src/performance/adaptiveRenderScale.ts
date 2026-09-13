@@ -1,4 +1,5 @@
 import { sceneManager } from '../rendering/scene.ts';
+import { browserLifecycle } from '../runtime/browserLifecycle.ts';
 
 type TelemetrySnapshot = {
   frameAvgMs?: number;
@@ -146,6 +147,11 @@ function evaluate(): void {
   decorateTelemetry();
 }
 
+function stopTimer(): void {
+  if (timer !== null) window.clearInterval(timer);
+  timer = null;
+}
+
 function state(): AdaptiveQualityState {
   return {
     enabled,
@@ -186,8 +192,5 @@ export function startAdaptiveRenderScale(): void {
 
   decorateTelemetry();
   timer = window.setInterval(evaluate, EVALUATION_MS);
-  window.addEventListener('beforeunload', () => {
-    if (timer !== null) window.clearInterval(timer);
-    timer = null;
-  }, { once: true });
+  browserLifecycle.subscribe('beforeunload', 'adaptiveRenderScale', stopTimer, 5);
 }
