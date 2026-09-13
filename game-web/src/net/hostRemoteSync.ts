@@ -3,8 +3,8 @@ import { DOM } from '../ui/dom.ts';
 /**
  * Mirrors authoritative guest records into the host renderer. CLIENT_STATE is
  * 30 Hz, so the bridge runs at the same cadence and only pushes transforms when
- * the client's sequence changes. This avoids duplicate interpolation samples
- * while removing the old 20 Hz visual bottleneck on the host browser.
+ * the client's sequence changes. Fresh samples stay on the local presentation
+ * timeline; the render loop applies its 90 ms interpolation delay exactly once.
  */
 export function startHostRemoteSync(): () => void {
     let wasHost = false;
@@ -52,6 +52,10 @@ export function startHostRemoteSync(): () => void {
                     record.color,
                     record.activeWeapon,
                     record.slot,
+                    {
+                        snapExistingTransform: false,
+                        snapshotTimestamp: now,
+                    },
                 );
                 lastSeqByPlayer.set(record.id, record.lastClientSeq);
             }
