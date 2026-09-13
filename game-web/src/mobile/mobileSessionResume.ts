@@ -116,8 +116,10 @@ function resumeSession(reason: string): void {
     hideStatus();
   } else if (client && client.status === 'disconnected') {
     reconnectRequests += 1;
-    showStatus('SESSIONE DISCONNESSA · RICONNESSIONE RICHIESTA');
-    window.dispatchEvent(new CustomEvent('gone-reconnect-requested', { detail: { reason } }));
+    showStatus('SESSIONE TERMINATA · SERVE UN NUOVO INVITO');
+    window.dispatchEvent(new CustomEvent('gone-reconnect-requested', {
+      detail: { reason, terminal: true, requiresRenegotiation: true },
+    }));
   } else {
     hideStatus();
   }
