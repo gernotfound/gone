@@ -23,7 +23,7 @@ export async function run(suite) {
   suite.test('Client startup runs smartphone controls guard after the normal client runtime', () => {
     const main = fs.readFileSync(path.join(PROJECT_ROOT, 'game-web', 'src', 'main.ts'), 'utf8');
     const clientIndex = main.indexOf('startClientRuntime();');
-    const guardIndex = main.indexOf('startSmartphoneControlsGuard();');
+    const guardIndex = main.indexOf("safeStart('smartphoneControlsGuard', startSmartphoneControlsGuard);");
     assert(clientIndex >= 0 && guardIndex > clientIndex, 'guard must run after the primary client/mobile runtime has had a chance to initialize');
   });
 }
