@@ -49,9 +49,9 @@ export async function run(suite) {
   });
 
   suite.test('Competitive layer starts after primary and PUBG touch ownership', () => {
-    const guard = main.indexOf('startSmartphoneControlsGuard();');
-    const pubg = main.indexOf('startPubgTouchControls();');
-    const competitive = main.indexOf('startCompetitiveTouchControls();');
+    const guard = main.indexOf("safeStart('smartphoneControlsGuard', startSmartphoneControlsGuard);");
+    const pubg = main.indexOf("safeStart('pubgTouchControls', startPubgTouchControls);");
+    const competitive = main.indexOf("safeStart('competitiveTouchControls', startCompetitiveTouchControls);");
     assert(guard >= 0 && pubg > guard && competitive > pubg, 'competitive layer must enhance existing controls after their primary owners attach');
   });
 }

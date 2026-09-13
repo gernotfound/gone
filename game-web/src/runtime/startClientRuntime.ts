@@ -32,58 +32,90 @@ import { startTelemetryDetails } from '../performance/telemetryDetails.ts';
 import { startP2PQualityHud } from '../ui/p2pQualityHud.ts';
 import { startMobileRuntime } from '../mobile/mobileRuntime.ts';
 
+type RuntimeStarter = () => void;
+
+function startupError(name: string, error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error ?? 'unknown startup error');
+  const stack = error instanceof Error ? error.stack : undefined;
+  console.error(`[runtime] ${name} failed during startup`, error);
+  window.dispatchEvent(new CustomEvent('gone-runtime-start-error', {
+    detail: { name, message, stack },
+  }));
+}
+
+function safeStart(name: string, starter: RuntimeStarter): void {
+  try {
+    starter();
+  } catch (error) {
+    startupError(name, error);
+  }
+}
+
+function requiredStart(name: string, starter: RuntimeStarter): void {
+  try {
+    starter();
+  } catch (error) {
+    startupError(name, error);
+    throw error;
+  }
+}
+
 function installPreBootstrapGuards(): void {
   startClientDiagnostics();
-  startNetworkStabilityFix();
-  startCombatEventBridge();
-  startDeathmatchAuthority();
+  safeStart('networkStabilityFix', startNetworkStabilityFix);
+  safeStart('combatEventBridge', startCombatEventBridge);
+  safeStart('deathmatchAuthority', startDeathmatchAuthority);
 }
 
 function startCoreGameplayRuntime(): void {
-  startSessionLifecycleHardening();
-  startPrecisionShotRuntime();
-  startLocalMuzzleFlashBinding();
-  startAdvancedWeaponController();
-  startAimMovementTuning();
-  startDynamicPrecisionReticle();
+  safeStart('sessionLifecycleHardening', startSessionLifecycleHardening);
+  safeStart('precisionShotRuntime', startPrecisionShotRuntime);
+  safeStart('localMuzzleFlashBinding', startLocalMuzzleFlashBinding);
+  safeStart('advancedWeaponController', startAdvancedWeaponController);
+  safeStart('aimMovementTuning', startAimMovementTuning);
+  safeStart('dynamicPrecisionReticle', startDynamicPrecisionReticle);
 }
 
 function startNetworkRuntime(): void {
-  startLobbyPresenceSync();
-  startPvpTimingTuning();
-  startHostRemoteSync();
-  startAdaptiveSnapshotRate();
-  startP2PQualityHud();
-  startRemoteShotPresentation();
+  safeStart('lobbyPresenceSync', startLobbyPresenceSync);
+  safeStart('pvpTimingTuning', startPvpTimingTuning);
+  safeStart('hostRemoteSync', startHostRemoteSync);
+  safeStart('adaptiveSnapshotRate', startAdaptiveSnapshotRate);
+  safeStart('p2pQualityHud', startP2PQualityHud);
+  safeStart('remoteShotPresentation', startRemoteShotPresentation);
 }
 
 function startGameplayPresentation(): void {
-  startRemoteRobotMotion();
-  startKillAmmoReset();
-  startCombatFeedback();
-  startDeathmatchScore();
-  startSpawnController();
-  startCraterSupplyPickups();
-  startDeathmatchRoundLifecycle();
-  startLiveMapOverlay();
-  startMapSpawnMarkers();
+  safeStart('remoteRobotMotion', startRemoteRobotMotion);
+  safeStart('killAmmoReset', startKillAmmoReset);
+  safeStart('combatFeedback', startCombatFeedback);
+  safeStart('deathmatchScore', startDeathmatchScore);
+  safeStart('spawnController', startSpawnController);
+  safeStart('craterSupplyPickups', startCraterSupplyPickups);
+  safeStart('deathmatchRoundLifecycle', startDeathmatchRoundLifecycle);
+  safeStart('liveMapOverlay', startLiveMapOverlay);
+  safeStart('mapSpawnMarkers', startMapSpawnMarkers);
 }
 
 function startPresentationAndDiagnostics(): void {
-  startMusicSourceGain();
-  startPerformancePack();
-  startCacheIntegrity();
-  startLocalTelemetry();
-  startAdaptiveRenderScale();
-  startTelemetryDetails();
+  safeStart('musicSourceGain', startMusicSourceGain);
+  safeStart('performancePack', startPerformancePack);
+  safeStart('cacheIntegrity', startCacheIntegrity);
+  safeStart('localTelemetry', startLocalTelemetry);
+  safeStart('adaptiveRenderScale', startAdaptiveRenderScale);
+  safeStart('telemetryDetails', startTelemetryDetails);
 }
 
-/** Browser composition root. Grouping is explicit; relative startup order stays stable. */
+/** Browser composition root. Core menu bootstrap is required; optional systems fail independently. */
 export function startClientRuntime(): void {
+  if ((window as any).__goneClientRuntimeStarted) return;
+
   installPreBootstrapGuards();
-  bootstrap();
+  requiredStart('bootstrap', bootstrap);
+  (window as any).__goneClientRuntimeStarted = true;
+
   startCoreGameplayRuntime();
-  startMobileRuntime();
+  safeStart('mobileRuntime', startMobileRuntime);
   startNetworkRuntime();
   startGameplayPresentation();
   startPresentationAndDiagnostics();
