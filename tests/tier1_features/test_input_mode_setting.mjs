@@ -36,8 +36,8 @@ export async function run(suite) {
 
   suite.test('Input mode changes re-arm the touch controls guard without a reload', () => {
     const main = fs.readFileSync(mainPath, 'utf-8');
-    assert(main.includes('startInputModeSettings();'), 'input mode settings must start with the client');
+    assert(main.includes("safeStart('inputModeSettings', startInputModeSettings);"), 'input mode settings must start with the client');
     assert(main.includes("window.addEventListener('gone-input-mode-changed'"), 'runtime must react immediately to input mode changes');
-    assert(main.includes('__goneSmartphoneControlsGuardStarted = false') && main.includes('startSmartphoneControlsGuard();'), 'mode changes must re-arm the touch guard');
+    assert(main.includes('__goneSmartphoneControlsGuardStarted = false') && main.includes("safeStart('smartphoneControlsGuard', startSmartphoneControlsGuard);"), 'mode changes must re-arm the touch guard');
   });
 }
