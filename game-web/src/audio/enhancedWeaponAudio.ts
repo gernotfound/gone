@@ -1,6 +1,7 @@
 import {
   SoundSynthesizer,
   normalizeWeaponType,
+  soundSynth as baseSoundSynth,
   type WeaponSoundType,
 } from './soundSynth.ts';
 
@@ -93,7 +94,7 @@ export class EnhancedWeaponAudio {
   private masterVolume = 1;
   private sfxVolume = 1;
 
-  constructor(base = new SoundSynthesizer()) {
+  constructor(base: SoundSynthesizer = baseSoundSynth) {
     this.base = base;
   }
 
