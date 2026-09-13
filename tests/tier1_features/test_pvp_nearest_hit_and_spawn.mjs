@@ -1,5 +1,6 @@
 import { assertEqual, assertGreaterThan } from '../helpers/assertions.mjs';
 import { P2PHost } from '../../game-web/src/net/p2pHost.ts';
+import { getSafestRespawnPoint, SPAWN_POINTS } from '../../game-web/src/gameplay/spawnSelection.ts';
 
 function combatRecord(id, slot, z) {
   return {
@@ -19,6 +20,10 @@ function combatRecord(id, slot, z) {
     lastClientSeq: 0,
     lastClientTimestamp: 0,
   };
+}
+
+function distanceSq(a, b) {
+  return (a.x - b.x) ** 2 + (a.z - b.z) ** 2;
 }
 
 export async function run(suite) {
@@ -71,5 +76,27 @@ export async function run(suite) {
     assertEqual(timed.position.z, -400);
     assertEqual(host.getAuthoritativeRespawnCount(), 2);
     host.destroy();
+  });
+
+  suite.test('Threat-aware respawn maximizes nearest-opponent distance deterministically', () => {
+    const defaultPoint = SPAWN_POINTS[0];
+    const threats = [
+      { slot: 1, isAlive: true, position: { x: defaultPoint.x, z: defaultPoint.z } },
+      { slot: 2, isAlive: false, position: { x: SPAWN_POINTS[7].x, z: SPAWN_POINTS[7].z } },
+    ];
+
+    const selected = getSafestRespawnPoint(0, threats);
+    const repeated = getSafestRespawnPoint(0, threats);
+    assertEqual(selected.id, repeated.id, 'same authoritative world state must select the same respawn');
+    assertGreaterThan(
+      distanceSq(selected, threats[0].position),
+      distanceSq(defaultPoint, threats[0].position),
+      'safe respawn must move farther from an alive opponent camping the slot spawn',
+    );
+    assertEqual(
+      getSafestRespawnPoint(3, []).id,
+      SPAWN_POINTS[3].id,
+      'without live threats the stable per-slot spawn must remain the fallback',
+    );
   });
 }
