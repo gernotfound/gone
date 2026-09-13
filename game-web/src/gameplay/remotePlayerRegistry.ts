@@ -23,6 +23,13 @@ export interface RemotePlayerInstance {
   interpolator: InterpolationBuffer;
 }
 
+export interface RemotePlayerUpdateOptions {
+  /** Keep false for network samples that should be presented by the interpolation buffer. */
+  snapExistingTransform?: boolean;
+  /** Timestamp in the local presentation clock. Defaults to the legacy delayed timestamp. */
+  snapshotTimestamp?: number;
+}
+
 export const remotePlayers = new Map<string, RemotePlayerInstance>();
 
 export function addOrUpdateRemotePlayer(
@@ -34,8 +41,10 @@ export function addOrUpdateRemotePlayer(
   fluoColor = '#00F0FF',
   weapon: WeaponModelType | number = 'assalto',
   slot?: number,
+  options: RemotePlayerUpdateOptions = {},
 ): RemotePlayerInstance {
   const resolvedWeapon = typeof weapon === 'number' ? (WEAPON_TYPES[weapon] ?? 'assalto') : weapon;
+  const snapshotTimestamp = options.snapshotTimestamp ?? performance.now() - 90;
   let entry = remotePlayers.get(id);
 
   if (!entry) {
@@ -52,7 +61,7 @@ export function addOrUpdateRemotePlayer(
       teleportThresholdMeters: 10.0,
     });
     interpolator.pushSnapshot({
-      timestamp: performance.now() - 90,
+      timestamp: snapshotTimestamp,
       x,
       y,
       z,
@@ -90,10 +99,12 @@ export function addOrUpdateRemotePlayer(
     }).catch(() => {});
   } else {
     if (slot !== undefined) entry.slot = slot;
-    entry.group.position.set(x, y, z);
-    entry.group.rotation.y = yawAngle;
+    if (options.snapExistingTransform !== false) {
+      entry.group.position.set(x, y, z);
+      entry.group.rotation.y = yawAngle;
+    }
     entry.interpolator.pushSnapshot({
-      timestamp: performance.now() - 90,
+      timestamp: snapshotTimestamp,
       x,
       y,
       z,
