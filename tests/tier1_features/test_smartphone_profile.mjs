@@ -21,14 +21,16 @@ export async function run(suite) {
     assert(source.includes('tabletLikeDevice()'), 'smartphone detection must explicitly avoid tablet-class devices');
   });
 
-  suite.test('Smartphone and touch preferences are applied before gameplay runtime startup', () => {
+  suite.test('Smartphone and touch preferences are declared before gameplay runtime startup', () => {
     const source = fs.readFileSync(mainPath, 'utf-8');
-    const smartphone = source.indexOf("safeStart('smartphoneProfile', startSmartphoneProfile);");
-    const inputMode = source.indexOf("safeStart('inputModeSettings', startInputModeSettings);");
-    const touchPreferences = source.indexOf("safeStart('touchPreferences', startTouchPreferences);");
-    const pwa = source.indexOf("safeStart('pwaRuntime', startPwaRuntime);");
+    const smartphone = source.indexOf("name: 'smartphoneProfile'");
+    const inputMode = source.indexOf("name: 'inputModeSettings'");
+    const touchPreferences = source.indexOf("name: 'touchPreferences'");
+    const pwa = source.indexOf("name: 'pwaRuntime'");
+    const startFoundation = source.indexOf("runtimeKernel.startPhase('foundation')");
     const client = source.indexOf('startClientRuntime();');
-    assert(smartphone >= 0 && smartphone < inputMode && inputMode < touchPreferences && touchPreferences < pwa && pwa < client, 'phone profile and preferences must exist before PWA/game UI initializes');
+    assert(smartphone >= 0 && smartphone < inputMode && inputMode < touchPreferences && touchPreferences < pwa, 'shell module declaration must retain device preference dependency order');
+    assert(pwa < startFoundation && startFoundation < client, 'shell foundation must start before the game composition root');
   });
 
   suite.test('Smartphone HUD removes desktop-heavy information panels and compacts essentials', () => {
