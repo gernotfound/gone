@@ -3,18 +3,23 @@ import type { CombatHitEventDetail } from '../net/combatEventBridge.ts';
 let markerRoot: HTMLDivElement | null = null;
 let markerLabel: HTMLDivElement | null = null;
 let feedRoot: HTMLDivElement | null = null;
+let impactRoot: HTMLDivElement | null = null;
 let markerTimer: number | null = null;
 let labelTimer: number | null = null;
+let impactTimer: number | null = null;
 let hitCount = 0;
 let killCount = 0;
 let headshotCount = 0;
+let incomingHitCount = 0;
+let incomingShieldCount = 0;
+let incomingFatalCount = 0;
 
 function gameplayVisible(): boolean {
   const gameUi = document.getElementById('game-ui');
   return !!gameUi && !gameUi.classList.contains('hidden');
 }
 
-function localShooterSlot(): number | null {
+function localPlayerSlot(): number | null {
   const api = (window as any).goneGame;
   const host = api?.getP2PHost?.();
   if (host) return 0;
@@ -52,8 +57,11 @@ function ensureUi(): void {
 #gone-hit-marker span{position:absolute;left:50%;top:50%;width:9px;height:2px;background:var(--hit);border-radius:2px;box-shadow:0 0 7px var(--hit);transform-origin:0 50%}
 #gone-hit-marker .a{transform:translate(5px,-1px) rotate(45deg)}#gone-hit-marker .b{transform:translate(5px,-1px) rotate(135deg)}#gone-hit-marker .c{transform:translate(5px,-1px) rotate(225deg)}#gone-hit-marker .d{transform:translate(5px,-1px) rotate(315deg)}
 #gone-hit-label{position:fixed;left:50%;top:calc(50% + 31px);transform:translateX(-50%);z-index:72;pointer-events:none;opacity:0;color:#e2e8f0;font:900 11px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.12em;text-shadow:0 0 8px currentColor;transition:opacity 90ms linear}#gone-hit-label.show{opacity:1}
+#gone-incoming-impact{position:fixed;left:50%;top:50%;width:76px;height:76px;border:2px solid var(--impact,#ef4444);border-radius:50%;transform:translate(-50%,-50%) scale(.68);z-index:71;pointer-events:none;opacity:0;box-shadow:0 0 16px var(--impact,#ef4444),inset 0 0 14px var(--impact,#ef4444);transition:opacity 70ms linear,transform 105ms ease-out}
+#gone-incoming-impact.show{opacity:.92;transform:translate(-50%,-50%) scale(1.05)}
 #gone-kill-feed{position:fixed;right:16px;top:110px;z-index:69;display:flex;flex-direction:column;gap:5px;align-items:flex-end;pointer-events:none;font:800 10px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace}
 .gone-kill-row{padding:5px 8px;border-radius:6px;background:rgba(2,6,23,.76);border:1px solid rgba(148,163,184,.22);color:#cbd5e1;box-shadow:0 0 12px rgba(15,23,42,.45);animation:goneKillIn .14s ease-out}@keyframes goneKillIn{from{opacity:0;transform:translateX(8px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){#gone-hit-marker,#gone-hit-label,#gone-incoming-impact{transition:none}.gone-kill-row{animation:none}}
 `;
     document.head.appendChild(style);
   }
@@ -69,6 +77,12 @@ function ensureUi(): void {
     markerLabel.id = 'gone-hit-label';
     document.body.appendChild(markerLabel);
   }
+  if (!impactRoot) {
+    impactRoot = document.createElement('div');
+    impactRoot.id = 'gone-incoming-impact';
+    impactRoot.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(impactRoot);
+  }
   if (!feedRoot) {
     feedRoot = document.createElement('div');
     feedRoot.id = 'gone-kill-feed';
@@ -78,7 +92,7 @@ function ensureUi(): void {
 
 function showMarker(detail: CombatHitEventDetail): void {
   const hit = detail.hit;
-  if (localShooterSlot() !== hit.shooterSlot || !gameplayVisible()) return;
+  if (localPlayerSlot() !== hit.shooterSlot || !gameplayVisible()) return;
   ensureUi();
 
   hitCount += 1;
@@ -103,6 +117,38 @@ function showMarker(detail: CombatHitEventDetail): void {
   if (labelTimer !== null) window.clearTimeout(labelTimer);
   markerTimer = window.setTimeout(() => markerRoot?.classList.remove('show'), fatal ? 180 : 115);
   labelTimer = window.setTimeout(() => markerLabel?.classList.remove('show'), fatal ? 720 : 360);
+}
+
+function showIncomingImpact(detail: CombatHitEventDetail): void {
+  const hit = detail.hit;
+  if (localPlayerSlot() !== hit.victimSlot || !gameplayVisible()) return;
+  ensureUi();
+
+  const fatal = hit.isFatalKill || hit.isFatal;
+  const shield = hit.isShieldBlocked;
+  incomingHitCount += 1;
+  if (shield) incomingShieldCount += 1;
+  if (fatal) incomingFatalCount += 1;
+
+  const color = shield ? '#60a5fa' : fatal ? '#f43f5e' : '#ef4444';
+  impactRoot!.style.setProperty('--impact', color);
+  impactRoot!.classList.add('show');
+
+  const healthHud = document.getElementById('health-hud');
+  healthHud?.animate?.(
+    [
+      { filter: 'brightness(1)' },
+      { filter: `brightness(${fatal ? 1.85 : shield ? 1.35 : 1.55})` },
+      { filter: 'brightness(1)' },
+    ],
+    { duration: fatal ? 240 : 150, easing: 'ease-out' },
+  );
+
+  if (impactTimer !== null) window.clearTimeout(impactTimer);
+  impactTimer = window.setTimeout(
+    () => impactRoot?.classList.remove('show'),
+    shield ? 120 : fatal ? 320 : 210,
+  );
 }
 
 function addKillFeed(detail: CombatHitEventDetail): void {
@@ -132,10 +178,18 @@ export function startCombatFeedback(): void {
 
   window.addEventListener('gone-hit-confirmed', ((event: CustomEvent<CombatHitEventDetail>) => {
     showMarker(event.detail);
+    showIncomingImpact(event.detail);
     addKillFeed(event.detail);
   }) as EventListener);
 
   (window as any).goneCombatFeedback = {
-    snapshot: () => ({ hitCount, killCount, headshotCount }),
+    snapshot: () => ({
+      hitCount,
+      killCount,
+      headshotCount,
+      incomingHitCount,
+      incomingShieldCount,
+      incomingFatalCount,
+    }),
   };
 }
