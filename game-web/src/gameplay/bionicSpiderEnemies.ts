@@ -484,10 +484,10 @@ export class BionicSpiderEnemySystem {
     const moving = speedRatio > 0.05 && collapse <= 0;
     // The source preview is stable because its body is stationary. In gameplay
     // the whole spider translates and turns at speed, so feeding the same target
-    // directly into IK creates packet-like target jumps. Follow the unmodified
-    // source target with frame-rate-independent damping; geometry/pose targets
-    // remain source-faithful while the integration can no longer whip a joint.
-    const follow = 1 - Math.exp(-delta * (moving ? 20 : 12));
+    // directly into IK creates large joint deltas near full extension. Follow
+    // the exact source target with a frame-rate-independent world-space follower;
+    // this changes no geometry, proportions, gait frequency or target amplitude.
+    const follow = 1 - Math.exp(-delta * (moving ? 8 : 12));
 
     for (let i = 0; i < enemy.model.legs.length; i += 1) {
       const rig = enemy.model.legs[i];
