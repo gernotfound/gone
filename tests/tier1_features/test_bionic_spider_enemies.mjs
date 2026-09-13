@@ -3,6 +3,7 @@ import {
   BIONIC_SPIDER_APPROX_HEIGHT,
   createBionicSpiderModel,
   disposeBionicSpiderModel,
+  poseBionicSpiderLeg,
   setBionicSpiderDamageVisual,
 } from '../../game-web/src/models/bionicSpider.ts';
 import {
@@ -51,6 +52,23 @@ export async function run(suite) {
       }
     });
     assertEqual(eyes.length, 6, 'Gemini armored head design uses six cyberpunk eyes');
+
+    const leg = model.legs[0];
+    const hip = leg.hipLocal.clone();
+    const footA = leg.homeFootLocal.clone();
+    const kneeA = hip.clone().lerp(footA, 0.5).add(new THREE.Vector3(-0.45, 0.82, 0));
+    poseBionicSpiderLeg(model, 0, hip, kneeA, footA);
+    model.root.updateMatrixWorld(true);
+    const shieldScaleA = shield.getWorldScale(new THREE.Vector3());
+
+    const footB = footA.clone().add(new THREE.Vector3(-0.30, 0.54, 0.72));
+    const kneeB = hip.clone().lerp(footB, 0.5).add(new THREE.Vector3(-0.60, 0.94, 0.16));
+    poseBionicSpiderLeg(model, 0, hip, kneeB, footB);
+    model.root.updateMatrixWorld(true);
+    const shieldScaleB = shield.getWorldScale(new THREE.Vector3());
+    assertCloseTo(shieldScaleB.x, shieldScaleA.x, 1e-5, 'IK extension must not squash shield width');
+    assertCloseTo(shieldScaleB.y, shieldScaleA.y, 1e-5, 'IK extension must not stretch shield thickness');
+    assertCloseTo(shieldScaleB.z, shieldScaleA.z, 1e-5, 'IK extension must not deform shield depth');
 
     setBionicSpiderDamageVisual(model, 1);
     assert(model.coreMaterial.color.r > model.coreMaterial.color.g, 'Damage flash must drive the orange core toward red');
