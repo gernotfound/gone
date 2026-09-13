@@ -27,7 +27,8 @@ export async function run(suite) {
     assert(kernel.includes('this.start(dependency, dependencyStack)'), 'dependencies must start through the kernel recursively');
     assert(kernel.includes('criticalFailure'), 'critical failures must affect global health');
     assert(kernel.includes("status: 'booting' | 'healthy' | 'degraded' | 'failed'"), 'runtime health must be externally meaningful');
-    assert(kernel.includes('window.goneRuntimeHealth'), 'runtime health must have a stable diagnostics facade');
+    assert(kernel.includes('(window as any).goneRuntimeHealth = {'), 'runtime health must have a stable diagnostics facade');
+    assert(kernel.includes('snapshot: () => runtimeKernel.snapshot()') && kernel.includes('isReady: (name: string) => runtimeKernel.isReady(name)'), 'diagnostics facade must expose health and readiness without duplicating state');
   });
 
   suite.test('Composition roots contain declarations, not duplicate failure wrappers', () => {
