@@ -222,6 +222,12 @@ export function registerClientRuntimeModules(): void {
   runtimeKernel.registerMany(CLIENT_RUNTIME_MODULES);
 }
 
+function publishRuntimeUnavailable(): void {
+  window.dispatchEvent(new CustomEvent('gone-runtime-unavailable', {
+    detail: runtimeKernel.snapshot(),
+  }));
+}
+
 /**
  * Browser/game composition root. Startup ordering is declarative in the kernel.
  * A critical gameplay invariant fails closed: later phases are not started and
@@ -232,12 +238,18 @@ export function startClientRuntime(): void {
   registerClientRuntimeModules();
   runtimeKernel.startPhase('foundation');
   runtimeKernel.startPhase('bootstrap');
-  if (!runtimeKernel.isReady('bootstrap')) return;
+  if (!runtimeKernel.isReady('bootstrap')) {
+    publishRuntimeUnavailable();
+    return;
+  }
 
   runtimeKernel.startPhase('gameplay');
   const coreReady = runtimeKernel.isReady('bootstrap') && runtimeKernel.isReady('advancedWeaponController');
   (window as any).__goneClientRuntimeStarted = coreReady;
-  if (!coreReady) return;
+  if (!coreReady) {
+    publishRuntimeUnavailable();
+    return;
+  }
 
   runtimeKernel.startPhases(['network', 'presentation']);
 }
