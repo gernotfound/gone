@@ -48,10 +48,10 @@ export async function run(suite) {
     assert(runtime.includes('if (useOnScreenControls() && gameplayActive() && mapOpen()) return document.body'), 'extra virtual body lock must exist only while the live map is open');
   });
 
-  suite.test('Competitive layer depends on PUBG touch ownership in the device module graph', () => {
+  suite.test('Competitive layer depends on PUBG touch ownership and ammo authority', () => {
     assert(main.includes("name: 'pubgTouchControls'"), 'PUBG touch owner must be a device module');
     assert(main.includes("name: 'competitiveTouchControls'"), 'competitive layer must be a device module');
-    assert(main.includes("dependsOn: ['pubgTouchControls']"), 'competitive layer must declare PUBG ownership as a dependency');
+    assert(main.includes("dependsOn: ['pubgTouchControls', 'advancedWeaponController']"), 'competitive layer must require PUBG ownership and the combat-safe core');
     assert(main.includes("runtimeKernel.startPhase('device')"), 'device modules must start through dependency resolution rather than imperative ordering');
   });
 }
