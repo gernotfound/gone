@@ -228,12 +228,44 @@ function switchWeapon(delta: number): void {
   window.setTimeout(updateWeaponLabel, 0);
 }
 
+function bindFallbackControls(): void {
+  if (!fallbackRoot || fallbackRoot.dataset.goneFallbackBound === '1') return;
+  fallbackRoot.dataset.goneFallbackBound = '1';
+  fallbackRoot.dataset.goneControlOwner = 'fallback';
+
+  stick = document.getElementById('mobile-stick') as HTMLDivElement | null;
+  knob = document.getElementById('mobile-stick-knob') as HTMLDivElement | null;
+  bindMove();
+  bindLook();
+  bindHold('mc-fire', () => { inputState.fire = true; dispatchMouse(0, true); }, () => { inputState.fire = false; dispatchMouse(0, false); });
+  bindHold('mc-aim', () => { inputState.aim = true; dispatchMouse(2, true); }, () => { inputState.aim = false; dispatchMouse(2, false); });
+  bindHold('mc-jump', () => { inputState.jump = true; }, () => { inputState.jump = false; });
+  bindHold('mc-crouch', () => { inputState.ctrl = true; }, () => { inputState.ctrl = false; });
+  bindHold('mc-sprint', () => { inputState.shift = true; }, () => { inputState.shift = false; });
+  bindTap('mc-reload', () => dispatchKey('KeyR'));
+  bindTap('mc-map', () => dispatchKey('KeyM'));
+  bindTap('mc-prev', () => switchWeapon(-1));
+  bindTap('mc-next', () => switchWeapon(1));
+  bindTap('mc-menu', () => {
+    releaseInputs();
+    resetInputState();
+    document.dispatchEvent(new Event('pointerlockchange'));
+  });
+}
+
 function createFallbackControls(): void {
-  if (document.getElementById('gone-mobile-controls')) {
-    fallbackRoot = document.getElementById('gone-mobile-controls') as HTMLDivElement | null;
-    stick = document.getElementById('mobile-stick') as HTMLDivElement | null;
-    knob = document.getElementById('mobile-stick-knob') as HTMLDivElement | null;
-    return;
+  const existing = document.getElementById('gone-mobile-controls') as HTMLDivElement | null;
+  if (existing) {
+    if (existing.dataset.goneControlOwner === 'fallback') {
+      fallbackRoot = existing;
+      bindFallbackControls();
+      return;
+    }
+
+    // A primary runtime that throws after constructing its DOM can leave a
+    // half-owned control tree behind. Replacing that tree is safer than binding
+    // fallback listeners on top of unknown/partial primary listeners.
+    existing.remove();
   }
 
   fallbackRoot = document.createElement('div');
@@ -257,25 +289,7 @@ function createFallbackControls(): void {
     <button type="button" id="mc-sprint" class="mc-small" aria-label="Scatta">RUN</button>
   `;
   document.body.appendChild(fallbackRoot);
-
-  stick = document.getElementById('mobile-stick') as HTMLDivElement;
-  knob = document.getElementById('mobile-stick-knob') as HTMLDivElement;
-  bindMove();
-  bindLook();
-  bindHold('mc-fire', () => { inputState.fire = true; dispatchMouse(0, true); }, () => { inputState.fire = false; dispatchMouse(0, false); });
-  bindHold('mc-aim', () => { inputState.aim = true; dispatchMouse(2, true); }, () => { inputState.aim = false; dispatchMouse(2, false); });
-  bindHold('mc-jump', () => { inputState.jump = true; }, () => { inputState.jump = false; });
-  bindHold('mc-crouch', () => { inputState.ctrl = true; }, () => { inputState.ctrl = false; });
-  bindHold('mc-sprint', () => { inputState.shift = true; }, () => { inputState.shift = false; });
-  bindTap('mc-reload', () => dispatchKey('KeyR'));
-  bindTap('mc-map', () => dispatchKey('KeyM'));
-  bindTap('mc-prev', () => switchWeapon(-1));
-  bindTap('mc-next', () => switchWeapon(1));
-  bindTap('mc-menu', () => {
-    releaseInputs();
-    resetInputState();
-    document.dispatchEvent(new Event('pointerlockchange'));
-  });
+  bindFallbackControls();
 }
 
 function syncFallbackVisibility(): void {
@@ -343,7 +357,5 @@ export function startSmartphoneControlsGuard(): void {
   }
   guardStarted = true;
   (window as any).__goneSmartphoneControlsGuardStarted = true;
-
-  window.addEventListener('gone-input-mode-changed', reconcileSmartphoneControlsGuard);
   reconcileSmartphoneControlsGuard();
 }
