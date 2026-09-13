@@ -107,15 +107,20 @@ class SessionP2PHost extends P2PHost {
 
   override broadcastBinary(buffer: ArrayBuffer, excludePlayerId?: string): void {
     super.broadcastBinary(buffer, excludePlayerId);
-    const message = decodeLobbyMessage(buffer);
-    if (message?.type === 'COLOR_CHANGED') {
-      this.onRosterColorChanged(message.playerId, message.newColor);
+    try {
+      const message = decodeLobbyMessage(buffer);
+      if (message?.type === 'COLOR_CHANGED') {
+        this.onRosterColorChanged(message.playerId, message.newColor);
+      }
+    } catch {
+      // Gameplay packets are not lobby packets; observation must never affect host delivery.
     }
   }
 }
 
 class MultiplayerSessionController {
   private readonly listeners = new Set<SessionListener>();
+  private readonly hostPeerChannels = new Set<IDataChannel>();
   private players: LobbyPlayer[] = [];
   private localSessionId: string | null = null;
   private pendingHostOffer: DirectHostOffer | null = null;
@@ -336,6 +341,7 @@ class MultiplayerSessionController {
       try { channel.close?.(); } catch { /* no-op */ }
       throw new Error('Host autorevole non più attivo.');
     }
+    this.hostPeerChannels.add(channel);
     host.registerPeer(peerId, channel);
   }
 
@@ -352,6 +358,11 @@ class MultiplayerSessionController {
     try { this.guestDirectSession?.close(); } catch { /* no-op */ }
     this.guestDirectSession = null;
 
+    for (const channel of this.hostPeerChannels) {
+      try { channel.close?.(); } catch { /* no-op */ }
+    }
+    this.hostPeerChannels.clear();
+
     const client = activeP2PClient;
     if (client) {
       try { client.disconnect(); } catch { /* no-op */ }
@@ -365,7 +376,7 @@ class MultiplayerSessionController {
     this.notice = null;
     this.inviteKind = 'none';
     this.inviteValue = '';
-    this.emit(true);
+    this.emit();
   }
 
   /** Used by typed gameplay binding functions after they adopt/clear a transport. */
@@ -513,9 +524,9 @@ class MultiplayerSessionController {
     this.emit();
   }
 
-  private emit(forceSessionChange = false): void {
+  private emit(): void {
     const nextRole = roleFor(activeP2PHost, activeP2PClient);
-    if (forceSessionChange || nextRole !== this.lastRole) {
+    if (nextRole !== this.lastRole) {
       this.lastRole = nextRole;
       this.generation += 1;
       window.dispatchEvent(new CustomEvent('gone-session-changed', {
