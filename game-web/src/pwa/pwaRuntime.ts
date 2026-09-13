@@ -9,11 +9,14 @@ type VersionBeacon = { buildId?: string; generatedAt?: string };
 
 const VERSION_URL = '/version.json';
 const UPDATE_CHECK_MS = 45_000;
+const VERSION_FETCH_TIMEOUT_MS = 8_000;
 let deferredInstallPrompt: BeforeInstallPromptEvent | null = null;
 let registration: ServiceWorkerRegistration | null = null;
 let pendingBuildId: string | null = null;
 let lastRequestedBuildId: string | null = null;
 let updateTimer: number | null = null;
+let pendingApplyTimer: number | null = null;
+let updateCheckPromise: Promise<void> | null = null;
 let reloading = false;
 
 function isIosLike(): boolean {
@@ -223,20 +226,25 @@ async function registerPwaWorker(): Promise<void> {
 }
 
 async function fetchVersionBeacon(): Promise<VersionBeacon | null> {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), VERSION_FETCH_TIMEOUT_MS);
   try {
     const response = await fetch(`${VERSION_URL}?t=${Date.now()}`, {
       cache: 'no-store',
       credentials: 'same-origin',
       headers: { 'cache-control': 'no-cache' },
+      signal: controller.signal,
     });
     if (!response.ok) return null;
     return await response.json() as VersionBeacon;
   } catch {
     return null;
+  } finally {
+    window.clearTimeout(timeoutId);
   }
 }
 
-async function checkForDeploymentUpdate(): Promise<void> {
+async function performDeploymentUpdateCheck(): Promise<void> {
   if (!navigator.onLine) return;
   const beacon = await fetchVersionBeacon();
   const remoteBuildId = String(beacon?.buildId ?? '').trim();
@@ -255,6 +263,14 @@ async function checkForDeploymentUpdate(): Promise<void> {
   maybeApplyPendingUpdate();
 }
 
+function checkForDeploymentUpdate(): Promise<void> {
+  if (updateCheckPromise) return updateCheckPromise;
+  updateCheckPromise = performDeploymentUpdateCheck().finally(() => {
+    updateCheckPromise = null;
+  });
+  return updateCheckPromise;
+}
+
 function bindAutoUpdate(): void {
   if (!('serviceWorker' in navigator)) return;
   navigator.serviceWorker.addEventListener('controllerchange', maybeApplyPendingUpdate);
@@ -267,10 +283,12 @@ function bindAutoUpdate(): void {
   window.addEventListener('online', () => { void checkForDeploymentUpdate(); });
   window.addEventListener('focus', () => { void checkForDeploymentUpdate(); }, { passive: true });
   updateTimer = window.setInterval(() => { void checkForDeploymentUpdate(); }, UPDATE_CHECK_MS);
-  window.setInterval(maybeApplyPendingUpdate, 1000);
+  pendingApplyTimer = window.setInterval(maybeApplyPendingUpdate, 1000);
   window.addEventListener('beforeunload', () => {
     if (updateTimer !== null) window.clearInterval(updateTimer);
+    if (pendingApplyTimer !== null) window.clearInterval(pendingApplyTimer);
     updateTimer = null;
+    pendingApplyTimer = null;
   }, { once: true });
   window.setTimeout(() => { void checkForDeploymentUpdate(); }, 1500);
 }
