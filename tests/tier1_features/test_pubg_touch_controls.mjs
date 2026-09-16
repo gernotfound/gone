@@ -44,7 +44,7 @@ export async function run(suite) {
     const css = fs.readFileSync(cssPath, 'utf-8');
     const smoke = fs.readFileSync(competitiveSmokePath, 'utf-8');
     assert(source.includes('QUICK_WEAPONS') && source.includes('ensureQuickWeaponSlots'), 'PUBG owner must create direct weapon slots from one canonical slot list');
-    assert(source.includes('button.dataset.goneWeaponIndex') && source.includes('selectWeapon(index)'), 'direct slots must route to indexed weapon selection');
+    assert(source.includes('button.dataset.goneWeaponIndex') && source.includes('function selectWeapon(index: number)') && source.includes('selectWeapon(weapon.index)'), 'direct slots must route to indexed weapon selection');
     assert(source.includes("button.setAttribute('aria-pressed', String(active))"), 'active weapon state must be exposed accessibly');
     assert(css.includes('.mc-weapon-slot.is-active'), 'selected weapon slot must have an explicit visual state');
     assert(css.includes('min-width: 48px !important') && css.includes('min-height: 48px !important'), 'direct weapon slots must retain 48px touch targets');

@@ -22,7 +22,8 @@ export async function run(suite) {
     assert.match(pubg, /addEventListener\('pointerdown'.*true\)/s, 'mobile actions must use capture-phase pointer events');
     assert.match(pubg, /stopImmediatePropagation\(\)/, 'FIRE must suppress the legacy touch handler');
     assert.match(pubg, /goneWeapons\?\.reload\?\.\(\)/, 'reload must call the authoritative weapon controller directly');
-    assert.match(pubg, /game\?\.switchWeapon\?\.\(next\)/, 'weapon switch must call the game API directly');
+    assert.match(pubg, /game\?\.switchWeapon\?\.\(index\)/, 'indexed weapon selection must call the game API directly');
+    assert.match(pubg, /selectWeapon\(next\)/, 'prev/next weapon cycling must route through indexed weapon selection');
     assert.match(pubg, /fireDragDeadZone/, 'FIRE drag must have an adjustable dead-zone');
     assert.match(pubg, /mc-fire-left/, 'secondary claw FIRE must exist');
     assert.match(pubg, /bindAdsDrag/, 'ADS must double as a drag-look surface');
