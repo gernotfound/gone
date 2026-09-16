@@ -8,6 +8,7 @@ export async function run(suite) {
   const cssPath = path.join(PROJECT_ROOT, 'game-web', 'src', 'mobile', 'pubgTouchControls.css');
   const mainPath = path.join(PROJECT_ROOT, 'game-web', 'src', 'main.ts');
   const smokePath = path.join(PROJECT_ROOT, 'game-web', 'scripts', 'mobile_pwa_smoke.mjs');
+  const competitiveSmokePath = path.join(PROJECT_ROOT, 'game-web', 'scripts', 'competitive_mobile_controls_smoke.mjs');
 
   suite.test('PUBG-like fire control supports dead-zone aim drag while authoritative fire remains active', () => {
     const source = fs.readFileSync(runtimePath, 'utf-8');
@@ -36,6 +37,18 @@ export async function run(suite) {
     assert(css.includes('is-fire-dragging'), 'dragging state must have visual feedback');
     assert(css.includes('#mobile-look-pad') && css.includes('32%'), 'phone free-look surface must be widened');
     assert(css.includes('#mc-fire-left') && css.includes('gone-touch-secondary-fire'), 'secondary claw FIRE styling must be present');
+  });
+
+  suite.test('Competitive smartphone weapon switcher exposes direct thumb-sized slots', () => {
+    const source = fs.readFileSync(runtimePath, 'utf-8');
+    const css = fs.readFileSync(cssPath, 'utf-8');
+    const smoke = fs.readFileSync(competitiveSmokePath, 'utf-8');
+    assert(source.includes('QUICK_WEAPONS') && source.includes('ensureQuickWeaponSlots'), 'PUBG owner must create direct weapon slots from one canonical slot list');
+    assert(source.includes('button.dataset.goneWeaponIndex') && source.includes('selectWeapon(index)'), 'direct slots must route to indexed weapon selection');
+    assert(source.includes("button.setAttribute('aria-pressed', String(active))"), 'active weapon state must be exposed accessibly');
+    assert(css.includes('.mc-weapon-slot.is-active'), 'selected weapon slot must have an explicit visual state');
+    assert(css.includes('min-width: 48px !important') && css.includes('min-height: 48px !important'), 'direct weapon slots must retain 48px touch targets');
+    assert(smoke.includes('assertQuickWeaponSelection') && smoke.includes('map-open direct weapon slot'), 'real browser smoke must exercise direct selection in normal play and with map open');
   });
 
   suite.test('Mobile browser smoke verifies finite ammo and camera rotation during held FIRE', () => {

@@ -8,6 +8,7 @@ const CASES = [
   { name: 'iphone', width: 844, height: 390, dpr: 2 },
   { name: 'large', width: 932, height: 430, dpr: 2 },
 ];
+const QUICK_SLOT_IDS = ['mc-weapon-slot-0', 'mc-weapon-slot-1', 'mc-weapon-slot-2', 'mc-weapon-slot-3', 'mc-weapon-slot-4'];
 
 async function waitFor(page, predicate, label, timeout = 60_000) {
   const started = Date.now();
@@ -57,7 +58,7 @@ async function startPhoneGame(browser, spec) {
   page.on('pageerror', (error) => failures.push(`${spec.name} pageerror: ${error.message}`));
   page.on('console', (message) => { if (message.type() === 'error') failures.push(`${spec.name} console error: ${message.text()}`); });
   await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
-  await waitFor(page, () => page.evaluate(() => Boolean(window.goneCompetitiveTouchControls?.snapshot)), `${spec.name} competitive touch runtime`);
+  await waitFor(page, () => page.evaluate(() => Boolean(window.goneCompetitiveTouchControls?.snapshot && document.getElementById('mc-weapon-slot-4'))), `${spec.name} competitive touch runtime`);
   await page.locator('#btn-enter').click();
   await waitFor(page, () => page.evaluate(() => {
     const ui = document.getElementById('game-ui');
@@ -68,10 +69,10 @@ async function startPhoneGame(browser, spec) {
 }
 
 async function assertResponsiveLayout(page, spec) {
-  const layout = await page.evaluate(() => {
+  const layout = await page.evaluate((quickIds) => {
     const ids = [
       'mobile-stick', 'mc-fire', 'mc-aim', 'mc-jump', 'mc-reload', 'mc-crouch',
-      'mc-menu', 'mc-map', 'mc-weapon-switcher', 'health-hud', 'advanced-weapon-hud',
+      'mc-menu', 'mc-map', 'mc-weapon-switcher', ...quickIds, 'health-hud', 'advanced-weapon-hud',
       'gone-combat-compass', 'mobile-look-pad',
     ];
     const rects = {};
@@ -82,16 +83,17 @@ async function assertResponsiveLayout(page, spec) {
       rects[id] = { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, width: rect.width, height: rect.height };
     }
     return { width: innerWidth, height: innerHeight, rects };
-  });
+  }, QUICK_SLOT_IDS);
 
   const r = layout.rects;
-  for (const id of ['mobile-stick', 'mc-fire', 'mc-aim', 'mc-jump', 'mc-reload', 'mc-crouch', 'mc-menu', 'mc-map', 'mc-weapon-switcher', 'health-hud', 'advanced-weapon-hud', 'gone-combat-compass']) {
+  const boundedIds = ['mobile-stick', 'mc-fire', 'mc-aim', 'mc-jump', 'mc-reload', 'mc-crouch', 'mc-menu', 'mc-map', 'mc-weapon-switcher', ...QUICK_SLOT_IDS, 'health-hud', 'advanced-weapon-hud', 'gone-combat-compass'];
+  for (const id of boundedIds) {
     const rect = r[id];
     assert(rect, `${spec.name}: ${id} must exist`);
     assert(rect.left >= -2 && rect.top >= -2 && rect.right <= layout.width + 2 && rect.bottom <= layout.height + 2, `${spec.name}: ${id} escaped viewport ${JSON.stringify(rect)}`);
   }
 
-  for (const id of ['mc-fire', 'mc-aim', 'mc-jump', 'mc-reload', 'mc-crouch', 'mc-menu', 'mc-map']) {
+  for (const id of ['mc-fire', 'mc-aim', 'mc-jump', 'mc-reload', 'mc-crouch', 'mc-menu', 'mc-map', ...QUICK_SLOT_IDS]) {
     const rect = r[id];
     assert(rect.width >= 47.5 && rect.height >= 47.5, `${spec.name}: ${id} target below 48px (${rect.width}x${rect.height})`);
   }
@@ -142,12 +144,27 @@ async function assertCompassTracksLook(page, label) {
   }, before), `${label} compass heading response`);
 }
 
+async function assertQuickWeaponSelection(page, label) {
+  await pointer(page, 'mc-weapon-slot-2', 'pointerdown', 171);
+  await pointer(page, 'mc-weapon-slot-2', 'pointerup', 171);
+  await waitFor(page, () => page.evaluate(() => window.goneGame.getActiveWeaponIndex() === 2), `${label} direct shotgun selection`);
+  const selected = await page.evaluate(() => ({
+    index: window.goneGame.getActiveWeaponIndex(),
+    pressed: document.getElementById('mc-weapon-slot-2')?.getAttribute('aria-pressed'),
+    activeCount: document.querySelectorAll('#mc-weapon-slots .mc-weapon-slot.is-active').length,
+  }));
+  assert(selected.index === 2, `${label}: direct slot must select shotgun index 2`);
+  assert(selected.pressed === 'true' && selected.activeCount === 1, `${label}: direct slot selection must expose one active aria-pressed state`);
+
+  await pointer(page, 'mc-weapon-slot-0', 'pointerdown', 172);
+  await pointer(page, 'mc-weapon-slot-0', 'pointerup', 172);
+  await waitFor(page, () => page.evaluate(() => window.goneGame.getActiveWeaponIndex() === 0), `${label} direct AR restore`);
+  return selected;
+}
+
 async function assertLiveMapCombat(page) {
   await page.evaluate(async () => {
     await window.goneGame.switchWeapon(0);
-    const key = window.goneGame.getActiveWeapon();
-    window.goneWeapons.ammo[key].magazine = 2;
-    window.goneWeapons.ammo[key].reserve = 10;
   });
   await page.waitForTimeout(120);
 
@@ -175,6 +192,17 @@ async function assertLiveMapCombat(page) {
   assert(mapState.stickVisible && mapState.fireVisible && mapState.switcherVisible, 'combat controls must stay visible while map is open');
   assert(mapState.canvasOpacity <= 0.9, `mobile map canvas should be transparent, got ${mapState.canvasOpacity}`);
   assert(mapState.pointerLockBridge, 'on-screen map must preserve the virtual gameplay input lock');
+
+  await pointer(page, 'mc-weapon-slot-3', 'pointerdown', 205);
+  await pointer(page, 'mc-weapon-slot-3', 'pointerup', 205);
+  await waitFor(page, () => page.evaluate(() => window.goneGame.getActiveWeaponIndex() === 3), 'map-open direct weapon slot');
+  const mapWeapon = await page.evaluate(() => {
+    const key = window.goneGame.getActiveWeapon();
+    window.goneWeapons.ammo[key].magazine = 2;
+    window.goneWeapons.ammo[key].reserve = 10;
+    return { index: window.goneGame.getActiveWeaponIndex(), key };
+  });
+  assert(mapWeapon.index === 3, 'map-open direct slot must select SMG index 3');
 
   await pointer(page, 'mobile-stick', 'pointerdown', 202, 0.5, 0.5);
   await pointer(page, 'mobile-stick', 'pointermove', 202, 0.5, 0.02);
@@ -206,7 +234,7 @@ async function assertLiveMapCombat(page) {
   await pointer(page, 'mc-map', 'pointerdown', 204);
   await pointer(page, 'mc-map', 'pointerup', 204);
   await waitFor(page, () => page.evaluate(() => document.getElementById('map-ui').classList.contains('hidden')), 'live map close');
-  return { ammoBefore, ammoAfter, mapBackground: mapState.mapBackground };
+  return { ammoBefore, ammoAfter, mapBackground: mapState.mapBackground, mapWeapon };
 }
 
 const browser = await chromium.launch({ headless: true });
@@ -217,8 +245,9 @@ try {
     try {
       const layout = await assertResponsiveLayout(page, spec);
       await assertCompassTracksLook(page, spec.name);
+      const quickSwitch = spec.name === 'iphone' ? await assertQuickWeaponSelection(page, spec.name) : null;
       const combat = spec.name === 'iphone' ? await assertLiveMapCombat(page) : null;
-      summaries.push({ name: spec.name, viewport: `${spec.width}x${spec.height}`, layout, combat });
+      summaries.push({ name: spec.name, viewport: `${spec.width}x${spec.height}`, layout, quickSwitch, combat });
     } finally {
       await context.close();
     }

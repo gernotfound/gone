@@ -154,12 +154,19 @@ function endMapFire(event: PointerEvent): void {
   if (mapFire.pointerId === event.pointerId) endDrag(mapFire);
 }
 
+function selectWeapon(index: number): void {
+  const game = (window as any).goneGame;
+  const count = Object.keys((window as any).goneWeapons?.config ?? {}).length || 5;
+  if (!Number.isInteger(index) || index < 0 || index >= count) return;
+  void Promise.resolve(game?.switchWeapon?.(index));
+}
+
 function switchWeapon(delta: number): void {
   const game = (window as any).goneGame;
   const count = Object.keys((window as any).goneWeapons?.config ?? {}).length || 5;
   const current = Number(game?.getActiveWeaponIndex?.() ?? 0);
   const next = ((current + delta) % count + count) % count;
-  void Promise.resolve(game?.switchWeapon?.(next));
+  selectWeapon(next);
 }
 
 function installPointerLockBridge(): void {
@@ -276,6 +283,14 @@ function onPointerDown(event: PointerEvent): void {
       (window as any).goneWeapons?.reload?.();
       return;
     }
+
+    const directWeapon = target.closest<HTMLElement>('[data-gone-weapon-index]');
+    if (directWeapon) {
+      stop(event);
+      selectWeapon(Number(directWeapon.dataset.goneWeaponIndex));
+      return;
+    }
+
     if (target.closest('#mc-prev')) {
       stop(event);
       switchWeapon(-1);

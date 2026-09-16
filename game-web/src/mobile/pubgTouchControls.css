@@ -59,6 +59,12 @@ html.gone-touch-left-handed #gone-mobile-controls #mc-fire-left {
   right: max(16px, calc(env(safe-area-inset-right) + 10px)) !important;
 }
 
+/* Direct weapon slots are progressive enhancement over the legacy prev/next
+ * controls. Desktop/tablet compatibility keeps the original switcher intact. */
+#mc-weapon-slots {
+  display: none;
+}
+
 /* Give the aiming thumb a wider free-look surface, like modern mobile shooters. */
 html.gone-smartphone:not(.gone-touch-left-handed) #mobile-look-pad {
   left: 32% !important;
@@ -78,6 +84,63 @@ html.gone-smartphone #gone-mobile-controls #mc-fire-left {
   height: 56px !important;
   min-width: 56px !important;
   min-height: 56px !important;
+}
+
+/* Competitive phone layout: expose every weapon as one 48px tap instead of
+ * forcing repeated next/previous cycling. The legacy controls remain in DOM for
+ * compatibility and automated regression coverage, but are visually replaced. */
+html.gone-smartphone #mc-weapon-switcher > #mc-prev,
+html.gone-smartphone #mc-weapon-switcher > #mc-next,
+html.gone-smartphone #mc-weapon-switcher > #mc-weapon-name {
+  display: none !important;
+}
+
+html.gone-smartphone #mc-weapon-slots {
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(3px, .65dvw, 6px);
+}
+
+html.gone-smartphone #gone-mobile-controls #mc-weapon-slots .mc-weapon-slot {
+  position: relative;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  width: 48px !important;
+  height: 48px !important;
+  min-width: 48px !important;
+  min-height: 48px !important;
+  padding: 0 3px !important;
+  border-radius: 10px !important;
+  font: 900 clamp(8px, 1.15dvw, 10px)/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: -.02em;
+  color: rgba(226,232,240,.82);
+  border-color: rgba(148,163,184,.34) !important;
+  background: rgba(15,23,42,.42) !important;
+  transition: transform 90ms ease, border-color 90ms ease, background 90ms ease, box-shadow 90ms ease;
+}
+
+html.gone-smartphone #gone-mobile-controls #mc-weapon-slots .mc-weapon-slot::before {
+  content: attr(data-keycap);
+  position: absolute;
+  top: 3px;
+  left: 5px;
+  font-size: 7px;
+  line-height: 1;
+  color: rgba(148,163,184,.72);
+  pointer-events: none;
+}
+
+html.gone-smartphone #gone-mobile-controls #mc-weapon-slots .mc-weapon-slot.is-active {
+  color: #cffafe !important;
+  border-color: rgba(103,232,249,.92) !important;
+  background: rgba(8,145,178,.42) !important;
+  box-shadow: 0 0 0 2px rgba(34,211,238,.13), 0 0 14px rgba(34,211,238,.22) !important;
+}
+
+html.gone-smartphone #gone-mobile-controls #mc-weapon-slots .mc-weapon-slot:active {
+  transform: scale(.92);
 }
 
 @media (max-height: 430px) and (orientation: landscape) {

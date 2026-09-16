@@ -27,6 +27,8 @@ export async function run(suite) {
     assert(runtime.includes('function mapOpen()'), 'competitive layer must track live map state');
     assert(runtime.includes('beginMapFire'), 'map-open fire must remain available');
     assert(runtime.includes("target.closest('#mc-map')"), 'MAP must remain independently toggleable while open');
+    assert(runtime.includes("target.closest<HTMLElement>('[data-gone-weapon-index]')"), 'direct weapon slots must remain usable while the live map is open');
+    assert(runtime.includes('selectWeapon(Number(directWeapon.dataset.goneWeaponIndex))'), 'map-open quick switch must route to canonical indexed selection');
     assert(css.includes('#gone-mobile-controls.map-open #mobile-stick'), 'movement controls must remain visible over the map');
     assert(css.includes('#gone-mobile-controls.map-open button'), 'combat buttons must remain visible over the map');
   });
