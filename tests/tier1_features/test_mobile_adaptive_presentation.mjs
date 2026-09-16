@@ -21,8 +21,9 @@ export async function run(suite) {
     assert(adaptive.includes("rotate.textContent = 'RUOTA IL TELEFONO · GIOCA IN ORIZZONTALE'"), 'portrait instruction must be concise and explicit');
   });
 
-  suite.test('Mobile kill feed stays visible as a compact three-row awareness channel', () => {
-    assert(adaptive.includes('html.gone-smartphone #gone-kill-feed') && adaptive.includes('display: flex !important'), 'smartphone presentation must re-enable the kill feed');
+  suite.test('Mobile kill feed stays idle-hidden and becomes a compact three-row awareness channel when populated', () => {
+    assert(adaptive.includes('html.gone-smartphone #gone-kill-feed {') && adaptive.includes('display: none !important'), 'empty smartphone kill feed must not occupy HUD space');
+    assert(adaptive.includes('#gone-kill-feed:has(> .gone-kill-row)') && adaptive.includes('display: flex !important'), 'populated smartphone kill feed must become visible');
     assert(adaptive.includes('.gone-kill-row:nth-child(n+4)') && adaptive.includes('display: none !important'), 'smartphone kill feed must cap visible rows at three');
     assert(adaptive.includes('max-width: min(46dvw, 220px)'), 'kill feed width must scale with the phone viewport');
   });

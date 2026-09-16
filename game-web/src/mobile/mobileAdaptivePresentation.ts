@@ -21,7 +21,7 @@ function ensureStyle(): void {
   style.id = STYLE_ID;
   style.textContent = `
 html.gone-smartphone #gone-kill-feed {
-  display: flex !important;
+  display: none !important;
   top: max(110px, calc(env(safe-area-inset-top) + 104px)) !important;
   right: max(8px, calc(env(safe-area-inset-right) + 6px)) !important;
   max-width: min(46dvw, 220px) !important;
@@ -29,6 +29,9 @@ html.gone-smartphone #gone-kill-feed {
   align-items: flex-end !important;
   font-size: 8px !important;
   opacity: .92 !important;
+}
+html.gone-smartphone #gone-kill-feed:has(> .gone-kill-row) {
+  display: flex !important;
 }
 html.gone-smartphone #gone-kill-feed > .gone-kill-row {
   max-width: 100% !important;
