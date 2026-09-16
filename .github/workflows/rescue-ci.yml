@@ -120,6 +120,7 @@ jobs:
           run_smoke mobile_pwa_smoke.mjs rescue-mobile-pwa.log
           run_smoke competitive_mobile_controls_smoke.mjs rescue-competitive-mobile.log
           run_smoke mobile_adaptive_layout_smoke.mjs rescue-mobile-adaptive.log
+          run_smoke mobile_reload_progress_smoke.mjs rescue-mobile-reload-progress.log
 
       - name: Upload browser smoke diagnostics
         if: always()
@@ -138,6 +139,7 @@ jobs:
             rescue-mobile-pwa.log
             rescue-competitive-mobile.log
             rescue-mobile-adaptive.log
+            rescue-mobile-reload-progress.log
             rescue-preview.log
           if-no-files-found: warn
           retention-days: 3
