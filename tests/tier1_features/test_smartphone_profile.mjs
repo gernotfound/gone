@@ -52,12 +52,15 @@ export async function run(suite) {
     assert(css.includes('env(safe-area-inset-right)') && css.includes('env(safe-area-inset-left)'), 'controls must respect phone safe areas');
   });
 
-  suite.test('Touch preferences persist sensitivity, scale, opacity and handedness', () => {
+  suite.test('Touch preferences persist sensitivity, ADS mode, scale, opacity and handedness', () => {
     const prefs = fs.readFileSync(preferencesPath, 'utf-8');
     assert(prefs.includes("gone-touch-preferences-v1") && prefs.includes('localStorage.setItem'), 'touch preferences must persist locally');
-    for (const key of ['lookSensitivity', 'adsSensitivity', 'buttonScale', 'buttonOpacity', 'handedness']) {
+    for (const key of ['lookSensitivity', 'adsSensitivity', 'adsMode', 'buttonScale', 'buttonOpacity', 'handedness']) {
       assert(prefs.includes(key), `touch preference ${key} must be present`);
     }
+    assert(prefs.includes("adsMode: 'hold'") && prefs.includes("raw?.adsMode === 'toggle' ? 'toggle' : 'hold'"), 'ADS must default safely to HOLD while accepting persisted TOGGLE');
+    assert(prefs.includes('touch-ads-mode-hold') && prefs.includes('touch-ads-mode-toggle'), 'touch settings must expose HOLD and TOGGLE ADS choices');
+    assert(prefs.includes('goneTouchAdsMode'), 'active ADS preference must be exposed through a stable DOM dataset');
     assert(prefs.includes("buttonScale: clamp") && prefs.includes(', 1, 1.35)'), 'button scale must never shrink below the safe 100% baseline');
     assert(prefs.includes('gone-touch-left-handed') && prefs.includes('--gone-touch-scale') && prefs.includes('--gone-touch-opacity'), 'touch presentation must be applied through stable CSS hooks');
   });

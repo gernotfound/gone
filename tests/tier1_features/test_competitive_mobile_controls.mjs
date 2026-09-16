@@ -7,9 +7,11 @@ export async function run(suite) {
   const runtimePath = path.join(PROJECT_ROOT, 'game-web', 'src', 'mobile', 'competitiveTouchControls.ts');
   const cssPath = path.join(PROJECT_ROOT, 'game-web', 'src', 'mobile', 'competitiveTouchControls.css');
   const mainPath = path.join(PROJECT_ROOT, 'game-web', 'src', 'main.ts');
+  const smokePath = path.join(PROJECT_ROOT, 'game-web', 'scripts', 'competitive_mobile_controls_smoke.mjs');
   const runtime = fs.readFileSync(runtimePath, 'utf-8');
   const css = fs.readFileSync(cssPath, 'utf-8');
   const main = fs.readFileSync(mainPath, 'utf-8');
+  const smoke = fs.readFileSync(smokePath, 'utf-8');
 
   suite.test('Competitive mobile layer preserves simultaneous movement and camera control', () => {
     assert(runtime.includes("target.closest('#mobile-stick')"), 'competitive layer must own the movement joystick');
@@ -38,16 +40,23 @@ export async function run(suite) {
     assert(css.includes('#minimap-canvas') && css.includes('opacity: .88'), 'map canvas must allow world visibility through it');
   });
 
-  suite.test('ADS remains dedicated hold-and-drag and FIRE stays ammo authoritative', () => {
+  suite.test('ADS supports HOLD default and optional TOGGLE while preserving weapon authority', () => {
     assert(runtime.includes("target.closest('#mc-aim')"), 'ADS must remain a dedicated control');
-    assert(runtime.includes('dispatchMouse(2, true)'), 'ADS hold must feed the existing weapon controller');
+    assert(runtime.includes('function setAdsActive(active: boolean, forceDispatch = false)'), 'ADS state changes must pass through one canonical touch helper');
+    assert(runtime.includes("getTouchPreferences().adsMode === 'toggle'"), 'ADS pointer-down must honor TOGGLE preference');
+    assert(runtime.includes("getTouchPreferences().adsMode === 'hold'"), 'ADS pointer-up must preserve HOLD semantics by default');
+    assert(runtime.includes("aim.setAttribute('aria-pressed', String(inputState.aim))"), 'latched ADS state must be exposed accessibly');
+    assert(runtime.includes("window.addEventListener('gone-touch-preferences-changed'"), 'preference changes must deterministically clear transient ADS state');
+    assert(runtime.includes('setAdsActive(false, true)'), 'releaseAll must force a canonical ADS mouse-up even for a latched toggle');
     assert(runtime.includes('existing ammo-authoritative PUBG layer owns FIRE during normal play'), 'normal FIRE must stay delegated to the magazine-aware controller');
+    assert(smoke.includes('assertAdsModes') && smoke.includes('TOGGLE ADS forced release'), 'real browser smoke must exercise both ADS modes and safety release');
   });
 
   suite.test('Pointer-lock bridge preserves desktop and mobile pause behavior', () => {
     assert(runtime.includes("Object.getOwnPropertyDescriptor(Document.prototype, 'pointerLockElement')"), 'bridge must retain the native Document pointer-lock getter');
     assert(runtime.includes('previous?.call(document) ?? nativePointerLockGetter?.call(document) ?? null'), 'desktop and base-mobile behavior must delegate to the previous or native pointer lock getter');
     assert(runtime.includes('if (useOnScreenControls() && gameplayActive() && mapOpen()) return document.body'), 'extra virtual body lock must exist only while the live map is open');
+    assert(runtime.includes("document.addEventListener('pointerlockchange'"), 'pause/unlock transitions must clear any latched touch ADS state');
   });
 
   suite.test('Competitive layer depends on PUBG touch ownership and ammo authority', () => {

@@ -164,6 +164,53 @@ async function assertQuickWeaponSelection(page, label) {
   return selected;
 }
 
+async function assertAdsModes(page, label) {
+  await page.evaluate(() => window.goneTouchPreferences.set({ adsMode: 'hold' }));
+  await pointer(page, 'mc-aim', 'pointerdown', 181);
+  await waitFor(page, () => page.evaluate(() => window.goneCompetitiveTouchControls.snapshot().adsActive && window.goneWeapons.isAiming?.() === true), `${label} HOLD ADS engage`, LOCAL_UI_TIMEOUT);
+  const holdDown = await page.evaluate(() => ({
+    mode: window.goneCompetitiveTouchControls.snapshot().adsMode,
+    active: window.goneCompetitiveTouchControls.snapshot().adsActive,
+    weaponAiming: window.goneWeapons.isAiming?.(),
+    pressed: document.getElementById('mc-aim')?.getAttribute('aria-pressed'),
+  }));
+  await pointer(page, 'mc-aim', 'pointerup', 181);
+  await waitFor(page, () => page.evaluate(() => !window.goneCompetitiveTouchControls.snapshot().adsActive && window.goneWeapons.isAiming?.() === false), `${label} HOLD ADS release`, LOCAL_UI_TIMEOUT);
+  assert(holdDown.mode === 'hold' && holdDown.active && holdDown.weaponAiming && holdDown.pressed === 'true', `${label}: HOLD ADS must engage only while pressed`);
+
+  await page.evaluate(() => window.goneTouchPreferences.set({ adsMode: 'toggle' }));
+  await pointer(page, 'mc-aim', 'pointerdown', 182);
+  await pointer(page, 'mc-aim', 'pointerup', 182);
+  await waitFor(page, () => page.evaluate(() => window.goneCompetitiveTouchControls.snapshot().adsActive && window.goneWeapons.isAiming?.() === true), `${label} TOGGLE ADS latch`, LOCAL_UI_TIMEOUT);
+  const toggleOn = await page.evaluate(() => ({
+    mode: window.goneCompetitiveTouchControls.snapshot().adsMode,
+    active: window.goneCompetitiveTouchControls.snapshot().adsActive,
+    weaponAiming: window.goneWeapons.isAiming?.(),
+    pressed: document.getElementById('mc-aim')?.getAttribute('aria-pressed'),
+    buttonMode: document.getElementById('mc-aim')?.dataset.goneAdsMode,
+  }));
+  assert(toggleOn.mode === 'toggle' && toggleOn.active && toggleOn.weaponAiming, `${label}: TOGGLE ADS must stay active after pointer release`);
+  assert(toggleOn.pressed === 'true' && toggleOn.buttonMode === 'toggle', `${label}: TOGGLE ADS must expose latched state accessibly`);
+
+  await pointer(page, 'mc-aim', 'pointerdown', 183);
+  await pointer(page, 'mc-aim', 'pointerup', 183);
+  await waitFor(page, () => page.evaluate(() => !window.goneCompetitiveTouchControls.snapshot().adsActive && window.goneWeapons.isAiming?.() === false), `${label} TOGGLE ADS unlatch`, LOCAL_UI_TIMEOUT);
+
+  await pointer(page, 'mc-aim', 'pointerdown', 184);
+  await pointer(page, 'mc-aim', 'pointerup', 184);
+  await waitFor(page, () => page.evaluate(() => window.goneCompetitiveTouchControls.snapshot().adsActive), `${label} TOGGLE ADS safety setup`, LOCAL_UI_TIMEOUT);
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('gone-input-mode-changed')));
+  await waitFor(page, () => page.evaluate(() => !window.goneCompetitiveTouchControls.snapshot().adsActive && window.goneWeapons.isAiming?.() === false), `${label} TOGGLE ADS forced release`, LOCAL_UI_TIMEOUT);
+  const released = await page.evaluate(() => ({
+    active: window.goneCompetitiveTouchControls.snapshot().adsActive,
+    weaponAiming: window.goneWeapons.isAiming?.(),
+    pressed: document.getElementById('mc-aim')?.getAttribute('aria-pressed'),
+  }));
+  assert(!released.active && released.weaponAiming === false && released.pressed === 'false', `${label}: input-mode changes must clear latched ADS`);
+  await page.evaluate(() => window.goneTouchPreferences.set({ adsMode: 'hold' }));
+  return { holdDown, toggleOn, released };
+}
+
 async function assertLiveMapCombat(page) {
   await page.evaluate(async () => {
     await window.goneGame.switchWeapon(0);
@@ -248,8 +295,9 @@ try {
       const layout = await assertResponsiveLayout(page, spec);
       await assertCompassTracksLook(page, spec.name);
       const quickSwitch = spec.name === 'iphone' ? await assertQuickWeaponSelection(page, spec.name) : null;
+      const adsModes = spec.name === 'iphone' ? await assertAdsModes(page, spec.name) : null;
       const combat = spec.name === 'iphone' ? await assertLiveMapCombat(page) : null;
-      summaries.push({ name: spec.name, viewport: `${spec.width}x${spec.height}`, layout, quickSwitch, combat });
+      summaries.push({ name: spec.name, viewport: `${spec.width}x${spec.height}`, layout, quickSwitch, adsModes, combat });
     } finally {
       await context.close();
     }

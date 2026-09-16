@@ -64,6 +64,24 @@ function stop(event: PointerEvent): void {
   event.stopImmediatePropagation();
 }
 
+function syncAdsButtonPresentation(): void {
+  const aim = document.getElementById('mc-aim') as HTMLButtonElement | null;
+  if (!aim) return;
+  const mode = getTouchPreferences().adsMode;
+  aim.dataset.goneAdsMode = mode;
+  aim.classList.toggle('is-held', inputState.aim);
+  aim.setAttribute('aria-pressed', String(inputState.aim));
+  aim.setAttribute('aria-label', mode === 'toggle' ? 'Mira, tocca per attivare o disattivare' : 'Mira, tieni premuto');
+}
+
+function setAdsActive(active: boolean, forceDispatch = false): void {
+  const changed = inputState.aim !== active;
+  inputState.aim = active;
+  inputState.timestamp = performance.now();
+  syncAdsButtonPresentation();
+  if (changed || forceDispatch) dispatchMouse(2, active);
+}
+
 function applyLookDelta(dx: number, dy: number, adsMode = inputState.aim): void {
   const prefs = getTouchPreferences();
   const sensitivity = adsMode
@@ -223,11 +241,9 @@ function onPointerDown(event: PointerEvent): void {
   if (aim) {
     stop(event);
     startDrag(ads, event);
-    inputState.aim = true;
-    inputState.timestamp = performance.now();
-    dispatchMouse(2, true);
     capture(aim, event.pointerId);
-    (aim as HTMLElement).classList.add('is-held');
+    if (getTouchPreferences().adsMode === 'toggle') setAdsActive(!inputState.aim);
+    else setAdsActive(true);
     return;
   }
 
@@ -316,7 +332,7 @@ function onPointerMove(event: PointerEvent): void {
   }
   if (ads.pointerId === event.pointerId) {
     stop(event);
-    moveDrag(ads, event, true);
+    moveDrag(ads, event, inputState.aim);
     return;
   }
   if (mapFire.pointerId === event.pointerId) {
@@ -337,10 +353,8 @@ function onPointerEnd(event: PointerEvent): void {
   }
   if (ads.pointerId === event.pointerId) {
     endDrag(ads);
-    inputState.aim = false;
-    inputState.timestamp = performance.now();
-    dispatchMouse(2, false);
-    document.getElementById('mc-aim')?.classList.remove('is-held');
+    if (getTouchPreferences().adsMode === 'hold') setAdsActive(false);
+    else syncAdsButtonPresentation();
     owned = true;
   }
   if (manualSprintPointers.delete(event.pointerId)) {
@@ -380,16 +394,16 @@ function releaseAll(): void {
   firePointers.clear();
   inputState.jump = false;
   inputState.ctrl = false;
-  inputState.aim = false;
   inputState.shift = false;
+  setAdsActive(false, true);
   dispatchMouse(0, false);
-  dispatchMouse(2, false);
 }
 
 export function startCompetitiveTouchControls(): void {
   if ((window as any).__goneCompetitiveTouchControlsStarted) return;
   (window as any).__goneCompetitiveTouchControlsStarted = true;
   installPointerLockBridge();
+  syncAdsButtonPresentation();
 
   document.addEventListener('pointerdown', onPointerDown, true);
   document.addEventListener('pointermove', onPointerMove, true);
@@ -398,9 +412,16 @@ export function startCompetitiveTouchControls(): void {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') releaseAll();
   });
+  document.addEventListener('pointerlockchange', () => {
+    if (!gameplayActive()) releaseAll();
+  });
   window.addEventListener('gone-input-mode-changed', () => {
     releaseAll();
     installPointerLockBridge();
+  });
+  window.addEventListener('gone-touch-preferences-changed', () => {
+    releaseAll();
+    syncAdsButtonPresentation();
   });
 
   (window as any).goneCompetitiveTouchControls = {
@@ -412,6 +433,8 @@ export function startCompetitiveTouchControls(): void {
       movePointer: move.pointerId,
       lookPointer: look.pointerId,
       adsPointer: ads.pointerId,
+      adsMode: getTouchPreferences().adsMode,
+      adsActive: inputState.aim,
       mapFirePointers: firePointers.size,
       pointerBridgeInstalled,
     }),
