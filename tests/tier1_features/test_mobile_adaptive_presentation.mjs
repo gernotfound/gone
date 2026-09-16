@@ -43,7 +43,8 @@ export async function run(suite) {
 
   suite.test('Real browser smoke covers live handedness mirroring and viewport reflow without runtime restart', () => {
     assert(smoke.includes('assertHandednessMirror') && smoke.includes("setHandedness(page, 'left')"), 'browser smoke must switch handedness in a live match');
-    assert(smoke.includes('page.setViewportSize({ width: spec.width, height: spec.height })'), 'browser smoke must resize the active match across landscape phone sizes');
+    assert(smoke.includes('context.newCDPSession(page)') && smoke.includes("Emulation.setDeviceMetricsOverride"), 'browser smoke must reflow the active match without depending on host-window resize state');
+    assert(smoke.includes('dynamic-compact') && smoke.includes('dynamic-large') && smoke.includes('dynamic-restore'), 'browser smoke must traverse compact, large and restored landscape phone metrics');
     assert(smoke.includes('assertPortraitSafety') && smoke.includes("pointerEvents === 'none'"), 'browser smoke must prove portrait input blocking');
     assert(smoke.includes("finalState.health.status === 'healthy'"), 'browser smoke must verify runtime health after adaptive transitions');
   });

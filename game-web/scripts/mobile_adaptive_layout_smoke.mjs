@@ -20,6 +20,31 @@ async function waitFor(page, predicate, label, timeout = 60_000) {
   throw new Error(`Timeout waiting for ${label}${last ? ` (${String(last)})` : ''}`);
 }
 
+async function applyDeviceMetrics(page, cdp, width, height, label) {
+  const landscape = width > height;
+  await cdp.send('Emulation.setDeviceMetricsOverride', {
+    width,
+    height,
+    deviceScaleFactor: 2,
+    mobile: true,
+    screenWidth: width,
+    screenHeight: height,
+    screenOrientation: {
+      type: landscape ? 'landscapePrimary' : 'portraitPrimary',
+      angle: landscape ? 90 : 0,
+    },
+  });
+  await waitFor(
+    page,
+    () => page.evaluate(({ width: expectedWidth, height: expectedHeight }) => (
+      innerWidth === expectedWidth && innerHeight === expectedHeight
+    ), { width, height }),
+    `${label} viewport apply`,
+    LOCAL_UI_TIMEOUT,
+  );
+  await page.waitForTimeout(100);
+}
+
 function overlaps(a, b) {
   return !(a.right <= b.left || a.left >= b.right || a.bottom <= b.top || a.top >= b.bottom);
 }
@@ -183,7 +208,7 @@ async function assertHandednessMirror(page) {
   return { right, left };
 }
 
-async function assertDynamicReflow(page) {
+async function assertDynamicReflow(page, cdp) {
   const cases = [
     { name: 'dynamic-compact', width: 740, height: 360 },
     { name: 'dynamic-large', width: 932, height: 430 },
@@ -191,9 +216,7 @@ async function assertDynamicReflow(page) {
   ];
   const results = [];
   for (const spec of cases) {
-    await page.setViewportSize({ width: spec.width, height: spec.height });
-    await waitFor(page, () => page.evaluate(({ width, height }) => innerWidth === width && innerHeight === height), `${spec.name} viewport apply`, LOCAL_UI_TIMEOUT);
-    await page.waitForTimeout(100);
+    await applyDeviceMetrics(page, cdp, spec.width, spec.height, spec.name);
     const layout = await measure(page);
     assertLandscape(layout, spec.name, 'right');
     results.push({ ...spec, layout });
@@ -208,9 +231,9 @@ async function assertDynamicReflow(page) {
   return results;
 }
 
-async function assertPortraitSafety(page) {
-  await page.setViewportSize({ width: 390, height: 844 });
-  await waitFor(page, () => page.evaluate(() => innerHeight > innerWidth && window.matchMedia('(orientation: portrait)').matches), 'portrait viewport apply', LOCAL_UI_TIMEOUT);
+async function assertPortraitSafety(page, cdp) {
+  await applyDeviceMetrics(page, cdp, 390, 844, 'portrait');
+  await waitFor(page, () => page.evaluate(() => innerHeight > innerWidth && window.matchMedia('(orientation: portrait)').matches), 'portrait media query', LOCAL_UI_TIMEOUT);
   await waitFor(page, () => page.evaluate(() => {
     const rotate = document.getElementById('gone-rotate-phone');
     const fire = document.getElementById('mc-fire');
@@ -225,8 +248,8 @@ async function assertPortraitSafety(page) {
   assert(portrait.styles['gone-mobile-controls'].opacity <= 0.2, 'portrait: gameplay controls must visually recede behind the rotate guard');
   assert(rotate.width >= portrait.width - 2 && rotate.height >= portrait.height - 2, 'portrait: rotate overlay must cover the viewport');
 
-  await page.setViewportSize({ width: 844, height: 390 });
-  await waitFor(page, () => page.evaluate(() => innerWidth > innerHeight && window.matchMedia('(orientation: landscape)').matches), 'landscape restore', LOCAL_UI_TIMEOUT);
+  await applyDeviceMetrics(page, cdp, 844, 390, 'landscape restore');
+  await waitFor(page, () => page.evaluate(() => innerWidth > innerHeight && window.matchMedia('(orientation: landscape)').matches), 'landscape media query restore', LOCAL_UI_TIMEOUT);
   await waitFor(page, () => page.evaluate(() => {
     const rotate = document.getElementById('gone-rotate-phone');
     const fire = document.getElementById('mc-fire');
@@ -248,6 +271,7 @@ try {
     userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Mobile/15E148 Safari/604.1',
   });
   const page = await context.newPage();
+  const cdp = await context.newCDPSession(page);
   page.on('pageerror', (error) => failures.push(`pageerror: ${error.message}`));
   page.on('console', (message) => { if (message.type() === 'error') failures.push(`console error: ${message.text()}`); });
 
@@ -260,8 +284,8 @@ try {
   }), 'gameplay start', 90_000);
 
   const handedness = await assertHandednessMirror(page);
-  const reflow = await assertDynamicReflow(page);
-  const portraitSafety = await assertPortraitSafety(page);
+  const reflow = await assertDynamicReflow(page, cdp);
+  const portraitSafety = await assertPortraitSafety(page, cdp);
 
   const finalState = await page.evaluate(() => ({
     adaptive: window.goneMobileAdaptivePresentation.snapshot(),
