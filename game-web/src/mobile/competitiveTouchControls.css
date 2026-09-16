@@ -1,161 +1,284 @@
-/* Competitive mobile FPS HUD inspired by the interaction patterns shared by
- * PUBG Mobile and COD Mobile: left-thumb movement, right-thumb camera, optional
- * claw fire, dedicated ADS, compact action cluster and simultaneous actions. */
+/* Competitive smartphone composition. Interaction semantics remain owned by
+ * mobileRuntime/pubgTouchControls/competitiveTouchControls; this file owns the
+ * final responsive geometry and visual hierarchy only. */
+html.gone-smartphone {
+  --gone-control-edge: clamp(9px, 1.4dvw, 18px);
+  --gone-control-gap: clamp(8px, 1.8dvh, 14px);
+  --gone-small-size: clamp(48px, 11.5dvh, 56px);
+  --gone-action-size: clamp(50px, 12.5dvh, 64px);
+  --gone-fire-size: clamp(68px, 18dvh, 86px);
+  --gone-claw-size: clamp(52px, 13dvh, 62px);
+  --gone-stick-size: clamp(112px, 31dvh, 152px);
+  --gone-stick-knob-size: clamp(48px, 13dvh, 62px);
+  --gone-info-width: clamp(154px, 25dvw, 224px);
+}
 
-/* Keep health in the lower center, the conventional FPS scan zone between the
- * movement and action thumbs. The existing health/shield colors are untouched. */
+html.gone-smartphone #mobile-look-pad {
+  left: 31% !important;
+  right: 0 !important;
+  top: 0 !important;
+  bottom: 0 !important;
+}
+
+html.gone-smartphone #mobile-stick {
+  left: calc(env(safe-area-inset-left) + var(--gone-control-edge)) !important;
+  right: auto !important;
+  bottom: calc(env(safe-area-inset-bottom) + var(--gone-control-edge)) !important;
+  width: var(--gone-stick-size) !important;
+  height: var(--gone-stick-size) !important;
+  border-width: 1px !important;
+  background: radial-gradient(circle, rgba(15,23,42,.14), rgba(2,6,23,.30)) !important;
+  box-shadow: inset 0 0 24px rgba(34,211,238,.09) !important;
+}
+
+html.gone-smartphone #mobile-stick-knob {
+  width: var(--gone-stick-knob-size) !important;
+  height: var(--gone-stick-knob-size) !important;
+  background: rgba(8,145,178,.30) !important;
+}
+
+html.gone-smartphone #gone-mobile-controls button {
+  min-width: 48px !important;
+  min-height: 48px !important;
+  border-radius: 14px !important;
+  background: rgba(15,23,42,.46) !important;
+  border-color: rgba(203,213,225,.38) !important;
+  backdrop-filter: blur(5px) !important;
+  box-shadow: 0 4px 14px rgba(0,0,0,.20) !important;
+  text-shadow: 0 1px 3px rgba(0,0,0,.8);
+}
+
+html.gone-smartphone #gone-mobile-controls .mc-action {
+  width: var(--gone-action-size) !important;
+  height: var(--gone-action-size) !important;
+}
+
+html.gone-smartphone #gone-mobile-controls #mc-fire {
+  right: calc(env(safe-area-inset-right) + var(--gone-control-edge)) !important;
+  left: auto !important;
+  bottom: calc(env(safe-area-inset-bottom) + var(--gone-control-edge)) !important;
+  width: var(--gone-fire-size) !important;
+  height: var(--gone-fire-size) !important;
+  border-radius: 50% !important;
+  border-color: rgba(251,113,133,.72) !important;
+  background: rgba(159,18,57,.44) !important;
+}
+
+html.gone-smartphone #gone-mobile-controls #mc-aim {
+  right: calc(env(safe-area-inset-right) + var(--gone-control-edge) + var(--gone-fire-size) + var(--gone-control-gap)) !important;
+  left: auto !important;
+  bottom: calc(env(safe-area-inset-bottom) + var(--gone-control-edge) + var(--gone-action-size) + var(--gone-control-gap)) !important;
+  width: var(--gone-action-size) !important;
+  height: var(--gone-action-size) !important;
+  border-radius: 50% !important;
+  border-color: rgba(192,132,252,.68) !important;
+  background: rgba(88,28,135,.44) !important;
+}
+
+html.gone-smartphone #mc-jump {
+  right: calc(env(safe-area-inset-right) + var(--gone-control-edge) + var(--gone-fire-size) + var(--gone-control-gap)) !important;
+  left: auto !important;
+  bottom: calc(env(safe-area-inset-bottom) + var(--gone-control-edge)) !important;
+  width: var(--gone-action-size) !important;
+  height: var(--gone-action-size) !important;
+  border-radius: 50% !important;
+}
+
+html.gone-smartphone #mc-crouch {
+  right: calc(env(safe-area-inset-right) + var(--gone-control-edge)) !important;
+  left: auto !important;
+  bottom: calc(env(safe-area-inset-bottom) + var(--gone-control-edge) + var(--gone-fire-size) + var(--gone-control-gap)) !important;
+  width: var(--gone-small-size) !important;
+  height: var(--gone-small-size) !important;
+}
+
+html.gone-smartphone #mc-reload {
+  right: calc(env(safe-area-inset-right) + var(--gone-control-edge)) !important;
+  left: auto !important;
+  bottom: calc(env(safe-area-inset-bottom) + var(--gone-control-edge) + var(--gone-fire-size) + var(--gone-control-gap) + var(--gone-small-size) + var(--gone-control-gap)) !important;
+  width: var(--gone-small-size) !important;
+  height: var(--gone-small-size) !important;
+}
+
+html.gone-smartphone #mc-sprint {
+  left: calc(env(safe-area-inset-left) + var(--gone-control-edge) + var(--gone-stick-size) - 22px) !important;
+  right: auto !important;
+  bottom: calc(env(safe-area-inset-bottom) + var(--gone-control-edge) + var(--gone-stick-size) - 12px) !important;
+  width: var(--gone-small-size) !important;
+  height: var(--gone-small-size) !important;
+  opacity: .82;
+}
+
+html.gone-smartphone #gone-mobile-controls #mc-fire-left {
+  left: calc(env(safe-area-inset-left) + var(--gone-control-edge)) !important;
+  right: auto !important;
+  top: calc(env(safe-area-inset-top) + clamp(62px, 16dvh, 82px)) !important;
+  width: var(--gone-claw-size) !important;
+  height: var(--gone-claw-size) !important;
+  min-width: var(--gone-claw-size) !important;
+  min-height: var(--gone-claw-size) !important;
+  border-radius: 50% !important;
+}
+
+html.gone-smartphone #mc-menu {
+  left: calc(env(safe-area-inset-left) + var(--gone-control-edge)) !important;
+  right: auto !important;
+  top: calc(env(safe-area-inset-top) + var(--gone-control-edge)) !important;
+  width: 48px !important;
+  height: 48px !important;
+}
+
+html.gone-smartphone #mc-map {
+  right: calc(env(safe-area-inset-right) + var(--gone-control-edge)) !important;
+  left: auto !important;
+  top: calc(env(safe-area-inset-top) + var(--gone-control-edge) + 46px) !important;
+  width: 48px !important;
+  height: 48px !important;
+  font-size: 9px !important;
+}
+
+/* Persistent information sits in a compact lower-center scan stack, clear of
+ * both thumb zones. The upper-center band is reserved for the compass. */
 html.gone-smartphone #health-hud,
 html.gone-smartphone.gone-touch-left-handed #health-hud {
   left: 50% !important;
   right: auto !important;
-  bottom: max(8px, calc(env(safe-area-inset-bottom) + 6px)) !important;
-  transform: translateX(-50%) scale(.56) !important;
+  bottom: calc(env(safe-area-inset-bottom) + 5px) !important;
+  transform: translateX(-50%) !important;
   transform-origin: bottom center !important;
+  width: var(--gone-info-width) !important;
 }
 
-/* Health now owns the lower-center band. Keep weapon switching in the upper
- * center so the two persistent HUD elements never overlap. */
+html.gone-smartphone #health-hud .w-64 {
+  width: var(--gone-info-width) !important;
+}
+
+html.gone-smartphone #health-hud .text-xs { font-size: clamp(8px, 1.15dvw, 11px) !important; }
+html.gone-smartphone #health-hud .text-base { font-size: clamp(12px, 1.8dvw, 16px) !important; }
+html.gone-smartphone #health-hud .h-3\.5 { height: clamp(8px, 2.2dvh, 12px) !important; }
+
+html.gone-smartphone #advanced-weapon-hud,
+html.gone-smartphone.gone-touch-left-handed #advanced-weapon-hud {
+  left: 50% !important;
+  right: auto !important;
+  bottom: calc(env(safe-area-inset-bottom) + clamp(38px, 10dvh, 48px)) !important;
+  transform: translateX(-50%) !important;
+  transform-origin: bottom center !important;
+  min-width: 0 !important;
+  width: clamp(116px, 19dvw, 164px) !important;
+  max-width: none !important;
+  padding: 5px 8px !important;
+  border-radius: 10px !important;
+  background: rgba(2,6,23,.48) !important;
+  backdrop-filter: blur(5px) !important;
+  text-align: center !important;
+}
+
+html.gone-smartphone #advanced-weapon-hud > div:first-child {
+  font-size: clamp(16px, 2.7dvw, 20px) !important;
+  line-height: 1 !important;
+}
+
+html.gone-smartphone #advanced-weapon-hud > div:last-child {
+  font-size: clamp(8px, 1.2dvw, 10px) !important;
+  margin-top: 2px !important;
+}
+
 html.gone-smartphone #mc-weapon-switcher {
-  top: max(7px, calc(env(safe-area-inset-top) + 5px)) !important;
-  bottom: auto !important;
+  left: 50% !important;
+  top: auto !important;
+  bottom: calc(env(safe-area-inset-bottom) + clamp(78px, 21dvh, 96px)) !important;
+  transform: translateX(-50%) !important;
+  height: clamp(42px, 10.8dvh, 48px) !important;
+  gap: clamp(3px, .8dvw, 6px) !important;
+  padding: 2px 4px !important;
+  border-radius: 12px !important;
+  background: rgba(2,6,23,.28) !important;
+  backdrop-filter: blur(3px) !important;
+}
+
+html.gone-smartphone #mc-weapon-switcher button {
+  min-width: 48px !important;
+  min-height: 48px !important;
+  width: 48px !important;
   height: 48px !important;
-  padding: 0 5px !important;
-  border-radius: 14px;
-  background: rgba(2, 6, 23, .28);
-  backdrop-filter: blur(3px);
 }
 
-html.gone-smartphone #gone-mobile-controls #mc-fire {
-  right: max(16px, calc(env(safe-area-inset-right) + 10px)) !important;
-  bottom: max(62px, calc(env(safe-area-inset-bottom) + 54px)) !important;
-  width: 82px !important;
-  height: 82px !important;
-  border-radius: 50% !important;
+html.gone-smartphone #mc-weapon-name {
+  min-width: clamp(58px, 9dvw, 74px) !important;
+  padding: 5px 6px !important;
+  font-size: clamp(9px, 1.4dvw, 11px) !important;
 }
 
-html.gone-smartphone #gone-mobile-controls #mc-fire-left {
-  top: max(70px, calc(env(safe-area-inset-top) + 62px)) !important;
-  width: 60px !important;
-  height: 60px !important;
-  min-width: 60px !important;
-  min-height: 60px !important;
-}
-
-html.gone-smartphone #gone-mobile-controls #mc-aim {
-  right: max(106px, calc(env(safe-area-inset-right) + 98px)) !important;
-  bottom: max(102px, calc(env(safe-area-inset-bottom) + 94px)) !important;
-  width: 60px !important;
-  height: 60px !important;
-  border-radius: 50% !important;
-}
-
-html.gone-smartphone #mc-jump {
-  right: max(106px, calc(env(safe-area-inset-right) + 98px)) !important;
-  bottom: max(32px, calc(env(safe-area-inset-bottom) + 24px)) !important;
-}
-
-html.gone-smartphone #mc-crouch {
-  right: max(20px, calc(env(safe-area-inset-right) + 14px)) !important;
-  bottom: max(160px, calc(env(safe-area-inset-bottom) + 152px)) !important;
-}
-
-html.gone-smartphone #mc-reload {
-  right: max(20px, calc(env(safe-area-inset-right) + 14px)) !important;
-  bottom: max(218px, calc(env(safe-area-inset-bottom) + 210px)) !important;
-}
-
-html.gone-smartphone #mc-sprint {
-  left: max(108px, calc(env(safe-area-inset-left) + 100px)) !important;
-  bottom: max(142px, calc(env(safe-area-inset-bottom) + 134px)) !important;
-  min-width: 52px !important;
-  min-height: 44px !important;
-  opacity: .82;
-}
-
-/* The map is informational, not a modal. Keep the game visible beneath it and
- * leave the touch HUD on top so movement/combat can continue. */
+/* Live map stays a tactical overlay rather than a modal. */
 html.gone-smartphone #map-ui {
-  background: rgba(2, 6, 23, .56) !important;
+  background: rgba(2,6,23,.52) !important;
   backdrop-filter: blur(1.5px) !important;
   pointer-events: none !important;
 }
 
 html.gone-smartphone #map-ui > div {
-  background: rgba(15, 23, 42, .70) !important;
-  box-shadow: 0 0 24px rgba(16, 185, 129, .22) !important;
+  width: min(88dvw, 78dvh) !important;
+  height: min(88dvw, 78dvh) !important;
+  background: rgba(15,23,42,.68) !important;
+  box-shadow: 0 0 24px rgba(16,185,129,.20) !important;
 }
 
-html.gone-smartphone #minimap-canvas {
-  opacity: .88 !important;
-}
-
-/* mobile.css historically hides every control while the map is open. Override
- * that modal behavior with higher-specificity selectors and keep all gameplay
- * surfaces interactive. */
+html.gone-smartphone #minimap-canvas { opacity: .88 !important; }
 html.gone-smartphone #gone-mobile-controls.map-open #mobile-look-pad,
-html.gone-smartphone #gone-mobile-controls.map-open #mobile-stick {
-  display: block !important;
-}
-
+html.gone-smartphone #gone-mobile-controls.map-open #mobile-stick { display: block !important; }
 html.gone-smartphone #gone-mobile-controls.map-open button,
-html.gone-smartphone #gone-mobile-controls.map-open #mc-weapon-switcher {
-  display: flex !important;
-}
-
-html.gone-smartphone:not(.gone-touch-secondary-fire) #gone-mobile-controls.map-open #mc-fire-left {
-  display: none !important;
-}
-
-html.gone-smartphone #gone-mobile-controls.map-open {
-  opacity: .94;
-}
-
+html.gone-smartphone #gone-mobile-controls.map-open #mc-weapon-switcher { display: flex !important; }
+html.gone-smartphone:not(.gone-touch-secondary-fire) #gone-mobile-controls.map-open #mc-fire-left { display: none !important; }
+html.gone-smartphone #gone-mobile-controls.map-open { opacity: .94; }
 html.gone-smartphone #gone-mobile-controls.map-open #mc-map {
-  top: max(47px, calc(env(safe-area-inset-top) + 43px)) !important;
-  background: rgba(5, 150, 105, .76) !important;
-  border-color: rgba(110, 231, 183, .78) !important;
+  background: rgba(5,150,105,.76) !important;
+  border-color: rgba(110,231,183,.78) !important;
 }
+html.gone-smartphone #gone-mobile-controls.map-open #mc-map::after { content: '·'; margin-left: 2px; }
 
-html.gone-smartphone #gone-mobile-controls.map-open #mc-map::after {
-  content: ' · CHIUDI';
-  margin-left: 2px;
-}
-
-/* A subtle sprint arc communicates the PUBG/CODM-style joystick sprint zone. */
 html.gone-smartphone #mobile-stick::before {
   content: 'RUN';
   position: absolute;
   left: 50%;
   top: 7px;
   transform: translateX(-50%);
-  color: rgba(165, 243, 252, .46);
-  font: 900 8px/1 ui-sans-serif, system-ui, sans-serif;
+  color: rgba(165,243,252,.46);
+  font: 900 8px/1 ui-sans-serif,system-ui,sans-serif;
   letter-spacing: .12em;
   pointer-events: none;
 }
 
-@media (max-height: 430px) and (orientation: landscape) {
-  html.gone-smartphone #health-hud,
-  html.gone-smartphone.gone-touch-left-handed #health-hud {
-    bottom: max(6px, calc(env(safe-area-inset-bottom) + 4px)) !important;
-    transform: translateX(-50%) scale(.50) !important;
-  }
-  html.gone-smartphone #gone-mobile-controls #mc-fire {
-    bottom: max(50px, calc(env(safe-area-inset-bottom) + 44px)) !important;
-    width: 76px !important;
-    height: 76px !important;
-  }
-  html.gone-smartphone #gone-mobile-controls #mc-aim {
-    right: max(96px, calc(env(safe-area-inset-right) + 90px)) !important;
-    bottom: max(88px, calc(env(safe-area-inset-bottom) + 82px)) !important;
-  }
-  html.gone-smartphone #mc-jump {
-    right: max(96px, calc(env(safe-area-inset-right) + 90px)) !important;
-  }
-  html.gone-smartphone #mc-crouch {
-    bottom: max(142px, calc(env(safe-area-inset-bottom) + 136px)) !important;
-  }
-  html.gone-smartphone #mc-reload {
-    bottom: max(194px, calc(env(safe-area-inset-bottom) + 188px)) !important;
-  }
+/* Mirror the two-thumb geometry without moving the centered information stack. */
+html.gone-smartphone.gone-touch-left-handed #mobile-look-pad { left: 0 !important; right: 31% !important; }
+html.gone-smartphone.gone-touch-left-handed #mobile-stick {
+  left: auto !important;
+  right: calc(env(safe-area-inset-right) + var(--gone-control-edge)) !important;
+}
+html.gone-smartphone.gone-touch-left-handed #gone-mobile-controls #mc-fire {
+  right: auto !important;
+  left: calc(env(safe-area-inset-left) + var(--gone-control-edge)) !important;
+}
+html.gone-smartphone.gone-touch-left-handed #gone-mobile-controls #mc-aim,
+html.gone-smartphone.gone-touch-left-handed #mc-jump {
+  right: auto !important;
+  left: calc(env(safe-area-inset-left) + var(--gone-control-edge) + var(--gone-fire-size) + var(--gone-control-gap)) !important;
+}
+html.gone-smartphone.gone-touch-left-handed #mc-crouch,
+html.gone-smartphone.gone-touch-left-handed #mc-reload {
+  right: auto !important;
+  left: calc(env(safe-area-inset-left) + var(--gone-control-edge)) !important;
+}
+html.gone-smartphone.gone-touch-left-handed #mc-sprint {
+  left: auto !important;
+  right: calc(env(safe-area-inset-right) + var(--gone-control-edge) + var(--gone-stick-size) - 22px) !important;
+}
+html.gone-smartphone.gone-touch-left-handed #gone-mobile-controls #mc-fire-left {
+  left: auto !important;
+  right: calc(env(safe-area-inset-right) + var(--gone-control-edge)) !important;
+}
+
+@media (orientation: portrait) and (max-width: 760px) {
+  html.gone-smartphone #gone-mobile-controls { opacity: .88; }
+  html.gone-smartphone #gone-rotate-phone.is-active { display: block; }
 }
