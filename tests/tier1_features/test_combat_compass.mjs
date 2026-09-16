@@ -35,7 +35,7 @@ export async function run(suite) {
   });
 
   suite.test('Competitive touch geometry scales from viewport variables instead of one fixed handset', () => {
-    for (const variable of ['--gone-action-size', '--gone-fire-size', '--gone-stick-size', '--gone-info-width']) {
+    for (const variable of ['--gone-action-size', '--gone-fire-size', '--gone-stick-size', '--gone-health-width', '--gone-health-scale']) {
       assert(competitiveCss.includes(variable), `responsive geometry must define ${variable}`);
     }
     assert(competitiveCss.includes('clamp(48px'), 'interactive controls must retain a 48px minimum target');
