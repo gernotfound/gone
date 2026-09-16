@@ -138,9 +138,26 @@ function assertLandscape(layout, label, handedness) {
 }
 
 async function setHandedness(page, handedness) {
-  await page.evaluate((value) => window.goneTouchPreferences.set({ handedness: value }), handedness);
-  await waitFor(page, () => page.evaluate((value) => document.documentElement.dataset.goneTouchHandedness === value), `${handedness} handedness apply`, LOCAL_UI_TIMEOUT);
-  await page.waitForTimeout(80);
+  const state = await page.evaluate((value) => {
+    const buttonId = value === 'left' ? 'touch-handedness-left' : 'touch-handedness-right';
+    const button = document.getElementById(buttonId);
+    if (!(button instanceof HTMLButtonElement)) {
+      return { button: false, snapshot: null, dataset: null, leftClass: null };
+    }
+    button.click();
+    return {
+      button: true,
+      snapshot: window.goneTouchPreferences?.snapshot?.().handedness ?? null,
+      dataset: document.documentElement.dataset.goneTouchHandedness ?? null,
+      leftClass: document.documentElement.classList.contains('gone-touch-left-handed'),
+    };
+  }, handedness);
+
+  assert(state.button, `${handedness} handedness: settings button must exist`);
+  assert(state.snapshot === handedness, `${handedness} handedness: preference snapshot stayed ${state.snapshot}`);
+  assert(state.dataset === handedness, `${handedness} handedness: DOM dataset stayed ${state.dataset}`);
+  assert(state.leftClass === (handedness === 'left'), `${handedness} handedness: mirror CSS class mismatch`);
+  await page.waitForTimeout(100);
 }
 
 async function assertHandednessMirror(page) {
