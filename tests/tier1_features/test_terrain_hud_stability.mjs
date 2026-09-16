@@ -15,7 +15,9 @@ export async function run(suite) {
     assert(style.includes('left: 50% !important;'), 'desktop health HUD must use the horizontal center');
     assert(style.includes('transform: translateX(-50%)'), 'desktop health HUD must compensate its own width');
     assert(mobile.includes('html.gone-smartphone #health-hud'), 'smartphone profile must own a centered health override');
-    assert(mobile.includes('translateX(-50%) scale(.56)'), 'smartphone health HUD must stay centered while compact');
+    assert(mobile.includes('--gone-health-scale: .58'), 'smartphone health HUD must expose a compact baseline scale');
+    assert(mobile.includes('translateX(-50%) scale(var(--gone-health-scale))'), 'smartphone health HUD must stay centered while scaling responsively');
+    assert(mobile.includes('transform-origin: bottom center'), 'smartphone health scaling must preserve its lower-center anchor');
   });
 
   suite.test('Terrain keeps its existing color contract while border normals use halo samples', () => {

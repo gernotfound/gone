@@ -10,7 +10,8 @@ html.gone-smartphone {
   --gone-claw-size: clamp(52px, 13dvh, 62px);
   --gone-stick-size: clamp(112px, 31dvh, 152px);
   --gone-stick-knob-size: clamp(48px, 13dvh, 62px);
-  --gone-info-width: clamp(154px, 25dvw, 224px);
+  --gone-health-width: clamp(224px, 32dvw, 256px);
+  --gone-health-scale: .58;
 }
 
 html.gone-smartphone #mobile-look-pad {
@@ -137,57 +138,70 @@ html.gone-smartphone #mc-map {
   font-size: 9px !important;
 }
 
-/* Persistent information sits in a compact lower-center scan stack, clear of
- * both thumb zones. The upper-center band is reserved for the compass. */
+/* Persistent information is a real three-level scan stack: weapon switcher,
+ * ammo status, then health. Every level owns a non-overlapping vertical band;
+ * the upper-center band is reserved for the compass. */
 html.gone-smartphone #health-hud,
 html.gone-smartphone.gone-touch-left-handed #health-hud {
   left: 50% !important;
   right: auto !important;
   bottom: calc(env(safe-area-inset-bottom) + 5px) !important;
-  transform: translateX(-50%) !important;
+  width: auto !important;
+  transform: translateX(-50%) scale(var(--gone-health-scale)) !important;
   transform-origin: bottom center !important;
-  width: var(--gone-info-width) !important;
 }
 
 html.gone-smartphone #health-hud .w-64 {
-  width: var(--gone-info-width) !important;
+  width: var(--gone-health-width) !important;
 }
 
-html.gone-smartphone #health-hud .text-xs { font-size: clamp(8px, 1.15dvw, 11px) !important; }
-html.gone-smartphone #health-hud .text-base { font-size: clamp(12px, 1.8dvw, 16px) !important; }
-html.gone-smartphone #health-hud .h-3\.5 { height: clamp(8px, 2.2dvh, 12px) !important; }
+html.gone-smartphone #hud-shield-badge {
+  position: absolute !important;
+  right: calc(100% + 8px) !important;
+  bottom: 0 !important;
+  margin: 0 !important;
+  white-space: nowrap !important;
+}
 
 html.gone-smartphone #advanced-weapon-hud,
 html.gone-smartphone.gone-touch-left-handed #advanced-weapon-hud {
   left: 50% !important;
   right: auto !important;
-  bottom: calc(env(safe-area-inset-bottom) + clamp(38px, 10dvh, 48px)) !important;
+  bottom: calc(env(safe-area-inset-bottom) + clamp(50px, 13dvh, 58px)) !important;
   transform: translateX(-50%) !important;
   transform-origin: bottom center !important;
+  box-sizing: border-box !important;
   min-width: 0 !important;
-  width: clamp(116px, 19dvw, 164px) !important;
+  width: clamp(150px, 22dvw, 188px) !important;
   max-width: none !important;
-  padding: 5px 8px !important;
-  border-radius: 10px !important;
+  padding: 4px 8px !important;
+  border-radius: 9px !important;
   background: rgba(2,6,23,.48) !important;
   backdrop-filter: blur(5px) !important;
   text-align: center !important;
 }
 
 html.gone-smartphone #advanced-weapon-hud > div:first-child {
-  font-size: clamp(16px, 2.7dvw, 20px) !important;
+  font-size: clamp(16px, 2.5dvw, 20px) !important;
   line-height: 1 !important;
+  white-space: nowrap !important;
 }
 
 html.gone-smartphone #advanced-weapon-hud > div:last-child {
-  font-size: clamp(8px, 1.2dvw, 10px) !important;
+  display: block !important;
+  max-width: 100% !important;
   margin-top: 2px !important;
+  overflow: hidden !important;
+  white-space: nowrap !important;
+  text-overflow: ellipsis !important;
+  font-size: clamp(7px, 1dvw, 9px) !important;
+  line-height: 1.15 !important;
 }
 
 html.gone-smartphone #mc-weapon-switcher {
   left: 50% !important;
   top: auto !important;
-  bottom: calc(env(safe-area-inset-bottom) + clamp(78px, 21dvh, 96px)) !important;
+  bottom: calc(env(safe-area-inset-bottom) + clamp(96px, 25dvh, 110px)) !important;
   transform: translateX(-50%) !important;
   height: clamp(42px, 10.8dvh, 48px) !important;
   gap: clamp(3px, .8dvw, 6px) !important;
@@ -276,6 +290,14 @@ html.gone-smartphone.gone-touch-left-handed #mc-sprint {
 html.gone-smartphone.gone-touch-left-handed #gone-mobile-controls #mc-fire-left {
   left: auto !important;
   right: calc(env(safe-area-inset-right) + var(--gone-control-edge)) !important;
+}
+
+@media (min-height: 400px) and (orientation: landscape) {
+  html.gone-smartphone { --gone-health-scale: .64; }
+}
+
+@media (min-height: 425px) and (orientation: landscape) {
+  html.gone-smartphone { --gone-health-scale: .68; }
 }
 
 @media (orientation: portrait) and (max-width: 760px) {

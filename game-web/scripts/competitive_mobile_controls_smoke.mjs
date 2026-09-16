@@ -112,6 +112,19 @@ async function assertResponsiveLayout(page, spec) {
     assert(!overlaps(r[thumb], r['advanced-weapon-hud']), `${spec.name}: ${thumb} overlaps ammo HUD`);
     assert(!overlaps(r[thumb], r['mc-weapon-switcher']), `${spec.name}: ${thumb} overlaps weapon switcher`);
   }
+
+  const stackPairs = [
+    ['mc-weapon-switcher', 'advanced-weapon-hud'],
+    ['advanced-weapon-hud', 'health-hud'],
+    ['mc-weapon-switcher', 'health-hud'],
+  ];
+  for (const [upper, lower] of stackPairs) {
+    assert(!overlaps(r[upper], r[lower]), `${spec.name}: lower-center stack overlap between ${upper} and ${lower}`);
+  }
+  assert(r['mc-weapon-switcher'].bottom <= r['advanced-weapon-hud'].top + 0.5, `${spec.name}: weapon switcher must sit above ammo HUD`);
+  assert(r['advanced-weapon-hud'].bottom <= r['health-hud'].top + 0.5, `${spec.name}: ammo HUD must sit above health HUD`);
+  assert(r['advanced-weapon-hud'].height <= 46, `${spec.name}: ammo HUD wrapped into desktop-height content (${r['advanced-weapon-hud'].height}px)`);
+
   assert(!overlaps(r['gone-combat-compass'], r['mc-menu']), `${spec.name}: compass overlaps menu`);
   assert(!overlaps(r['gone-combat-compass'], r['mc-map']), `${spec.name}: compass overlaps map button`);
   assert(r['gone-combat-compass'].bottom < r['mc-weapon-switcher'].top, `${spec.name}: navigation and weapon bands must remain separated`);
