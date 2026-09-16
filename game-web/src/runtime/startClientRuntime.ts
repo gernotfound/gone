@@ -31,6 +31,7 @@ import { startCombatCompass } from '../ui/combatCompass.ts';
 import { startP2PQualityHud } from '../ui/p2pQualityHud.ts';
 import { startTerminalSessionRecovery } from '../ui/terminalSessionRecovery.ts';
 import { startMobileRuntime } from '../mobile/mobileRuntime.ts';
+import { startMobileAdaptivePresentation } from '../mobile/mobileAdaptivePresentation.ts';
 import { runtimeKernel, type RuntimeModuleDefinition } from './runtimeKernel.ts';
 
 const BOOTSTRAP_DEPENDENCY = ['bootstrap'] as const;
@@ -140,6 +141,12 @@ const CLIENT_RUNTIME_MODULES: readonly RuntimeModuleDefinition[] = [
     phase: 'presentation',
     dependsOn: BOOTSTRAP_DEPENDENCY,
     start: startCombatCompass,
+  },
+  {
+    name: 'mobileAdaptivePresentation',
+    phase: 'presentation',
+    dependsOn: ['bootstrap', 'mobileRuntime', 'combatEventBridge'],
+    start: startMobileAdaptivePresentation,
   },
   {
     name: 'deathmatchScore',

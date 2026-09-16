@@ -119,6 +119,7 @@ jobs:
           run_smoke rescue_full_match_smoke.mjs rescue-full-match.log
           run_smoke mobile_pwa_smoke.mjs rescue-mobile-pwa.log
           run_smoke competitive_mobile_controls_smoke.mjs rescue-competitive-mobile.log
+          run_smoke mobile_adaptive_layout_smoke.mjs rescue-mobile-adaptive.log
 
       - name: Upload browser smoke diagnostics
         if: always()
@@ -136,6 +137,7 @@ jobs:
             rescue-full-match.log
             rescue-mobile-pwa.log
             rescue-competitive-mobile.log
+            rescue-mobile-adaptive.log
             rescue-preview.log
           if-no-files-found: warn
           retention-days: 3
