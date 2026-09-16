@@ -277,14 +277,16 @@ function updateWeaponLabel(): void {
   const names: Record<string, string> = {
     assalto: 'AR', cecchino: 'SNIPER', pompa: 'SHOTGUN', mitraglietta: 'SMG', coltello: 'KNIFE',
   };
-  if (label) label.textContent = names[raw] ?? raw.toUpperCase();
+  const nextLabel = names[raw] ?? raw.toUpperCase();
+  if (label && label.textContent !== nextLabel) label.textContent = nextLabel;
 
   for (const weapon of QUICK_WEAPONS) {
     const button = document.getElementById(`mc-weapon-slot-${weapon.index}`) as HTMLButtonElement | null;
     if (!button) continue;
     const active = weapon.index === activeIndex;
-    button.classList.toggle('is-active', active);
-    button.setAttribute('aria-pressed', String(active));
+    if (button.classList.contains('is-active') !== active) button.classList.toggle('is-active', active);
+    const pressed = String(active);
+    if (button.getAttribute('aria-pressed') !== pressed) button.setAttribute('aria-pressed', pressed);
   }
 }
 
