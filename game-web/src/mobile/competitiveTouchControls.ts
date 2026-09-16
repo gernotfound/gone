@@ -176,7 +176,12 @@ function selectWeapon(index: number): void {
   const game = (window as any).goneGame;
   const count = Object.keys((window as any).goneWeapons?.config ?? {}).length || 5;
   if (!Number.isInteger(index) || index < 0 || index >= count) return;
-  void Promise.resolve(game?.switchWeapon?.(index));
+  const result = game?.switchWeapon?.(index);
+  void Promise.resolve(result).finally(() => {
+    // PUBG touch owns quick-slot label/class/ARIA presentation. Competitive map
+    // input only notifies that owner after canonical selection has settled.
+    (window as any).gonePubgTouchControls?.rebind?.();
+  });
 }
 
 function switchWeapon(delta: number): void {

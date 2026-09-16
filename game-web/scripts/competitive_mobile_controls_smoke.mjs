@@ -214,6 +214,7 @@ async function assertAdsModes(page, label) {
 async function assertLiveMapCombat(page) {
   await page.evaluate(async () => {
     await window.goneGame.switchWeapon(0);
+    window.gonePubgTouchControls?.rebind?.();
   });
   await page.waitForTimeout(120);
 
@@ -244,14 +245,33 @@ async function assertLiveMapCombat(page) {
 
   await pointer(page, 'mc-weapon-slot-3', 'pointerdown', 205);
   await pointer(page, 'mc-weapon-slot-3', 'pointerup', 205);
-  await waitFor(page, () => page.evaluate(() => window.goneGame.getActiveWeaponIndex() === 3), 'map-open direct weapon slot', LOCAL_UI_TIMEOUT);
+  await waitFor(page, () => page.evaluate(() => {
+    const selected = document.getElementById('mc-weapon-slot-3');
+    const previous = document.getElementById('mc-weapon-slot-0');
+    return window.goneGame.getActiveWeaponIndex() === 3
+      && selected?.classList.contains('is-active')
+      && selected?.getAttribute('aria-pressed') === 'true'
+      && previous?.getAttribute('aria-pressed') === 'false'
+      && document.querySelectorAll('#mc-weapon-slots .mc-weapon-slot.is-active').length === 1;
+  }), 'map-open direct weapon presentation sync', LOCAL_UI_TIMEOUT);
   const mapWeapon = await page.evaluate(() => {
     const key = window.goneGame.getActiveWeapon();
+    const selected = document.getElementById('mc-weapon-slot-3');
+    const previous = document.getElementById('mc-weapon-slot-0');
     window.goneWeapons.ammo[key].magazine = 2;
     window.goneWeapons.ammo[key].reserve = 10;
-    return { index: window.goneGame.getActiveWeaponIndex(), key };
+    return {
+      index: window.goneGame.getActiveWeaponIndex(),
+      key,
+      pressed: selected?.getAttribute('aria-pressed'),
+      selectedActive: selected?.classList.contains('is-active') ?? false,
+      previousPressed: previous?.getAttribute('aria-pressed'),
+      activeCount: document.querySelectorAll('#mc-weapon-slots .mc-weapon-slot.is-active').length,
+    };
   });
   assert(mapWeapon.index === 3, 'map-open direct slot must select SMG index 3');
+  assert(mapWeapon.pressed === 'true' && mapWeapon.selectedActive && mapWeapon.previousPressed === 'false' && mapWeapon.activeCount === 1,
+    `map-open quick slot presentation must match canonical SMG selection: ${JSON.stringify(mapWeapon)}`);
 
   await pointer(page, 'mobile-stick', 'pointerdown', 202, 0.5, 0.5);
   await pointer(page, 'mobile-stick', 'pointermove', 202, 0.5, 0.02);
