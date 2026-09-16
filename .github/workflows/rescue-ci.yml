@@ -91,16 +91,34 @@ jobs:
             sleep 0.25
           done
           curl -fsS http://127.0.0.1:4173/ >/dev/null
-          node scripts/runtime_stability_smoke.mjs 2>&1 | tee ../rescue-runtime-stability.log
-          node scripts/rescue_browser_smoke.mjs 2>&1 | tee ../rescue-browser-smoke.log
-          node scripts/rescue_webrtc_scale_smoke.mjs 2>&1 | tee ../rescue-webrtc-scale.log
-          node scripts/rescue_combat_network_smoke.mjs 2>&1 | tee ../rescue-combat-network.log
-          node scripts/rescue_session_resilience_smoke.mjs 2>&1 | tee ../rescue-session-resilience.log
-          node scripts/rescue_selfhost_relay_smoke.mjs 2>&1 | tee ../rescue-selfhost-relay.log
-          node scripts/rescue_selfhost_scale_smoke.mjs 2>&1 | tee ../rescue-selfhost-scale.log
-          node scripts/rescue_full_match_smoke.mjs 2>&1 | tee ../rescue-full-match.log
-          node scripts/mobile_pwa_smoke.mjs 2>&1 | tee ../rescue-mobile-pwa.log
-          node scripts/competitive_mobile_controls_smoke.mjs 2>&1 | tee ../rescue-competitive-mobile.log
+
+          run_smoke() {
+            local script="$1"
+            local log="$2"
+            echo "::group::browser smoke ${script}"
+            echo "[browser-smoke] START ${script} $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            set +e
+            timeout --foreground --signal=TERM --kill-after=10s 180s node "scripts/${script}" 2>&1 | tee "../${log}"
+            local status=${PIPESTATUS[0]}
+            set -e
+            echo "[browser-smoke] END ${script} status=${status} $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "::endgroup::"
+            if [ "${status}" -ne 0 ]; then
+              echo "::error::${script} failed or exceeded 180 seconds (status ${status})"
+              return "${status}"
+            fi
+          }
+
+          run_smoke runtime_stability_smoke.mjs rescue-runtime-stability.log
+          run_smoke rescue_browser_smoke.mjs rescue-browser-smoke.log
+          run_smoke rescue_webrtc_scale_smoke.mjs rescue-webrtc-scale.log
+          run_smoke rescue_combat_network_smoke.mjs rescue-combat-network.log
+          run_smoke rescue_session_resilience_smoke.mjs rescue-session-resilience.log
+          run_smoke rescue_selfhost_relay_smoke.mjs rescue-selfhost-relay.log
+          run_smoke rescue_selfhost_scale_smoke.mjs rescue-selfhost-scale.log
+          run_smoke rescue_full_match_smoke.mjs rescue-full-match.log
+          run_smoke mobile_pwa_smoke.mjs rescue-mobile-pwa.log
+          run_smoke competitive_mobile_controls_smoke.mjs rescue-competitive-mobile.log
 
       - name: Upload browser smoke diagnostics
         if: always()
