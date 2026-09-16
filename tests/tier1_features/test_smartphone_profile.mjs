@@ -74,12 +74,13 @@ export async function run(suite) {
     }
   });
 
-  suite.test('Left-handed layout mirrors movement, action cluster and compact HUD', () => {
+  suite.test('Left-handed layout mirrors interaction zones while centered combat information stays neutral', () => {
     const css = fs.readFileSync(mobileCssPath, 'utf-8');
     assert(css.includes('html.gone-touch-left-handed #mobile-stick') && css.includes('right:max('), 'left-handed layout must move the movement stick to the right');
     assert(css.includes('html.gone-touch-left-handed #gone-mobile-controls .mc-fire') && css.includes('left:max('), 'left-handed layout must move fire controls to the left');
     assert(css.includes('html.gone-touch-left-handed #mobile-look-pad') && css.includes('right:36%'), 'left-handed layout must mirror the look interaction zone');
-    assert(css.includes('gone-smartphone.gone-touch-left-handed #health-hud') && css.includes('gone-smartphone.gone-touch-left-handed #advanced-weapon-hud'), 'compact HUD anchors must follow handedness');
+    assert(!css.includes('gone-smartphone.gone-touch-left-handed #health-hud'), 'generic handedness CSS must not move the centered health HUD');
+    assert(!css.includes('gone-smartphone.gone-touch-left-handed #advanced-weapon-hud'), 'generic handedness CSS must not move the centered ammo HUD');
   });
 
   suite.test('Phone map and death feedback are stripped of oversized desktop chrome', () => {
