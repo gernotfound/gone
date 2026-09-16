@@ -9,6 +9,7 @@ const CASES = [
   { name: 'large', width: 932, height: 430, dpr: 2 },
 ];
 const QUICK_SLOT_IDS = ['mc-weapon-slot-0', 'mc-weapon-slot-1', 'mc-weapon-slot-2', 'mc-weapon-slot-3', 'mc-weapon-slot-4'];
+const LOCAL_UI_TIMEOUT = 5_000;
 
 async function waitFor(page, predicate, label, timeout = 60_000) {
   const started = Date.now();
@@ -58,13 +59,14 @@ async function startPhoneGame(browser, spec) {
   page.on('pageerror', (error) => failures.push(`${spec.name} pageerror: ${error.message}`));
   page.on('console', (message) => { if (message.type() === 'error') failures.push(`${spec.name} console error: ${message.text()}`); });
   await page.goto(`${BASE}/`, { waitUntil: 'networkidle' });
-  await waitFor(page, () => page.evaluate(() => Boolean(window.goneCompetitiveTouchControls?.snapshot && document.getElementById('mc-weapon-slot-4'))), `${spec.name} competitive touch runtime`);
+  await waitFor(page, () => page.evaluate(() => Boolean(window.goneCompetitiveTouchControls?.snapshot)), `${spec.name} competitive touch runtime`);
   await page.locator('#btn-enter').click();
   await waitFor(page, () => page.evaluate(() => {
     const ui = document.getElementById('game-ui');
     const compass = document.getElementById('gone-combat-compass');
     return Boolean(ui && !ui.classList.contains('hidden') && compass?.dataset.bearing && window.goneGame && window.goneMobileControls?.snapshot?.().gameplayActive);
   }), `${spec.name} gameplay start`, 90_000);
+  await waitFor(page, () => page.evaluate(() => Boolean(document.getElementById('mc-weapon-slot-4'))), `${spec.name} quick slots after gameplay start`, LOCAL_UI_TIMEOUT);
   return { context, page };
 }
 
@@ -141,13 +143,13 @@ async function assertCompassTracksLook(page, label) {
   await waitFor(page, () => page.evaluate((previous) => {
     const next = Number(document.getElementById('gone-combat-compass')?.dataset.bearing ?? NaN);
     return Number.isFinite(next) && Math.abs(next - previous) > 0.25;
-  }, before), `${label} compass heading response`);
+  }, before), `${label} compass heading response`, LOCAL_UI_TIMEOUT);
 }
 
 async function assertQuickWeaponSelection(page, label) {
   await pointer(page, 'mc-weapon-slot-2', 'pointerdown', 171);
   await pointer(page, 'mc-weapon-slot-2', 'pointerup', 171);
-  await waitFor(page, () => page.evaluate(() => window.goneGame.getActiveWeaponIndex() === 2), `${label} direct shotgun selection`);
+  await waitFor(page, () => page.evaluate(() => window.goneGame.getActiveWeaponIndex() === 2), `${label} direct shotgun selection`, LOCAL_UI_TIMEOUT);
   const selected = await page.evaluate(() => ({
     index: window.goneGame.getActiveWeaponIndex(),
     pressed: document.getElementById('mc-weapon-slot-2')?.getAttribute('aria-pressed'),
@@ -158,7 +160,7 @@ async function assertQuickWeaponSelection(page, label) {
 
   await pointer(page, 'mc-weapon-slot-0', 'pointerdown', 172);
   await pointer(page, 'mc-weapon-slot-0', 'pointerup', 172);
-  await waitFor(page, () => page.evaluate(() => window.goneGame.getActiveWeaponIndex() === 0), `${label} direct AR restore`);
+  await waitFor(page, () => page.evaluate(() => window.goneGame.getActiveWeaponIndex() === 0), `${label} direct AR restore`, LOCAL_UI_TIMEOUT);
   return selected;
 }
 
@@ -170,7 +172,7 @@ async function assertLiveMapCombat(page) {
 
   await pointer(page, 'mc-map', 'pointerdown', 201);
   await pointer(page, 'mc-map', 'pointerup', 201);
-  await waitFor(page, () => page.evaluate(() => !document.getElementById('map-ui').classList.contains('hidden')), 'live map open');
+  await waitFor(page, () => page.evaluate(() => !document.getElementById('map-ui').classList.contains('hidden')), 'live map open', LOCAL_UI_TIMEOUT);
 
   const mapState = await page.evaluate(() => {
     const map = document.getElementById('map-ui');
@@ -195,7 +197,7 @@ async function assertLiveMapCombat(page) {
 
   await pointer(page, 'mc-weapon-slot-3', 'pointerdown', 205);
   await pointer(page, 'mc-weapon-slot-3', 'pointerup', 205);
-  await waitFor(page, () => page.evaluate(() => window.goneGame.getActiveWeaponIndex() === 3), 'map-open direct weapon slot');
+  await waitFor(page, () => page.evaluate(() => window.goneGame.getActiveWeaponIndex() === 3), 'map-open direct weapon slot', LOCAL_UI_TIMEOUT);
   const mapWeapon = await page.evaluate(() => {
     const key = window.goneGame.getActiveWeapon();
     window.goneWeapons.ammo[key].magazine = 2;
@@ -221,7 +223,7 @@ async function assertLiveMapCombat(page) {
   await waitFor(page, () => page.evaluate((before) => {
     const key = window.goneGame.getActiveWeapon();
     return window.goneWeapons.ammo[key].magazine < before;
-  }, ammoBefore), 'map-open fire consumes magazine');
+  }, ammoBefore), 'map-open fire consumes magazine', LOCAL_UI_TIMEOUT);
   const ammoAfter = await page.evaluate(() => {
     const key = window.goneGame.getActiveWeapon();
     return window.goneWeapons.ammo[key].magazine;
@@ -233,7 +235,7 @@ async function assertLiveMapCombat(page) {
   assert(!(await page.evaluate(() => window.goneMobileControls.snapshot().forward)), 'map-open joystick must release cleanly');
   await pointer(page, 'mc-map', 'pointerdown', 204);
   await pointer(page, 'mc-map', 'pointerup', 204);
-  await waitFor(page, () => page.evaluate(() => document.getElementById('map-ui').classList.contains('hidden')), 'live map close');
+  await waitFor(page, () => page.evaluate(() => document.getElementById('map-ui').classList.contains('hidden')), 'live map close', LOCAL_UI_TIMEOUT);
   return { ammoBefore, ammoAfter, mapBackground: mapState.mapBackground, mapWeapon };
 }
 
