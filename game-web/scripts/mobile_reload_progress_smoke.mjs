@@ -25,6 +25,34 @@ function scaleFrom(transform) {
   return match ? Number(match[1]) : Number.NaN;
 }
 
+async function setAmmoState(page, magazine, reserve, expected) {
+  await page.evaluate(({ magazine, reserve }) => {
+    const key = window.goneGame.getActiveWeapon();
+    window.goneWeapons.ammo[key].magazine = magazine;
+    window.goneWeapons.ammo[key].reserve = reserve;
+  }, { magazine, reserve });
+  await waitFor(page, () => page.evaluate((state) => (
+    document.getElementById('advanced-weapon-hud')?.dataset.goneAmmoState === state
+    && document.getElementById('mc-reload')?.dataset.goneAmmoState === state
+  ), expected), `ammo readability ${expected}`, LOCAL_UI_TIMEOUT);
+  return page.evaluate(() => {
+    const hud = document.getElementById('advanced-weapon-hud');
+    const primary = hud?.firstElementChild;
+    const reload = document.getElementById('mc-reload');
+    const rect = reload?.getBoundingClientRect();
+    return {
+      hudState: hud?.dataset.goneAmmoState || '',
+      reloadState: reload?.dataset.goneAmmoState || '',
+      aria: reload?.getAttribute('aria-label') || '',
+      ariaBusy: reload?.getAttribute('aria-busy') || '',
+      primaryColor: primary ? getComputedStyle(primary).color : '',
+      reloadOpacity: reload ? Number(getComputedStyle(reload).opacity) : Number.NaN,
+      reloadWidth: rect?.width || 0,
+      snapshot: window.goneMobileAdaptivePresentation?.snapshot?.(),
+    };
+  });
+}
+
 const browser = await chromium.launch({ headless: true });
 try {
   const context = await browser.newContext({
@@ -43,6 +71,7 @@ try {
   await waitFor(page, () => page.evaluate(() => Boolean(
     window.goneMobileControls?.enabled
     && window.goneWeapons?.getReloadProgress
+    && window.goneMobileAdaptivePresentation?.snapshot
     && document.getElementById('mc-reload')
   )), 'mobile weapon runtime');
 
@@ -97,20 +126,28 @@ try {
     button.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, pointerId: 72, pointerType: 'touch', clientX: x, clientY: y }));
   });
   await waitFor(page, () => page.evaluate(() => window.goneWeapons.isReloading()), 'touch reload start', LOCAL_UI_TIMEOUT);
+  await waitFor(page, () => page.evaluate(() => document.getElementById('mc-reload')?.dataset.goneAmmoState === 'reloading'), 'reload readability state', LOCAL_UI_TIMEOUT);
 
   const started = await page.evaluate(() => {
     const hud = document.getElementById('advanced-weapon-hud');
     const track = document.getElementById('advanced-weapon-reload-track');
     const fill = document.getElementById('advanced-weapon-reload-fill');
+    const reload = document.getElementById('mc-reload');
     return {
       progress: window.goneWeapons.getReloadProgress(),
       trackOpacity: track.style.opacity,
       fillTransform: fill.style.transform,
       hudHeight: hud.getBoundingClientRect().height,
+      ammoState: hud.dataset.goneAmmoState,
+      reloadState: reload?.dataset.goneAmmoState,
+      reloadAria: reload?.getAttribute('aria-label'),
+      reloadAriaBusy: reload?.getAttribute('aria-busy'),
     };
   });
   assert(started.trackOpacity === '1', `active reload track must be visible, got ${started.trackOpacity}`);
   assert(started.progress >= 0 && started.progress < 1, `reload progress must begin in [0,1), got ${started.progress}`);
+  assert(started.ammoState === 'reloading' && started.reloadState === 'reloading', 'HUD and reload button must expose reloading state');
+  assert(started.reloadAriaBusy === 'true' && /corso/i.test(started.reloadAria || ''), 'reloading state must be accessible');
   assert(Math.abs(started.hudHeight - prepared.hudHeight) <= 1.5,
     `reload bar must not grow HUD height (${prepared.hudHeight} -> ${started.hudHeight})`);
 
@@ -162,6 +199,24 @@ try {
   assert(scaleFrom(finished.fillTransform) === 0, `reload fill must reset after completion, got ${finished.fillTransform}`);
   assert(Math.abs(finished.hudHeight - prepared.hudHeight) <= 1.5,
     `completed reload must preserve HUD height (${prepared.hudHeight} -> ${finished.hudHeight})`);
+
+  const ready = await setAmmoState(page, prepared.magazineSize, 20, 'ready');
+  const low = await setAmmoState(page, Math.min(2, Math.max(1, prepared.magazineSize - 1)), 20, 'low');
+  const empty = await setAmmoState(page, 0, 20, 'empty');
+  const dry = await setAmmoState(page, 0, 0, 'dry');
+
+  assert(ready.aria === 'Ricarica' && ready.ariaBusy === 'false', 'ready ammo state must keep neutral reload semantics');
+  assert(/basse/i.test(low.aria), `low ammo must announce low ammunition, got ${low.aria}`);
+  assert(/vuoto/i.test(empty.aria), `empty magazine must announce reload need, got ${empty.aria}`);
+  assert(/esaurite/i.test(dry.aria), `dry weapon must announce no remaining ammunition, got ${dry.aria}`);
+  assert(low.primaryColor !== ready.primaryColor, 'low ammo must change primary ammo emphasis');
+  assert(empty.primaryColor !== ready.primaryColor, 'empty ammo must change primary ammo emphasis');
+  assert(dry.reloadOpacity < ready.reloadOpacity, `dry reload affordance should de-emphasize (${dry.reloadOpacity} vs ${ready.reloadOpacity})`);
+  for (const state of [ready, low, empty, dry]) {
+    assert(state.reloadWidth >= 48, `${state.reloadState} reload target must remain >=48px`);
+    assert(state.snapshot?.ammoState === state.reloadState, `presentation snapshot must report ${state.reloadState}`);
+  }
+  assert((dry.snapshot?.ammoStateUpdates ?? 0) >= 4, 'ammo readability should record semantic state transitions');
   assert(failures.length === 0, `Browser exceptions detected:\n${failures.join('\n')}`);
 
   console.log('[mobile-reload-progress] PASS', JSON.stringify({
@@ -170,6 +225,7 @@ try {
     reloadSeconds: prepared.reloadSeconds,
     startProgress: started.progress,
     midProgress: mid.progress,
+    ammoStates: [ready.reloadState, low.reloadState, empty.reloadState, dry.reloadState],
     hudHeight: prepared.hudHeight,
   }));
   await context.close();

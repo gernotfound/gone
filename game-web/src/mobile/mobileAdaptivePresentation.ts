@@ -1,7 +1,13 @@
 import type { CombatHitEventDetail } from '../net/combatEventBridge.ts';
 
 const STYLE_ID = 'gone-mobile-adaptive-presentation-style';
+type AmmoReadabilityState = 'melee' | 'ready' | 'low' | 'empty' | 'dry' | 'reloading';
+
 let hapticCount = 0;
+let ammoStateUpdates = 0;
+let lastAmmoState: AmmoReadabilityState = 'ready';
+let ammoObserver: MutationObserver | null = null;
+let ammoMountObserver: MutationObserver | null = null;
 
 function gameplayVisible(): boolean {
   const gameUi = document.getElementById('game-ui');
@@ -44,6 +50,42 @@ html.gone-smartphone #gone-kill-feed > .gone-kill-row {
 }
 html.gone-smartphone #gone-kill-feed > .gone-kill-row:nth-child(n+4) {
   display: none !important;
+}
+
+html.gone-smartphone #advanced-weapon-hud[data-gone-ammo-state="low"] > div:first-child {
+  color: #fbbf24 !important;
+  text-shadow: 0 0 10px rgba(251,191,36,.42) !important;
+}
+html.gone-smartphone #advanced-weapon-hud[data-gone-ammo-state="empty"] > div:first-child,
+html.gone-smartphone #advanced-weapon-hud[data-gone-ammo-state="dry"] > div:first-child {
+  color: #fb7185 !important;
+  text-shadow: 0 0 11px rgba(251,113,133,.46) !important;
+}
+html.gone-smartphone #advanced-weapon-hud[data-gone-ammo-state="reloading"] > div:first-child {
+  color: #fde68a !important;
+}
+html.gone-smartphone #mc-reload[data-gone-ammo-state="low"] {
+  border-color: rgba(251,191,36,.82) !important;
+  background: rgba(161,98,7,.42) !important;
+  box-shadow: 0 0 0 2px rgba(251,191,36,.10), 0 4px 14px rgba(0,0,0,.20) !important;
+}
+html.gone-smartphone #mc-reload[data-gone-ammo-state="empty"] {
+  border-color: rgba(251,146,60,.94) !important;
+  background: rgba(154,52,18,.52) !important;
+  box-shadow: 0 0 0 2px rgba(251,146,60,.16), 0 0 14px rgba(251,146,60,.18) !important;
+}
+html.gone-smartphone #mc-reload[data-gone-ammo-state="dry"] {
+  border-color: rgba(251,113,133,.72) !important;
+  background: rgba(127,29,29,.34) !important;
+  opacity: .68 !important;
+}
+html.gone-smartphone #mc-reload[data-gone-ammo-state="reloading"] {
+  border-color: rgba(253,230,138,.92) !important;
+  background: rgba(133,77,14,.48) !important;
+  box-shadow: 0 0 0 2px rgba(253,230,138,.12), 0 0 14px rgba(251,191,36,.20) !important;
+}
+html.gone-smartphone #mc-reload[data-gone-ammo-state="melee"] {
+  opacity: .52 !important;
 }
 
 @media (orientation: portrait) and (max-width: 760px) {
@@ -109,17 +151,87 @@ function pulseConfirmedHit(detail: CombatHitEventDetail): void {
   }
 }
 
+function resolveAmmoReadabilityState(): AmmoReadabilityState {
+  const game = (window as any).goneGame;
+  const weapons = (window as any).goneWeapons;
+  const key = String(game?.getActiveWeapon?.() ?? '');
+  const cfg = weapons?.config?.[key];
+  const state = weapons?.ammo?.[key];
+  if (!cfg || !state) return 'ready';
+  if (cfg.reloadStyle === 'none') return 'melee';
+  if (weapons?.isReloading?.()) return 'reloading';
+
+  const magazine = Math.max(0, Number(state.magazine) || 0);
+  const reserve = Math.max(0, Number(state.reserve) || 0);
+  if (magazine <= 0) return reserve > 0 ? 'empty' : 'dry';
+
+  const magazineSize = Math.max(1, Number(cfg.magazineSize) || magazine);
+  const lowThreshold = Math.max(2, Math.ceil(magazineSize * 0.25));
+  return magazine <= lowThreshold ? 'low' : 'ready';
+}
+
+function ammoAriaLabel(state: AmmoReadabilityState): string {
+  if (state === 'reloading') return 'Ricarica in corso';
+  if (state === 'empty') return 'Caricatore vuoto, ricarica';
+  if (state === 'dry') return 'Munizioni esaurite';
+  if (state === 'low') return 'Munizioni basse, ricarica';
+  if (state === 'melee') return 'Ricarica non disponibile per arma da mischia';
+  return 'Ricarica';
+}
+
+function syncAmmoReadability(): void {
+  if (!document.documentElement.classList.contains('gone-smartphone')) return;
+  const hud = document.getElementById('advanced-weapon-hud');
+  const reload = document.getElementById('mc-reload');
+  if (!hud || !reload) return;
+
+  const state = resolveAmmoReadabilityState();
+  hud.dataset.goneAmmoState = state;
+  reload.dataset.goneAmmoState = state;
+  reload.setAttribute('aria-label', ammoAriaLabel(state));
+  reload.setAttribute('aria-busy', state === 'reloading' ? 'true' : 'false');
+  if (state !== lastAmmoState) {
+    lastAmmoState = state;
+    ammoStateUpdates += 1;
+  }
+}
+
+function bindAmmoReadability(): boolean {
+  const hud = document.getElementById('advanced-weapon-hud');
+  if (!hud) return false;
+  ammoObserver?.disconnect();
+  ammoObserver = new MutationObserver(syncAmmoReadability);
+  ammoObserver.observe(hud, { childList: true, subtree: true, characterData: true });
+  syncAmmoReadability();
+  return true;
+}
+
+function startAmmoReadability(): void {
+  if (bindAmmoReadability()) return;
+  ammoMountObserver?.disconnect();
+  ammoMountObserver = new MutationObserver(() => {
+    if (!bindAmmoReadability()) return;
+    ammoMountObserver?.disconnect();
+    ammoMountObserver = null;
+  });
+  if (document.body) ammoMountObserver.observe(document.body, { childList: true, subtree: true });
+}
+
 function snapshot() {
   const portrait = window.matchMedia('(orientation: portrait)').matches;
   const rotate = document.getElementById('gone-rotate-phone');
   const fire = document.getElementById('mc-fire');
   const feed = document.getElementById('gone-kill-feed');
+  const reload = document.getElementById('mc-reload');
   return {
     portrait,
     rotateVisible: Boolean(rotate && getComputedStyle(rotate).display !== 'none'),
     firePointerEvents: fire ? getComputedStyle(fire).pointerEvents : 'missing',
     killFeedVisible: Boolean(feed && getComputedStyle(feed).display !== 'none'),
     hapticCount,
+    ammoState: lastAmmoState,
+    ammoStateUpdates,
+    reloadAriaLabel: reload?.getAttribute('aria-label') ?? '',
   };
 }
 
@@ -129,13 +241,17 @@ export function startMobileAdaptivePresentation(): void {
 
   ensureStyle();
   syncRotateSemantics();
+  startAmmoReadability();
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', syncRotateSemantics, { once: true });
+    document.addEventListener('DOMContentLoaded', () => {
+      syncRotateSemantics();
+      startAmmoReadability();
+    }, { once: true });
   }
 
   window.addEventListener('gone-hit-confirmed', ((event: CustomEvent<CombatHitEventDetail>) => {
     pulseConfirmedHit(event.detail);
   }) as EventListener);
 
-  (window as any).goneMobileAdaptivePresentation = { snapshot };
+  (window as any).goneMobileAdaptivePresentation = { snapshot, syncAmmoReadability };
 }
