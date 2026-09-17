@@ -8,10 +8,12 @@ export async function run(suite) {
   const cssPath = path.join(PROJECT_ROOT, 'game-web', 'src', 'mobile', 'competitiveTouchControls.css');
   const mainPath = path.join(PROJECT_ROOT, 'game-web', 'src', 'main.ts');
   const smokePath = path.join(PROJECT_ROOT, 'game-web', 'scripts', 'competitive_mobile_controls_smoke.mjs');
+  const smartSprintSmokePath = path.join(PROJECT_ROOT, 'game-web', 'scripts', 'mobile_smart_sprint_smoke.mjs');
   const runtime = fs.readFileSync(runtimePath, 'utf-8');
   const css = fs.readFileSync(cssPath, 'utf-8');
   const main = fs.readFileSync(mainPath, 'utf-8');
   const smoke = fs.readFileSync(smokePath, 'utf-8');
+  const smartSprintSmoke = fs.readFileSync(smartSprintSmokePath, 'utf-8');
 
   suite.test('Competitive mobile layer preserves simultaneous movement and camera control', () => {
     assert(runtime.includes("target.closest('#mobile-stick')"), 'competitive layer must own the movement joystick');
@@ -19,10 +21,17 @@ export async function run(suite) {
     assert(runtime.includes('applyLookDelta'), 'competitive layer must update camera deltas directly');
   });
 
-  suite.test('Joystick exposes a forward sprint zone like modern mobile shooters', () => {
-    assert(runtime.includes('ny < -0.82'), 'forward joystick edge must activate auto sprint');
+  suite.test('Joystick exposes an intelligent radial sprint zone like modern mobile shooters', () => {
+    assert(runtime.includes('SMART_SPRINT_ENTER_DISTANCE = 0.82'), 'smart sprint must require a deliberate near-edge joystick push');
+    assert(runtime.includes('SMART_SPRINT_EXIT_DISTANCE = 0.68'), 'smart sprint must use a lower release threshold to avoid boundary flicker');
+    assert(runtime.includes('Math.hypot(nx, ny)'), 'smart sprint must use radial joystick distance so forward diagonals can sprint');
+    assert(runtime.includes('move.forwardIntent = Math.max(0, -ny)'), 'smart sprint must still require forward intent and reject side/backward edges');
+    assert(runtime.includes('move.autoSprint ? SMART_SPRINT_EXIT_DISTANCE : SMART_SPRINT_ENTER_DISTANCE'), 'smart sprint must apply hysteresis between engage and release thresholds');
     assert(runtime.includes('move.autoSprint || manualSprintPointers.size > 0'), 'manual RUN and joystick sprint must compose safely');
     assert(css.includes("content: 'RUN'"), 'joystick must visually communicate the sprint zone');
+    assert(smartSprintSmoke.includes('diagonal smart sprint engage'), 'real browser smoke must verify diagonal edge sprint rather than vertical-only activation');
+    assert(smartSprintSmoke.includes('smart sprint should remain latched above exit distance'), 'real browser smoke must verify sprint hysteresis');
+    assert(smartSprintSmoke.includes('pure side strafe must not trigger smart sprint') && smartSprintSmoke.includes('backward joystick edge must not trigger smart sprint'), 'real browser smoke must reject side and backward false positives');
   });
 
   suite.test('Live map remains a combat overlay instead of becoming a modal', () => {
