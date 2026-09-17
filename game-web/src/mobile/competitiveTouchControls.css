@@ -304,3 +304,154 @@ html.gone-smartphone.gone-touch-left-handed #gone-mobile-controls #mc-fire-left 
   html.gone-smartphone #gone-mobile-controls { opacity: .88; }
   html.gone-smartphone #gone-rotate-phone.is-active { display: block; }
 }
+
+/* Peripheral action glyphs: keep the semantic button/ARIA contract while
+ * replacing prototype text labels with glance-readable vector-like CSS marks.
+ * No icon font or image asset is required, so rendering stays deterministic in
+ * the PWA cache and on offline iOS installs. */
+html.gone-smartphone #gone-mobile-controls :is(#mc-fire,#mc-fire-left,#mc-aim,#mc-jump,#mc-reload,#mc-crouch,#mc-sprint,#mc-map) {
+  font-size: 0 !important;
+  text-shadow: none !important;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+html.gone-smartphone #gone-mobile-controls :is(#mc-fire,#mc-fire-left,#mc-aim,#mc-jump,#mc-reload,#mc-crouch,#mc-sprint,#mc-map)::before,
+html.gone-smartphone #gone-mobile-controls :is(#mc-fire,#mc-fire-left,#mc-aim,#mc-jump,#mc-reload,#mc-crouch,#mc-sprint,#mc-map)::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  margin: 0;
+  pointer-events: none;
+  opacity: .92;
+  box-sizing: border-box;
+}
+
+/* FIRE: wide reticle ring + central cross. */
+html.gone-smartphone #gone-mobile-controls :is(#mc-fire,#mc-fire-left)::before {
+  width: clamp(23px, 6dvh, 30px);
+  height: clamp(23px, 6dvh, 30px);
+  border: 2px solid rgba(254,205,211,.95);
+  border-radius: 50%;
+  transform: translate(-50%,-50%);
+  box-shadow: 0 0 9px rgba(251,113,133,.28), inset 0 0 8px rgba(251,113,133,.12);
+}
+html.gone-smartphone #gone-mobile-controls :is(#mc-fire,#mc-fire-left)::after {
+  width: clamp(34px, 8.5dvh, 42px);
+  height: clamp(34px, 8.5dvh, 42px);
+  transform: translate(-50%,-50%);
+  background:
+    linear-gradient(rgba(254,205,211,.9),rgba(254,205,211,.9)) center/2px 100% no-repeat,
+    linear-gradient(rgba(254,205,211,.9),rgba(254,205,211,.9)) center/100% 2px no-repeat;
+  clip-path: polygon(46% 0,54% 0,54% 34%,100% 34%,100% 66%,54% 66%,54% 100%,46% 100%,46% 66%,0 66%,0 34%,46% 34%);
+  opacity: .64;
+}
+
+/* ADS: tighter scope with full cardinal ticks. */
+html.gone-smartphone #gone-mobile-controls #mc-aim::before {
+  width: clamp(20px, 5dvh, 25px);
+  height: clamp(20px, 5dvh, 25px);
+  border: 2px solid rgba(221,214,254,.95);
+  border-radius: 50%;
+  transform: translate(-50%,-50%);
+  box-shadow: 0 0 8px rgba(192,132,252,.25);
+}
+html.gone-smartphone #gone-mobile-controls #mc-aim::after {
+  width: clamp(31px, 7.5dvh, 38px);
+  height: clamp(31px, 7.5dvh, 38px);
+  transform: translate(-50%,-50%);
+  background:
+    linear-gradient(rgba(221,214,254,.9),rgba(221,214,254,.9)) center/2px 100% no-repeat,
+    linear-gradient(rgba(221,214,254,.9),rgba(221,214,254,.9)) center/100% 2px no-repeat;
+  opacity: .74;
+}
+
+/* JUMP / CROUCH: opposite stance arrows make vertical intent readable in the
+ * peripheral field without requiring text. */
+html.gone-smartphone #gone-mobile-controls #mc-jump::before {
+  width: clamp(20px, 5dvh, 25px);
+  height: clamp(24px, 6dvh, 30px);
+  transform: translate(-50%,-54%);
+  background: rgba(207,250,254,.94);
+  clip-path: polygon(50% 0,100% 45%,68% 45%,68% 100%,32% 100%,32% 45%,0 45%);
+  filter: drop-shadow(0 0 5px rgba(34,211,238,.26));
+}
+html.gone-smartphone #gone-mobile-controls #mc-jump::after {
+  width: clamp(24px, 6dvh, 30px);
+  height: 2px;
+  transform: translate(-50%,clamp(12px,3dvh,15px));
+  background: rgba(207,250,254,.48);
+}
+html.gone-smartphone #gone-mobile-controls #mc-crouch::before {
+  width: clamp(20px, 5dvh, 24px);
+  height: clamp(18px, 4.7dvh, 23px);
+  transform: translate(-50%,-60%);
+  background: rgba(226,232,240,.92);
+  clip-path: polygon(32% 0,68% 0,68% 55%,100% 55%,50% 100%,0 55%,32% 55%);
+}
+html.gone-smartphone #gone-mobile-controls #mc-crouch::after {
+  width: clamp(25px, 6dvh, 31px);
+  height: 2px;
+  transform: translate(-50%,clamp(10px,2.6dvh,13px));
+  background: rgba(226,232,240,.58);
+}
+
+/* RELOAD: circular cycle plus arrow head. */
+html.gone-smartphone #gone-mobile-controls #mc-reload::before {
+  width: clamp(23px, 5.7dvh, 28px);
+  height: clamp(23px, 5.7dvh, 28px);
+  border: 2px solid rgba(226,232,240,.92);
+  border-left-color: transparent;
+  border-radius: 50%;
+  transform: translate(-50%,-50%) rotate(-34deg);
+}
+html.gone-smartphone #gone-mobile-controls #mc-reload::after {
+  left: 31%;
+  top: 52%;
+  width: 9px;
+  height: 9px;
+  background: rgba(226,232,240,.94);
+  transform: translate(-50%,-50%) rotate(-18deg);
+  clip-path: polygon(0 0,100% 48%,12% 100%);
+}
+
+/* SPRINT: dual acceleration chevrons; movement ownership remains on the stick. */
+html.gone-smartphone #gone-mobile-controls #mc-sprint::before,
+html.gone-smartphone #gone-mobile-controls #mc-sprint::after {
+  width: clamp(12px, 3dvh, 15px);
+  height: clamp(22px, 5.5dvh, 27px);
+  background: rgba(165,243,252,.9);
+  clip-path: polygon(0 0,42% 0,100% 50%,42% 100%,0 100%,58% 50%);
+  filter: drop-shadow(0 0 4px rgba(34,211,238,.22));
+}
+html.gone-smartphone #gone-mobile-controls #mc-sprint::before { transform: translate(-78%,-50%); }
+html.gone-smartphone #gone-mobile-controls #mc-sprint::after { transform: translate(-12%,-50%); opacity: .58; }
+
+/* MAP: folded-sheet silhouette and internal folds. */
+html.gone-smartphone #gone-mobile-controls #mc-map::before {
+  width: 25px;
+  height: 20px;
+  border: 2px solid rgba(167,243,208,.92);
+  border-radius: 3px;
+  transform: translate(-50%,-50%) rotate(-3deg);
+  box-shadow: 0 0 7px rgba(52,211,153,.18);
+}
+html.gone-smartphone #gone-mobile-controls #mc-map::after {
+  width: 16px;
+  height: 16px;
+  transform: translate(-50%,-50%) skewY(-13deg);
+  background:
+    linear-gradient(90deg,transparent 30%,rgba(167,243,208,.82) 31%,rgba(167,243,208,.82) 37%,transparent 38%,transparent 63%,rgba(167,243,208,.82) 64%,rgba(167,243,208,.82) 70%,transparent 71%);
+}
+html.gone-smartphone #gone-mobile-controls.map-open #mc-map::before {
+  border-color: rgba(209,250,229,.98);
+  box-shadow: 0 0 9px rgba(52,211,153,.38);
+}
+
+/* State feedback acts on the glyph as well as the button shell. */
+html.gone-smartphone #gone-mobile-controls :is(#mc-fire,#mc-fire-left,#mc-aim,#mc-jump,#mc-reload,#mc-crouch,#mc-sprint,#mc-map):is(.is-held,:active)::before,
+html.gone-smartphone #gone-mobile-controls :is(#mc-fire,#mc-fire-left,#mc-aim,#mc-jump,#mc-reload,#mc-crouch,#mc-sprint,#mc-map):is(.is-held,:active)::after {
+  opacity: 1;
+  filter: brightness(1.18) drop-shadow(0 0 5px rgba(255,255,255,.16));
+}
