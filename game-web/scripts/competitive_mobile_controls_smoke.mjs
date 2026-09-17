@@ -211,6 +211,85 @@ async function assertAdsModes(page, label) {
   return { holdDown, toggleOn, released };
 }
 
+async function assertThreeFingerCombat(page, label) {
+  await page.evaluate(async () => {
+    await window.goneGame.switchWeapon(0);
+    window.gonePubgTouchControls?.rebind?.();
+    window.goneTouchPreferences.set({ adsMode: 'hold' });
+    const key = window.goneGame.getActiveWeapon();
+    window.goneWeapons.ammo[key].magazine = 8;
+    window.goneWeapons.ammo[key].reserve = 24;
+  });
+  await page.waitForTimeout(120);
+
+  const ammoBefore = await page.evaluate(() => {
+    const key = window.goneGame.getActiveWeapon();
+    return window.goneWeapons.ammo[key].magazine;
+  });
+
+  let held;
+  let afterFireRelease;
+  let afterAdsRelease;
+  try {
+    await pointer(page, 'mobile-stick', 'pointerdown', 221, 0.5, 0.5);
+    await pointer(page, 'mobile-stick', 'pointermove', 221, 0.5, 0.02);
+    await pointer(page, 'mc-aim', 'pointerdown', 222);
+    await waitFor(page, () => page.evaluate(() => window.goneCompetitiveTouchControls.snapshot().adsActive), `${label} three-finger ADS engage`, LOCAL_UI_TIMEOUT);
+    await pointer(page, 'mc-fire', 'pointerdown', 223);
+    await page.waitForTimeout(280);
+
+    held = await page.evaluate(() => {
+      const key = window.goneGame.getActiveWeapon();
+      return {
+        forward: window.goneMobileControls.snapshot().forward,
+        autoSprint: window.goneCompetitiveTouchControls.snapshot().autoSprint,
+        adsActive: window.goneCompetitiveTouchControls.snapshot().adsActive,
+        weaponAiming: window.goneWeapons.isAiming?.(),
+        fireActive: window.gonePubgTouchControls?.snapshot?.().fireActive,
+        magazine: window.goneWeapons.ammo[key].magazine,
+      };
+    });
+
+    await pointer(page, 'mc-fire', 'pointerup', 223);
+    await waitFor(page, () => page.evaluate(() => window.gonePubgTouchControls?.snapshot?.().fireActive === false), `${label} three-finger FIRE release`, LOCAL_UI_TIMEOUT);
+    afterFireRelease = await page.evaluate(() => ({
+      forward: window.goneMobileControls.snapshot().forward,
+      adsActive: window.goneCompetitiveTouchControls.snapshot().adsActive,
+      weaponAiming: window.goneWeapons.isAiming?.(),
+      fireActive: window.gonePubgTouchControls?.snapshot?.().fireActive,
+    }));
+
+    await pointer(page, 'mc-aim', 'pointerup', 222);
+    await waitFor(page, () => page.evaluate(() => !window.goneCompetitiveTouchControls.snapshot().adsActive && window.goneWeapons.isAiming?.() === false), `${label} three-finger ADS release`, LOCAL_UI_TIMEOUT);
+    afterAdsRelease = await page.evaluate(() => ({
+      forward: window.goneMobileControls.snapshot().forward,
+      adsActive: window.goneCompetitiveTouchControls.snapshot().adsActive,
+      fireActive: window.gonePubgTouchControls?.snapshot?.().fireActive,
+    }));
+  } finally {
+    await pointer(page, 'mc-fire', 'pointerup', 223).catch(() => {});
+    await pointer(page, 'mc-aim', 'pointerup', 222).catch(() => {});
+    await pointer(page, 'mobile-stick', 'pointerup', 221).catch(() => {});
+  }
+
+  await waitFor(page, () => page.evaluate(() => {
+    const mobile = window.goneMobileControls.snapshot();
+    const competitive = window.goneCompetitiveTouchControls.snapshot();
+    const pubg = window.gonePubgTouchControls?.snapshot?.();
+    return !mobile.forward && !competitive.adsActive && pubg?.fireActive === false;
+  }), `${label} three-finger final release`, LOCAL_UI_TIMEOUT);
+
+  assert(held?.forward && held?.autoSprint, `${label}: stick must keep movement and auto-sprint active during ADS+FIRE`);
+  assert(held?.adsActive && held?.weaponAiming === true, `${label}: ADS must stay active during simultaneous movement+FIRE`);
+  assert(held?.fireActive === true && held?.magazine < ammoBefore, `${label}: authoritative FIRE must remain active and consume ammo during three-finger input (${ammoBefore} -> ${held?.magazine})`);
+  assert(afterFireRelease?.forward && afterFireRelease?.adsActive && afterFireRelease?.weaponAiming === true && afterFireRelease?.fireActive === false,
+    `${label}: releasing FIRE must not release movement or ADS`);
+  assert(afterAdsRelease?.forward && !afterAdsRelease?.adsActive && afterAdsRelease?.fireActive === false,
+    `${label}: releasing ADS must not release the movement pointer`);
+
+  return { ammoBefore, held, afterFireRelease, afterAdsRelease };
+}
+
 async function assertLiveMapCombat(page) {
   await page.evaluate(async () => {
     await window.goneGame.switchWeapon(0);
@@ -316,8 +395,9 @@ try {
       await assertCompassTracksLook(page, spec.name);
       const quickSwitch = spec.name === 'iphone' ? await assertQuickWeaponSelection(page, spec.name) : null;
       const adsModes = spec.name === 'iphone' ? await assertAdsModes(page, spec.name) : null;
+      const multiTouch = spec.name === 'iphone' ? await assertThreeFingerCombat(page, spec.name) : null;
       const combat = spec.name === 'iphone' ? await assertLiveMapCombat(page) : null;
-      summaries.push({ name: spec.name, viewport: `${spec.width}x${spec.height}`, layout, quickSwitch, adsModes, combat });
+      summaries.push({ name: spec.name, viewport: `${spec.width}x${spec.height}`, layout, quickSwitch, adsModes, multiTouch, combat });
     } finally {
       await context.close();
     }
