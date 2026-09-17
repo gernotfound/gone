@@ -1,0 +1,260 @@
+/* Smartphone landscape pre-match composition.
+ * Gameplay ownership remains untouched: this file only reshapes menu/lobby presentation. */
+
+@media (orientation: landscape) and (max-height: 500px) {
+  html.gone-smartphone #main-menu {
+    width: min(
+      calc(100dvw - env(safe-area-inset-left) - env(safe-area-inset-right) - 20px),
+      760px
+    ) !important;
+    max-width: 760px !important;
+    max-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 12px) !important;
+    padding: 12px 14px !important;
+    overflow-y: auto !important;
+  }
+
+  html.gone-smartphone #main-menu h1 {
+    font-size: clamp(30px, 10dvh, 44px) !important;
+    line-height: .92 !important;
+    margin-bottom: 10px !important;
+  }
+
+  html.gone-smartphone #main-menu > div {
+    display: grid !important;
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    gap: 8px !important;
+    align-items: stretch !important;
+  }
+
+  html.gone-smartphone #main-menu :is(#btn-enter, #btn-multiplayer) {
+    grid-column: span 2;
+    min-height: 58px !important;
+    padding: 9px 12px !important;
+    font-size: clamp(17px, 2.4dvw, 21px) !important;
+    border-radius: 14px !important;
+  }
+
+  html.gone-smartphone #main-menu :is(#btn-controls, #btn-music-toggle, #btn-settings, #btn-performance-pack) {
+    min-width: 0 !important;
+    min-height: 48px !important;
+    padding: 7px 8px !important;
+    font-size: clamp(11px, 1.8dvw, 15px) !important;
+    line-height: 1.05 !important;
+    border-radius: 12px !important;
+  }
+
+  html.gone-smartphone #performance-pack-controls {
+    min-width: 0 !important;
+    gap: 3px !important;
+    align-self: stretch !important;
+  }
+
+  html.gone-smartphone #performance-pack-status {
+    padding: 0 2px !important;
+    font-size: 9px !important;
+    line-height: 1.1 !important;
+    min-height: 20px;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+  }
+
+  html.gone-smartphone #btn-exit {
+    grid-column: 1 / -1;
+  }
+
+  html.gone-smartphone #multiplayer-lobby {
+    width: min(
+      calc(100dvw - env(safe-area-inset-left) - env(safe-area-inset-right) - 20px),
+      820px
+    ) !important;
+    max-width: 820px !important;
+    max-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 12px) !important;
+    padding: 10px 14px !important;
+    overflow: hidden !important;
+  }
+
+  html.gone-smartphone #multiplayer-lobby h2 {
+    font-size: clamp(20px, 6.4dvh, 27px) !important;
+    line-height: 1 !important;
+    margin-bottom: 7px !important;
+  }
+
+  html.gone-smartphone #multiplayer-lobby > h2 + div {
+    display: grid !important;
+    grid-template-columns: minmax(0, .9fr) minmax(260px, 1.1fr) !important;
+    grid-auto-rows: max-content;
+    gap: 8px 14px !important;
+    width: 100% !important;
+    height: clamp(164px, 55dvh, 220px) !important;
+    min-height: 0 !important;
+    margin-bottom: 8px !important;
+    padding-right: 3px;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    overscroll-behavior: contain;
+    align-items: start;
+    scrollbar-width: thin;
+  }
+
+  html.gone-smartphone #multiplayer-lobby > h2 + div > div:first-child {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  html.gone-smartphone #multiplayer-lobby > h2 + div > div:nth-child(2) {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  html.gone-smartphone #multiplayer-lobby #invite-link-container {
+    grid-column: 1;
+    grid-row: 3;
+  }
+
+  html.gone-smartphone #multiplayer-lobby > h2 + div > div:last-child {
+    grid-column: 2;
+    grid-row: 1 / span 3;
+    position: sticky;
+    top: 0;
+    align-self: stretch;
+    display: flex !important;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 100%;
+    max-height: 100%;
+    gap: 4px !important;
+    z-index: 1;
+    background: rgba(15, 23, 42, .76);
+    border-radius: 12px;
+    padding: 8px;
+    backdrop-filter: blur(6px);
+  }
+
+  html.gone-smartphone #multiplayer-lobby > h2 + div > div:not(:last-child) {
+    min-width: 0;
+    gap: 4px !important;
+  }
+
+  html.gone-smartphone #multiplayer-lobby label {
+    font-size: 10px !important;
+    line-height: 1.05 !important;
+    letter-spacing: .07em !important;
+  }
+
+  html.gone-smartphone #player-username,
+  html.gone-smartphone #invite-link-input {
+    min-width: 0 !important;
+    min-height: 48px !important;
+    padding: 8px 10px !important;
+  }
+
+  html.gone-smartphone #player-username {
+    font-size: 14px !important;
+  }
+
+  html.gone-smartphone #invite-link-input {
+    font-size: 10px !important;
+  }
+
+  html.gone-smartphone #color-picker-container {
+    gap: 6px !important;
+  }
+
+  html.gone-smartphone #color-picker-container button {
+    width: 48px !important;
+    height: 48px !important;
+    min-width: 48px !important;
+    min-height: 48px !important;
+  }
+
+  html.gone-smartphone #invite-link-container > .flex {
+    min-width: 0;
+    gap: 6px !important;
+  }
+
+  html.gone-smartphone #btn-copy-link {
+    min-width: 64px !important;
+    padding-left: 9px !important;
+    padding-right: 9px !important;
+    font-size: 11px !important;
+  }
+
+  html.gone-smartphone #direct-host-controls {
+    margin-top: 5px !important;
+    padding: 8px !important;
+    gap: 6px !important;
+  }
+
+  html.gone-smartphone #direct-host-controls p,
+  html.gone-smartphone #direct-host-status,
+  html.gone-smartphone #direct-guest-help {
+    font-size: 10px !important;
+    line-height: 1.2 !important;
+  }
+
+  html.gone-smartphone #direct-host-answer-input {
+    min-height: 54px !important;
+    height: 54px !important;
+    resize: none !important;
+    padding: 7px 9px !important;
+  }
+
+  html.gone-smartphone #direct-host-controls .flex {
+    gap: 6px !important;
+  }
+
+  html.gone-smartphone #lobby-player-list {
+    flex: 1 1 auto;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow-y: auto !important;
+    padding: 6px !important;
+    gap: 6px !important;
+  }
+
+  html.gone-smartphone #lobby-player-list > li {
+    padding: 8px !important;
+  }
+
+  html.gone-smartphone #multiplayer-lobby > div:last-child {
+    gap: 8px !important;
+  }
+
+  html.gone-smartphone #btn-back-lobby {
+    width: 30% !important;
+    min-height: 48px !important;
+    padding-top: 8px !important;
+    padding-bottom: 8px !important;
+    font-size: 14px !important;
+  }
+
+  html.gone-smartphone #btn-play-multiplayer {
+    width: 70% !important;
+    min-height: 48px !important;
+    padding-top: 8px !important;
+    padding-bottom: 8px !important;
+    font-size: clamp(16px, 2.4dvw, 20px) !important;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 370px) {
+  html.gone-smartphone #main-menu {
+    padding-top: 9px !important;
+    padding-bottom: 9px !important;
+  }
+
+  html.gone-smartphone #main-menu h1 {
+    margin-bottom: 8px !important;
+  }
+
+  html.gone-smartphone #multiplayer-lobby {
+    padding-top: 8px !important;
+    padding-bottom: 8px !important;
+  }
+
+  html.gone-smartphone #multiplayer-lobby > h2 + div {
+    height: 194px !important;
+  }
+}
