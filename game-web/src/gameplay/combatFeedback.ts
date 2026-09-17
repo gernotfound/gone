@@ -1,5 +1,7 @@
 import type { CombatHitEventDetail } from '../net/combatEventBridge.ts';
 
+type KillPerspective = 'kill' | 'death' | 'neutral';
+
 let markerRoot: HTMLDivElement | null = null;
 let markerLabel: HTMLDivElement | null = null;
 let feedRoot: HTMLDivElement | null = null;
@@ -52,6 +54,13 @@ function nameForSlot(slot: number): string {
     if (info?.name) return String(info.name);
   }
   return `P${slot}`;
+}
+
+function killPerspective(hit: CombatHitEventDetail['hit']): KillPerspective {
+  const local = localPlayerSlot();
+  if (local === hit.shooterSlot) return 'kill';
+  if (local === hit.victimSlot) return 'death';
+  return 'neutral';
 }
 
 function incomingDirectionDegrees(shooterSlot: number): number | null {
@@ -126,7 +135,7 @@ function ensureUi(): void {
 #gone-death-recap{display:none;flex-direction:column;align-items:center;gap:4px;margin:-4px 0 14px;padding:8px 14px;border-radius:10px;border:1px solid rgba(251,113,133,.34);background:rgba(69,10,10,.38);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;text-align:center;max-width:min(460px,82vw)}
 #gone-death-recap.show{display:flex}#gone-death-recap-killer{color:#fecdd3;font-size:13px;font-weight:900;letter-spacing:.11em;text-transform:uppercase;text-shadow:0 0 9px rgba(251,113,133,.65)}#gone-death-recap-detail{color:#fda4af;font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}
 #gone-kill-feed{position:fixed;right:16px;top:110px;z-index:69;display:flex;flex-direction:column;gap:5px;align-items:flex-end;pointer-events:none;font:800 10px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace}
-.gone-kill-row{padding:5px 8px;border-radius:6px;background:rgba(2,6,23,.76);border:1px solid rgba(148,163,184,.22);color:#cbd5e1;box-shadow:0 0 12px rgba(15,23,42,.45);animation:goneKillIn .14s ease-out}@keyframes goneKillIn{from{opacity:0;transform:translateX(8px)}to{opacity:1;transform:none}}
+.gone-kill-row{padding:5px 8px;border-radius:6px;background:rgba(2,6,23,.76);border:1px solid rgba(148,163,184,.22);color:#cbd5e1;box-shadow:0 0 12px rgba(15,23,42,.45);animation:goneKillIn .14s ease-out}.gone-kill-shooter{color:#67e8f9}.gone-kill-victim{color:#fda4af}@keyframes goneKillIn{from{opacity:0;transform:translateX(8px)}to{opacity:1;transform:none}}
 html.gone-smartphone #gone-death-recap{margin:-2px 0 8px;padding:6px 10px;max-width:min(420px,88vw)}html.gone-smartphone #gone-death-recap-killer{font-size:11px}html.gone-smartphone #gone-death-recap-detail{font-size:9px}
 @media (prefers-reduced-motion:reduce){#gone-hit-marker,#gone-hit-label,#gone-incoming-impact{transition:none}.gone-kill-row{animation:none}}
 `;
@@ -153,6 +162,10 @@ html.gone-smartphone #gone-death-recap{margin:-2px 0 8px;padding:6px 10px;max-wi
   if (!feedRoot) {
     feedRoot = document.createElement('div');
     feedRoot.id = 'gone-kill-feed';
+    feedRoot.setAttribute('role', 'log');
+    feedRoot.setAttribute('aria-live', 'polite');
+    feedRoot.setAttribute('aria-relevant', 'additions');
+    feedRoot.setAttribute('aria-label', 'Eliminazioni recenti');
     document.body.appendChild(feedRoot);
   }
   ensureDeathRecapUi();
@@ -248,15 +261,23 @@ function addKillFeed(detail: CombatHitEventDetail): void {
   if (!(hit.isFatalKill || hit.isFatal)) return;
   ensureUi();
 
+  const shooterName = nameForSlot(hit.shooterSlot);
+  const victimName = nameForSlot(hit.victimSlot);
+  const perspective = killPerspective(hit);
   const row = document.createElement('div');
   row.className = 'gone-kill-row';
+  row.dataset.goneKillPerspective = perspective;
+  row.dataset.goneKillHeadshot = String(Boolean(hit.isHeadshot));
+  row.setAttribute('aria-label', hit.isHeadshot
+    ? `${shooterName} headshot su ${victimName}`
+    : `${shooterName} ha eliminato ${victimName}`);
   const shooter = document.createElement('span');
-  shooter.style.color = '#67e8f9';
-  shooter.textContent = nameForSlot(hit.shooterSlot);
+  shooter.className = 'gone-kill-shooter';
+  shooter.textContent = shooterName;
   const separator = document.createTextNode(hit.isHeadshot ? ' ◈ ' : ' × ');
   const victim = document.createElement('span');
-  victim.style.color = '#fda4af';
-  victim.textContent = nameForSlot(hit.victimSlot);
+  victim.className = 'gone-kill-victim';
+  victim.textContent = victimName;
   row.append(shooter, separator, victim);
   feedRoot!.prepend(row);
   while (feedRoot!.children.length > 5) feedRoot!.lastElementChild?.remove();
@@ -287,6 +308,10 @@ export function startCombatFeedback(): void {
       omnidirectionalIncomingCount,
       lastImpactAngleDegrees,
       deathRecapCount,
+      feedRows: feedRoot?.children.length ?? 0,
+      feedPerspectives: feedRoot
+        ? Array.from(feedRoot.children).map((row) => (row as HTMLElement).dataset.goneKillPerspective ?? 'neutral')
+        : [],
     }),
   };
 }

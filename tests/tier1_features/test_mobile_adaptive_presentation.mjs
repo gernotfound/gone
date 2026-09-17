@@ -5,11 +5,13 @@ import { PROJECT_ROOT } from '../helpers/asset_inspector.mjs';
 
 export async function run(suite) {
   const adaptivePath = path.join(PROJECT_ROOT, 'game-web', 'src', 'mobile', 'mobileAdaptivePresentation.ts');
+  const feedbackPath = path.join(PROJECT_ROOT, 'game-web', 'src', 'gameplay', 'combatFeedback.ts');
   const runtimePath = path.join(PROJECT_ROOT, 'game-web', 'src', 'runtime', 'startClientRuntime.ts');
   const smokePath = path.join(PROJECT_ROOT, 'game-web', 'scripts', 'mobile_adaptive_layout_smoke.mjs');
   const workflowPath = path.join(PROJECT_ROOT, '.github', 'workflows', 'rescue-ci.yml');
 
   const adaptive = fs.readFileSync(adaptivePath, 'utf-8');
+  const feedback = fs.readFileSync(feedbackPath, 'utf-8');
   const runtime = fs.readFileSync(runtimePath, 'utf-8');
   const smoke = fs.readFileSync(smokePath, 'utf-8');
   const workflow = fs.readFileSync(workflowPath, 'utf-8');
@@ -26,6 +28,16 @@ export async function run(suite) {
     assert(adaptive.includes('#gone-kill-feed:has(> .gone-kill-row)') && adaptive.includes('display: flex !important'), 'populated smartphone kill feed must become visible');
     assert(adaptive.includes('.gone-kill-row:nth-child(n+4)') && adaptive.includes('display: none !important'), 'smartphone kill feed must cap visible rows at three');
     assert(adaptive.includes('max-width: min(46dvw, 220px)'), 'kill feed width must scale with the phone viewport');
+  });
+
+  suite.test('Mobile kill feed emphasizes local kill/death perspective without becoming combat authority', () => {
+    assert(feedback.includes("type KillPerspective = 'kill' | 'death' | 'neutral'"), 'kill feed must model local perspective explicitly');
+    assert(feedback.includes("if (local === hit.shooterSlot) return 'kill'") && feedback.includes("if (local === hit.victimSlot) return 'death'"), 'perspective must derive only from canonical shooter/victim slots');
+    assert(feedback.includes('row.dataset.goneKillPerspective = perspective'), 'kill rows must expose perspective to presentation CSS');
+    assert(feedback.includes("feedRoot.setAttribute('role', 'log')") && feedback.includes("feedRoot.setAttribute('aria-live', 'polite')"), 'kill feed must expose non-blocking log semantics');
+    assert(feedback.includes("row.setAttribute('aria-label'"), 'each kill row must have a compact accessible narration');
+    assert(adaptive.includes('[data-gone-kill-perspective="kill"]') && adaptive.includes('[data-gone-kill-perspective="death"]') && adaptive.includes('[data-gone-kill-perspective="neutral"]'), 'smartphone styling must differentiate local kills, deaths and neutral events');
+    assert(!feedback.includes('hit.newHp =') && !feedback.includes('hit.damage ='), 'kill-feed presentation must not mutate authoritative combat results');
   });
 
   suite.test('Confirmed local hits may emit lightweight phone haptics without becoming combat authority', () => {

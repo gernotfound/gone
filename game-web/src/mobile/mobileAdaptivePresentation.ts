@@ -48,6 +48,21 @@ html.gone-smartphone #gone-kill-feed > .gone-kill-row {
   text-overflow: ellipsis !important;
   backdrop-filter: blur(4px) !important;
 }
+html.gone-smartphone #gone-kill-feed > .gone-kill-row[data-gone-kill-perspective="kill"] {
+  border-color: rgba(103,232,249,.68) !important;
+  border-right-width: 2px !important;
+  background: linear-gradient(90deg, rgba(2,6,23,.72), rgba(8,47,73,.78)) !important;
+  box-shadow: 0 0 12px rgba(34,211,238,.12) !important;
+}
+html.gone-smartphone #gone-kill-feed > .gone-kill-row[data-gone-kill-perspective="death"] {
+  border-color: rgba(251,113,133,.72) !important;
+  border-right-width: 2px !important;
+  background: linear-gradient(90deg, rgba(2,6,23,.72), rgba(76,5,25,.80)) !important;
+  box-shadow: 0 0 12px rgba(244,63,94,.12) !important;
+}
+html.gone-smartphone #gone-kill-feed > .gone-kill-row[data-gone-kill-perspective="neutral"] {
+  opacity: .72 !important;
+}
 html.gone-smartphone #gone-kill-feed > .gone-kill-row:nth-child(n+4) {
   display: none !important;
 }
