@@ -1,4 +1,5 @@
 import './smartphone.css';
+import './smartphonePrematch.css';
 
 type UaDataLike = { mobile?: boolean };
 type NavigatorWithUaData = Navigator & { userAgentData?: UaDataLike };
