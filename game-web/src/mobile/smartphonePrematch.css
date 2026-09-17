@@ -2,6 +2,15 @@
  * Gameplay ownership remains untouched: this file only reshapes menu/lobby presentation. */
 
 @media (orientation: landscape) and (max-height: 500px) {
+  /* Geometry must settle with the viewport, not animate behind an orientation/
+   * resize change. Keep visual polish transitions while width/height snap. */
+  html.gone-smartphone #main-menu,
+  html.gone-smartphone #settings-menu,
+  html.gone-smartphone #multiplayer-lobby {
+    transition-property: opacity, background-color, border-color, box-shadow !important;
+    transition-duration: 180ms !important;
+  }
+
   html.gone-smartphone #main-menu {
     width: min(
       calc(100dvw - env(safe-area-inset-left) - env(safe-area-inset-right) - 20px),
@@ -119,7 +128,7 @@
     grid-template-rows: auto repeat(3, minmax(0, 1fr)) !important;
     gap: 6px 12px !important;
     width: 100% !important;
-    height: clamp(210px, 61dvh, 270px) !important;
+    height: clamp(252px, 61dvh, 270px) !important;
     min-height: 0 !important;
     margin-bottom: 8px !important;
     overflow: hidden !important;
@@ -137,6 +146,7 @@
   html.gone-smartphone #input-mode-setting > div:first-child {
     gap: 6px !important;
     font-size: 10px !important;
+    line-height: 1 !important;
   }
 
   html.gone-smartphone #input-mode-setting p {
@@ -415,14 +425,24 @@
     margin-bottom: 8px !important;
   }
 
-  html.gone-smartphone #settings-menu,
-  html.gone-smartphone #multiplayer-lobby {
-    padding-top: 8px !important;
-    padding-bottom: 8px !important;
+  html.gone-smartphone #settings-menu {
+    padding-top: 6px !important;
+    padding-bottom: 6px !important;
+  }
+
+  html.gone-smartphone #settings-menu h2 {
+    font-size: 20px !important;
+    margin-bottom: 4px !important;
   }
 
   html.gone-smartphone #settings-menu > .w-full.flex.flex-col {
-    height: 210px !important;
+    height: 252px !important;
+    margin-bottom: 4px !important;
+  }
+
+  html.gone-smartphone #multiplayer-lobby {
+    padding-top: 8px !important;
+    padding-bottom: 8px !important;
   }
 
   html.gone-smartphone #multiplayer-lobby > h2 + div {

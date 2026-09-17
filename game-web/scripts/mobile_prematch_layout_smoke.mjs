@@ -173,7 +173,7 @@ function assertSettings(layout, label) {
   assert(layout.scrollHeight <= layout.clientHeight + 2, `${label}: outer settings card should not scroll`);
   assert(layout.stackDisplay === 'grid', `${label}: settings content must use the landscape split grid`);
   assert(layout.stackColumns && layout.stackColumns !== 'none', `${label}: settings grid columns were not resolved`);
-  assert(layout.inputMode && layout.touchPanel, `${label}: settings columns missing`);
+  assert(layout.stack && layout.inputMode && layout.touchPanel, `${label}: settings columns missing`);
   assert(layout.touchPanel.left >= layout.inputMode.right + 8, `${label}: touch customization must stay in the right column`);
   assert(withinViewport(layout.back, layout.width, layout.height), `${label}: settings back action escaped viewport`);
   assert(layout.touchOverflowY === 'auto' || layout.touchOverflowY === 'scroll', `${label}: touch settings must own vertical scroll`);
@@ -191,6 +191,9 @@ function assertSettings(layout, label) {
   for (const { id, rect } of layout.audioRanges) {
     assert(rect, `${label}: missing audio range ${id}`);
     assert(rect.width >= 160, `${label}: audio range ${id} is too compressed (${rect.width})`);
+    assert(withinViewport(rect, layout.width, layout.height), `${label}: audio range ${id} escaped viewport`);
+    assert(rect.top >= layout.stack.top - 2 && rect.bottom <= layout.stack.bottom + 2,
+      `${label}: audio range ${id} was clipped out of the fixed left rail`);
   }
 }
 
