@@ -22,16 +22,26 @@
   html.gone-smartphone #main-menu > div {
     display: grid !important;
     grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    grid-template-rows: minmax(58px, auto) minmax(48px, auto) !important;
     gap: 8px !important;
     align-items: stretch !important;
   }
 
   html.gone-smartphone #main-menu :is(#btn-enter, #btn-multiplayer) {
-    grid-column: span 2;
     min-height: 58px !important;
     padding: 9px 12px !important;
     font-size: clamp(17px, 2.4dvw, 21px) !important;
     border-radius: 14px !important;
+  }
+
+  html.gone-smartphone #btn-enter {
+    grid-column: 1 / span 2 !important;
+    grid-row: 1 !important;
+  }
+
+  html.gone-smartphone #btn-multiplayer {
+    grid-column: 3 / span 2 !important;
+    grid-row: 1 !important;
   }
 
   html.gone-smartphone #main-menu :is(#btn-controls, #btn-music-toggle, #btn-settings, #btn-performance-pack) {
@@ -43,7 +53,24 @@
     border-radius: 12px !important;
   }
 
+  html.gone-smartphone #btn-controls {
+    grid-column: 1 !important;
+    grid-row: 2 !important;
+  }
+
+  html.gone-smartphone #btn-music-toggle {
+    grid-column: 2 !important;
+    grid-row: 2 !important;
+  }
+
+  html.gone-smartphone #btn-settings {
+    grid-column: 3 !important;
+    grid-row: 2 !important;
+  }
+
   html.gone-smartphone #performance-pack-controls {
+    grid-column: 4 !important;
+    grid-row: 2 !important;
     min-width: 0 !important;
     gap: 3px !important;
     align-self: stretch !important;
