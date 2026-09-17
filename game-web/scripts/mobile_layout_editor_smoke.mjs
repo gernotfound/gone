@@ -36,7 +36,7 @@ async function applyDeviceMetrics(page, cdp, width, height, label) {
     },
   });
   await waitFor(page, () => page.evaluate(({ width: w, height: h }) => innerWidth === w && innerHeight === h, { width, height }), `${label} viewport`, LOCAL_UI_TIMEOUT);
-  await page.waitForTimeout(120);
+  await page.waitForTimeout(160);
 }
 
 async function layoutState(page, id) {
@@ -53,14 +53,14 @@ async function layoutState(page, id) {
       applied,
       expected: stored ? { x: stored.x * innerWidth, y: stored.y * innerHeight } : null,
       rect: rect ? { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, width: rect.width, height: rect.height } : null,
-      translate: element instanceof HTMLElement ? element.style.translate : '',
-      snapshot,
+      editing: snapshot?.editing ?? false,
     };
   }, id);
 }
 
 function assertBounded(state, label) {
   assert(state.rect, `${label}: element rect missing`);
+  assert(state.rect.width > 0 && state.rect.height > 0, `${label}: control must be visible while geometry is inspected ${JSON.stringify(state.rect)}`);
   assert(state.rect.left >= 7 && state.rect.top >= 7 && state.rect.right <= state.width - 7 && state.rect.bottom <= state.height - 7,
     `${label}: custom control escaped safe viewport bounds ${JSON.stringify(state.rect)}`);
 }
@@ -74,6 +74,15 @@ function assertScaled(state, label, tolerance = 3) {
   assertBounded(state, label);
 }
 
+async function reopenEditorForGeometry(page) {
+  await page.evaluate(() => window.goneTouchLayout.edit());
+  await waitFor(page, () => page.evaluate(() => (
+    window.goneTouchLayout.snapshot().editing
+    && document.documentElement.classList.contains('gone-touch-layout-edit')
+    && document.getElementById('mc-reload')?.getBoundingClientRect().width > 0
+  )), 'reopened touch layout editor', LOCAL_UI_TIMEOUT);
+}
+
 async function dragSwitcherThroughSlot(page, dx, dy) {
   return page.evaluate(({ dx, dy }) => {
     const api = window.goneTouchLayout;
@@ -81,7 +90,8 @@ async function dragSwitcherThroughSlot(page, dx, dy) {
     const slot = document.getElementById('mc-weapon-slot-2');
     const switcher = document.getElementById('mc-weapon-switcher');
     if (!slot || !switcher) throw new Error('Missing quick-slot editor targets');
-    const before = [switcher, ...document.querySelectorAll('#mc-weapon-slots .mc-weapon-slot')].map((element) => {
+    const members = [switcher, ...document.querySelectorAll('#mc-weapon-slots .mc-weapon-slot')];
+    const before = members.map((element) => {
       const rect = element.getBoundingClientRect();
       return { id: element.id, left: rect.left, top: rect.top };
     });
@@ -101,7 +111,7 @@ async function dragSwitcherThroughSlot(page, dx, dy) {
     dispatch('pointerdown', startX, startY, 1);
     dispatch('pointermove', startX + dx, startY + dy, 1);
     dispatch('pointerup', startX + dx, startY + dy, 0);
-    const after = [switcher, ...document.querySelectorAll('#mc-weapon-slots .mc-weapon-slot')].map((element) => {
+    const after = members.map((element) => {
       const next = element.getBoundingClientRect();
       return { id: element.id, left: next.left, top: next.top };
     });
@@ -151,7 +161,7 @@ try {
     && document.getElementById('mc-reload')
     && document.getElementById('mc-weapon-slot-4')
   )), 'gameplay touch controls', 90_000);
-  await page.waitForTimeout(120);
+  await page.waitForTimeout(160);
 
   const initialReload = await layoutState(page, 'mc-reload');
   assertScaled(initialReload, 'migrated reload at 844x390');
@@ -169,6 +179,11 @@ try {
   }
   const normalizedSwitcher = { ...drag.snapshot.offsets['mc-weapon-switcher'] };
 
+  // done() intentionally returns to Settings and hides gameplay controls. Reopen the
+  // editor before geometry assertions so the smoke validates persisted layout data,
+  // not zero-sized controls hidden behind the settings menu.
+  await reopenEditorForGeometry(page);
+
   for (const spec of [
     { name: 'compact', width: 740, height: 360 },
     { name: 'large', width: 932, height: 430 },
@@ -181,7 +196,7 @@ try {
 
   await page.evaluate(() => window.goneTouchPreferences.set({ handedness: 'left' }));
   await waitFor(page, () => page.evaluate(() => document.documentElement.dataset.goneTouchHandedness === 'left'), 'left-handed custom layout', LOCAL_UI_TIMEOUT);
-  await page.waitForTimeout(120);
+  await page.waitForTimeout(160);
   const leftReload = await layoutState(page, 'mc-reload');
   assertBounded(leftReload, 'left-handed migrated reload clamp');
   assert(Math.abs(leftReload.stored.x - normalizedReload.x) < 0.0001 && Math.abs(leftReload.stored.y - normalizedReload.y) < 0.0001,
@@ -191,7 +206,7 @@ try {
 
   await page.evaluate(() => window.goneTouchPreferences.set({ handedness: 'right' }));
   await waitFor(page, () => page.evaluate(() => document.documentElement.dataset.goneTouchHandedness === 'right'), 'right-handed custom layout restore', LOCAL_UI_TIMEOUT);
-  await page.waitForTimeout(120);
+  await page.waitForTimeout(160);
   const restoredReload = await layoutState(page, 'mc-reload');
   assertScaled(restoredReload, 'right-handed reload after clamped mirror');
   assert(Math.abs(restoredReload.stored.x - normalizedReload.x) < 0.0001 && Math.abs(restoredReload.stored.y - normalizedReload.y) < 0.0001,
@@ -202,6 +217,7 @@ try {
   assertBounded(portraitReload, 'portrait custom reload');
   assert(Math.abs(portraitReload.stored.x - normalizedReload.x) < 0.0001,
     'portrait clamp/reflow must not rewrite stored normalized layout');
+
   await applyDeviceMetrics(page, cdp, 844, 390, 'final landscape restore');
   assertScaled(await layoutState(page, 'mc-reload'), 'final landscape reload');
   const finalSwitcher = await layoutState(page, 'mc-weapon-switcher');
@@ -210,10 +226,12 @@ try {
 
   const reset = await page.evaluate(({ storageKey }) => {
     window.goneTouchLayout.reset();
-    return {
+    const result = {
       snapshot: window.goneTouchLayout.snapshot(),
       persisted: JSON.parse(localStorage.getItem(storageKey) || 'null'),
     };
+    window.goneTouchLayout.done();
+    return result;
   }, { storageKey: STORAGE_KEY });
   assert(Object.keys(reset.snapshot.offsets).length === 0, 'layout reset must clear normalized offsets');
   assert(reset.persisted && Object.keys(reset.persisted).length === 0, 'layout reset must persist an empty v2 layout so legacy data cannot remigrate');
