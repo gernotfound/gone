@@ -1,8 +1,10 @@
 export type TouchHandedness = 'right' | 'left';
+export type TouchAdsMode = 'hold' | 'toggle';
 
 export type TouchPreferences = {
   lookSensitivity: number;
   adsSensitivity: number;
+  adsMode: TouchAdsMode;
   buttonScale: number;
   buttonOpacity: number;
   handedness: TouchHandedness;
@@ -16,6 +18,7 @@ const STORAGE_KEY = 'gone-touch-preferences-v1';
 const DEFAULTS: TouchPreferences = {
   lookSensitivity: 1,
   adsSensitivity: 1,
+  adsMode: 'hold',
   buttonScale: 1,
   buttonOpacity: 1,
   handedness: 'right',
@@ -35,6 +38,7 @@ function sanitize(raw: Partial<TouchPreferences> | null | undefined): TouchPrefe
   return {
     lookSensitivity: clamp(Number(raw?.lookSensitivity ?? DEFAULTS.lookSensitivity) || DEFAULTS.lookSensitivity, 0.5, 2),
     adsSensitivity: clamp(Number(raw?.adsSensitivity ?? DEFAULTS.adsSensitivity) || DEFAULTS.adsSensitivity, 0.5, 1.5),
+    adsMode: raw?.adsMode === 'toggle' ? 'toggle' : 'hold',
     buttonScale: clamp(Number(raw?.buttonScale ?? DEFAULTS.buttonScale) || DEFAULTS.buttonScale, 1, 1.35),
     buttonOpacity: clamp(Number(raw?.buttonOpacity ?? DEFAULTS.buttonOpacity) || DEFAULTS.buttonOpacity, 0.55, 1),
     handedness: raw?.handedness === 'left' ? 'left' : 'right',
@@ -107,6 +111,16 @@ function syncUi(): void {
     left.setAttribute('aria-pressed', String(!rightActive));
   }
 
+  const adsHold = document.getElementById('touch-ads-mode-hold') as HTMLButtonElement | null;
+  const adsToggle = document.getElementById('touch-ads-mode-toggle') as HTMLButtonElement | null;
+  if (adsHold && adsToggle) {
+    const holdActive = current.adsMode === 'hold';
+    adsHold.className = optionClasses(holdActive);
+    adsToggle.className = optionClasses(!holdActive);
+    adsHold.setAttribute('aria-pressed', String(holdActive));
+    adsToggle.setAttribute('aria-pressed', String(!holdActive));
+  }
+
   syncBooleanButton('touch-secondary-fire', current.secondaryFire, 'FUOCO CLAW ON', 'FUOCO CLAW OFF');
   syncBooleanButton('touch-gyro-toggle', current.gyroEnabled, 'GIROSCOPIO ON', 'GIROSCOPIO OFF');
 }
@@ -119,6 +133,7 @@ function applyPreferences(): void {
   html.classList.toggle('gone-touch-secondary-fire', current.secondaryFire);
   html.classList.toggle('gone-touch-gyro-enabled', current.gyroEnabled);
   html.dataset.goneTouchHandedness = current.handedness;
+  html.dataset.goneTouchAdsMode = current.adsMode;
   syncUi();
 
   (window as any).goneTouchPreferences = {
@@ -160,6 +175,10 @@ function ensureSettingsUi(): void {
     </div>
     ${rangeRow('Sensibilità visuale', 'touch-look-sensitivity', 'touch-look-value', 0.5, 2, 0.05)}
     ${rangeRow('Sensibilità ADS', 'touch-ads-sensitivity', 'touch-ads-value', 0.5, 1.5, 0.05)}
+    <div class="grid grid-cols-2 gap-2" role="group" aria-label="Modalità ADS">
+      <button type="button" id="touch-ads-mode-hold" aria-pressed="true">ADS HOLD</button>
+      <button type="button" id="touch-ads-mode-toggle" aria-pressed="false">ADS TOGGLE</button>
+    </div>
     ${rangeRow('Dead-zone drag FIRE', 'touch-fire-deadzone', 'touch-fire-deadzone-value', 2, 20, 1)}
     ${rangeRow('Sensibilità giroscopio', 'touch-gyro-sensitivity', 'touch-gyro-value', 0.5, 2, 0.05)}
     ${rangeRow('Dimensione pulsanti', 'touch-button-scale', 'touch-scale-value', 1, 1.35, 0.05)}
@@ -190,6 +209,8 @@ function ensureSettingsUi(): void {
   bindRange('touch-gyro-sensitivity', 'gyroSensitivity');
   bindRange('touch-button-scale', 'buttonScale');
   bindRange('touch-button-opacity', 'buttonOpacity');
+  (document.getElementById('touch-ads-mode-hold') as HTMLButtonElement).addEventListener('click', () => setOne('adsMode', 'hold'));
+  (document.getElementById('touch-ads-mode-toggle') as HTMLButtonElement).addEventListener('click', () => setOne('adsMode', 'toggle'));
   (document.getElementById('touch-handedness-right') as HTMLButtonElement).addEventListener('click', () => setOne('handedness', 'right'));
   (document.getElementById('touch-handedness-left') as HTMLButtonElement).addEventListener('click', () => setOne('handedness', 'left'));
   (document.getElementById('touch-secondary-fire') as HTMLButtonElement).addEventListener('click', () => setOne('secondaryFire', !current.secondaryFire));

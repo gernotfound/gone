@@ -47,6 +47,8 @@ let scopeOverlay: HTMLDivElement | null = null;
 let ammoHud: HTMLDivElement | null = null;
 let ammoPrimary: HTMLDivElement | null = null;
 let ammoSecondary: HTMLDivElement | null = null;
+let ammoReloadTrack: HTMLDivElement | null = null;
+let ammoReloadFill: HTMLDivElement | null = null;
 let lastUiSignature = '';
 
 const targetPosition = new THREE.Vector3();
@@ -64,6 +66,12 @@ function isGameplayInputActive(): boolean {
 function sanitizeWeapon(value: unknown): WeaponKey {
   const key = String(value ?? 'assalto') as WeaponKey;
   return WEAPON_KEYS.includes(key) ? key : 'assalto';
+}
+
+function reloadProgress(now = performance.now()): number {
+  if (!reloadActive) return 0;
+  const span = Math.max(1, reloadEndsAt - reloadStartedAt);
+  return Math.max(0, Math.min(1, (now - reloadStartedAt) / span));
 }
 
 function resetAmmo(): void {
@@ -214,8 +222,7 @@ function updateRig(delta: number, now: number): void {
   targetRotation.set(0, 0, 0);
 
   if (reloadActive) {
-    const span = Math.max(1, reloadEndsAt - reloadStartedAt);
-    const phase = Math.max(0, Math.min(1, (now - reloadStartedAt) / span));
+    const phase = reloadProgress(now);
     const arc = Math.sin(phase * Math.PI);
     if (cfg.reloadStyle === 'shell') {
       targetPosition.y -= 0.13 * arc;
@@ -295,11 +302,27 @@ function ensureUi(): void {
       position: 'fixed', right: '32px', bottom: '92px', zIndex: '26', pointerEvents: 'none',
       minWidth: '235px', padding: '10px 13px', border: '1px solid rgba(34,211,238,.35)',
       borderRadius: '12px', background: 'rgba(2,6,23,.72)', backdropFilter: 'blur(8px)',
-      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', textAlign: 'right',
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', textAlign: 'right', overflow: 'hidden',
     });
     ammoPrimary = document.createElement('div');
     ammoSecondary = document.createElement('div');
-    ammoHud.append(ammoPrimary, ammoSecondary);
+    ammoReloadTrack = document.createElement('div');
+    ammoReloadTrack.id = 'advanced-weapon-reload-track';
+    ammoReloadTrack.setAttribute('aria-hidden', 'true');
+    Object.assign(ammoReloadTrack.style, {
+      position: 'absolute', left: '8px', right: '8px', bottom: '4px', height: '3px',
+      borderRadius: '999px', overflow: 'hidden', background: 'rgba(148,163,184,.20)', opacity: '0',
+      transition: 'opacity 100ms linear',
+    });
+    ammoReloadFill = document.createElement('div');
+    ammoReloadFill.id = 'advanced-weapon-reload-fill';
+    Object.assign(ammoReloadFill.style, {
+      width: '100%', height: '100%', borderRadius: 'inherit', background: '#fbbf24',
+      transform: 'scaleX(0)', transformOrigin: 'left center', transition: 'transform 60ms linear',
+      boxShadow: '0 0 8px rgba(251,191,36,.72)',
+    });
+    ammoReloadTrack.appendChild(ammoReloadFill);
+    ammoHud.append(ammoPrimary, ammoReloadTrack, ammoSecondary);
     gameUi.appendChild(ammoHud);
   }
   const originalCrosshair = gameUi.firstElementChild as HTMLElement | null;
@@ -334,7 +357,8 @@ function refreshHud(force = false): void {
   const state = ammo[currentWeapon];
   const now = performance.now();
   const remaining = reloadActive ? Math.max(0, reloadEndsAt - now) / 1000 : 0;
-  const signature = `${currentWeapon}:${state.magazine}:${state.reserve}:${reloadActive}:${remaining.toFixed(1)}:${adsAlpha.toFixed(1)}`;
+  const progress = reloadProgress(now);
+  const signature = `${currentWeapon}:${state.magazine}:${state.reserve}:${reloadActive}:${remaining.toFixed(1)}:${progress.toFixed(2)}:${adsAlpha.toFixed(1)}`;
   if (!force && signature === lastUiSignature) return;
   lastUiSignature = signature;
 
@@ -349,6 +373,15 @@ function refreshHud(force = false): void {
     ammoSecondary.textContent = reloadActive
       ? `RICARICA ${remaining.toFixed(1)}s · ${cfg.reloadStyle === 'shell' ? 'CARTUCCIA' : 'CARICATORE'}`
       : `${cfg.role} · PORTATA ${cfg.maxRange}m · RMB MIRA · R RICARICA`;
+  }
+  if (ammoReloadTrack && ammoReloadFill) {
+    const visible = reloadActive && cfg.reloadStyle !== 'none';
+    ammoReloadTrack.style.opacity = visible ? '1' : '0';
+    ammoReloadFill.style.background = cfg.reloadStyle === 'shell' ? '#fb923c' : '#fbbf24';
+    ammoReloadFill.style.boxShadow = cfg.reloadStyle === 'shell'
+      ? '0 0 8px rgba(251,146,60,.72)'
+      : '0 0 8px rgba(251,191,36,.72)';
+    ammoReloadFill.style.transform = `scaleX(${visible ? progress.toFixed(3) : '0'})`;
   }
 }
 
@@ -448,6 +481,7 @@ export function startAdvancedWeaponController(): void {
     reload: startReload,
     refillWeaponAmmo,
     isReloading: () => reloadActive,
+    getReloadProgress: () => reloadProgress(),
     isAiming: () => adsHeld,
     config: WEAPON_RUNTIME,
   };

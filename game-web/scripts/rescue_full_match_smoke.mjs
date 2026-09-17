@@ -194,6 +194,77 @@ async function main() {
 
     invariant(planarDistance(localMoved, replicated) < 6, `Host and guest movement diverged excessively: local=${JSON.stringify(localMoved)} host=${JSON.stringify(replicated)}`);
 
+    console.log('[full-match] Verifying directional incoming-damage presentation from canonical combat slots');
+    const directionalFeedback = await guest.evaluate(() => {
+      const client = window.goneGame.getP2PClient();
+      const remoteHost = [...window.goneGame.remotePlayers.values()].find((entry) => Number(entry?.slot) === 0);
+      if (!client || !remoteHost?.group?.position) throw new Error('Host remote slot missing for directional feedback smoke');
+      if (!window.goneCombatFeedback?.snapshot) throw new Error('Combat feedback diagnostics missing');
+
+      const localY = window.goneGame.player.position.y;
+      const remoteY = remoteHost.group.position.y;
+      window.goneGame.player.position.set(0, localY, 0);
+      remoteHost.group.position.set(10, remoteY, 0);
+      window.goneGame.keys.yaw = 0;
+
+      const before = window.goneCombatFeedback.snapshot();
+      const emit = (shooterSlot, sequence) => {
+        window.dispatchEvent(new CustomEvent('gone-hit-confirmed', {
+          detail: {
+            source: 'client',
+            sequence,
+            at: performance.now(),
+            hit: {
+              shooterSlot,
+              victimSlot: client.playerSlot,
+              damage: 18,
+              isHeadshot: false,
+              isFatal: false,
+              isFatalKill: false,
+              isShieldBlocked: false,
+            },
+          },
+        }));
+      };
+
+      emit(0, 900001);
+      const root = document.getElementById('gone-incoming-impact');
+      const afterDirectional = window.goneCombatFeedback.snapshot();
+      const directional = {
+        angle: afterDirectional.lastImpactAngleDegrees,
+        directionalCount: afterDirectional.directionalIncomingCount,
+        classDirectional: root?.classList.contains('is-directional') ?? false,
+        classOmni: root?.classList.contains('is-omni') ?? false,
+        angleStyle: root?.style.getPropertyValue('--impact-angle') ?? '',
+        visible: root?.classList.contains('show') ?? false,
+      };
+
+      emit(7, 900002);
+      const afterFallback = window.goneCombatFeedback.snapshot();
+      const fallback = {
+        angle: afterFallback.lastImpactAngleDegrees,
+        omniCount: afterFallback.omnidirectionalIncomingCount,
+        classDirectional: root?.classList.contains('is-directional') ?? false,
+        classOmni: root?.classList.contains('is-omni') ?? false,
+        angleStyle: root?.style.getPropertyValue('--impact-angle') ?? '',
+      };
+      return { before, directional, fallback };
+    });
+
+    invariant(Math.abs(directionalFeedback.directional.angle - 90) < 0.6,
+      `Right-side incoming hit should resolve to +90deg, got ${directionalFeedback.directional.angle}`);
+    invariant(directionalFeedback.directional.directionalCount === directionalFeedback.before.directionalIncomingCount + 1,
+      `Directional hit counter did not increment: ${JSON.stringify(directionalFeedback)}`);
+    invariant(directionalFeedback.directional.classDirectional && !directionalFeedback.directional.classOmni && directionalFeedback.directional.visible,
+      `Directional hit did not render as an active arc: ${JSON.stringify(directionalFeedback.directional)}`);
+    invariant(directionalFeedback.directional.angleStyle === '90.0deg',
+      `Directional CSS angle mismatch: ${directionalFeedback.directional.angleStyle}`);
+    invariant(directionalFeedback.fallback.omniCount === directionalFeedback.before.omnidirectionalIncomingCount + 1,
+      `Fallback hit counter did not increment: ${JSON.stringify(directionalFeedback)}`);
+    invariant(directionalFeedback.fallback.angle === null && directionalFeedback.fallback.classOmni && !directionalFeedback.fallback.classDirectional,
+      `Unresolved shooter must use omnidirectional fallback: ${JSON.stringify(directionalFeedback.fallback)}`);
+    invariant(directionalFeedback.fallback.angleStyle === '', 'Fallback impact must clear stale directional rotation');
+
     if (errors.length) throw new Error(`Runtime/browser errors detected:\n${errors.join('\n')}`);
 
     console.log('[full-match] PASS', JSON.stringify({
@@ -204,6 +275,8 @@ async function main() {
       localMovementDistance: localMoved.distance,
       authoritativeMovementDistance: replicated.distance,
       authoritativeSequence: replicated.seq,
+      directionalImpactDegrees: directionalFeedback.directional.angle,
+      omnidirectionalFallback: directionalFeedback.fallback.classOmni,
     }));
   } finally {
     if (hostContext) await hostContext.close().catch(() => {});

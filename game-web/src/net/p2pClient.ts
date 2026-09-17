@@ -298,6 +298,11 @@ export class P2PClient {
       return;
     }
 
+    if (this.channel.readyState !== undefined && this.channel.readyState !== 'open') {
+      this.handleDisconnect();
+      return;
+    }
+
     const input = this.stateProvider();
     const seq = (this.stateSequence++) & 0xffff;
     const time = performance.now();
@@ -316,6 +321,10 @@ export class P2PClient {
     try {
       this.channel.send(buffer);
     } catch (err: any) {
+      if (this.channel.readyState !== undefined && this.channel.readyState !== 'open') {
+        this.handleDisconnect();
+        return;
+      }
       this.config.onError?.(new Error(`Send client state failed: ${err?.message || err}`));
     }
   }

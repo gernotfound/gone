@@ -22,12 +22,13 @@ type AdaptiveQualityState = {
   lastReason: string;
 };
 
-const MAX_DPR = Math.max(0.75, Math.min(window.devicePixelRatio || 1, 1.25));
-const MIN_DPR = Math.min(MAX_DPR, 0.75);
+const DESKTOP_MAX_DPR = Math.max(0.75, Math.min(window.devicePixelRatio || 1, 1.25));
+const DPR_FLOOR = 0.75;
+const SMARTPHONE_MAX_DPR = 1.0;
 const EVALUATION_MS = 2000;
 
 let enabled = true;
-let currentDpr = MAX_DPR;
+let currentDpr = 1;
 let pressureStreak = 0;
 let stableStreak = 0;
 let lowerCount = 0;
@@ -47,8 +48,18 @@ function isGameplayVisible(): boolean {
   return !!gameUi && !gameUi.classList.contains('hidden');
 }
 
+function maxDpr(): number {
+  return document.documentElement.classList.contains('gone-smartphone')
+    ? Math.min(DESKTOP_MAX_DPR, SMARTPHONE_MAX_DPR)
+    : DESKTOP_MAX_DPR;
+}
+
+function minDpr(): number {
+  return Math.min(maxDpr(), DPR_FLOOR);
+}
+
 function clampDpr(value: number): number {
-  return Math.max(MIN_DPR, Math.min(MAX_DPR, value));
+  return Math.max(minDpr(), Math.min(maxDpr(), value));
 }
 
 function setDpr(next: number, reason: string): void {
@@ -56,7 +67,7 @@ function setDpr(next: number, reason: string): void {
   if (!renderer) return;
 
   const rounded = Math.round(clampDpr(next) * 100) / 100;
-  if (Math.abs(rounded - currentDpr) < 0.005) {
+  if (Math.abs(rounded - currentDpr) < 0.005 && Math.abs(renderer.getPixelRatio() - rounded) < 0.005) {
     lastReason = reason;
     decorateTelemetry();
     return;
@@ -92,6 +103,15 @@ function evaluate(): void {
   if (!renderer) return;
 
   currentDpr = renderer.getPixelRatio();
+  const ceiling = maxDpr();
+  const floor = minDpr();
+  if (currentDpr > ceiling + 0.005) {
+    pressureStreak = 0;
+    stableStreak = 0;
+    setDpr(ceiling, 'LIMITE SMARTPHONE');
+    return;
+  }
+
   decorateTelemetry();
   if (!enabled || !isGameplayVisible()) {
     pressureStreak = 0;
@@ -126,7 +146,7 @@ function evaluate(): void {
     stableStreak = 0;
   }
 
-  if (pressureStreak >= 2 && currentDpr > MIN_DPR + 0.01) {
+  if (pressureStreak >= 2 && currentDpr > floor + 0.01) {
     const step = p95 > 42 ? 0.15 : 0.10;
     pressureStreak = 0;
     lowerCount += 1;
@@ -134,7 +154,7 @@ function evaluate(): void {
     return;
   }
 
-  if (stableStreak >= 4 && currentDpr < MAX_DPR - 0.01) {
+  if (stableStreak >= 4 && currentDpr < ceiling - 0.01) {
     stableStreak = 0;
     raiseCount += 1;
     setDpr(currentDpr + 0.05, `RECUPERO · p95 ${p95.toFixed(1)}ms`);
@@ -143,7 +163,7 @@ function evaluate(): void {
 
   if (nonRenderBottleneck) lastReason = `NESSUN TAGLIO · ${bottleneck}`;
   else if (gpuPressure) lastReason = `GPU SOTTO PRESSIONE · ${pressureStreak}/2`;
-  else lastReason = currentDpr < MAX_DPR ? 'SCALA RIDOTTA' : 'MASSIMA QUALITÀ';
+  else lastReason = currentDpr < ceiling ? 'SCALA RIDOTTA' : 'MASSIMA QUALITÀ';
   decorateTelemetry();
 }
 
@@ -156,8 +176,8 @@ function state(): AdaptiveQualityState {
   return {
     enabled,
     dpr: currentDpr,
-    minDpr: MIN_DPR,
-    maxDpr: MAX_DPR,
+    minDpr: minDpr(),
+    maxDpr: maxDpr(),
     pressureStreak,
     stableStreak,
     lowerCount,
@@ -170,11 +190,19 @@ function state(): AdaptiveQualityState {
  * Conservative local adaptive resolution. It only lowers render DPR when the
  * diagnostics identify sustained render/GPU pressure; network, chunk and main-
  * thread bottlenecks never trigger a resolution cut. Quality recovers slowly
- * after sustained stable 60-ish FPS frame pacing.
+ * after sustained stable 60-ish FPS frame pacing. Smartphone quality recovery
+ * respects the same 1.0 DPR ceiling as the mobile runtime, avoiding setSize
+ * churn between two otherwise-correct governors.
  */
 export function startAdaptiveRenderScale(): void {
   if ((window as any).__goneAdaptiveRenderScaleStarted) return;
   (window as any).__goneAdaptiveRenderScaleStarted = true;
+
+  const renderer = sceneManager.renderer;
+  currentDpr = renderer?.getPixelRatio() ?? maxDpr();
+  if (renderer && currentDpr > maxDpr() + 0.005) {
+    setDpr(maxDpr(), 'LIMITE SMARTPHONE');
+  }
 
   (window as any).goneAdaptiveQuality = {
     snapshot: () => ({ ...state() }),
@@ -183,7 +211,7 @@ export function startAdaptiveRenderScale(): void {
       if (!enabled) {
         pressureStreak = 0;
         stableStreak = 0;
-        setDpr(MAX_DPR, 'DISATTIVATO');
+        setDpr(maxDpr(), 'DISATTIVATO');
       }
       decorateTelemetry();
       return enabled;

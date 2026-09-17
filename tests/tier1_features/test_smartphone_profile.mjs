@@ -52,12 +52,15 @@ export async function run(suite) {
     assert(css.includes('env(safe-area-inset-right)') && css.includes('env(safe-area-inset-left)'), 'controls must respect phone safe areas');
   });
 
-  suite.test('Touch preferences persist sensitivity, scale, opacity and handedness', () => {
+  suite.test('Touch preferences persist sensitivity, ADS mode, scale, opacity and handedness', () => {
     const prefs = fs.readFileSync(preferencesPath, 'utf-8');
     assert(prefs.includes("gone-touch-preferences-v1") && prefs.includes('localStorage.setItem'), 'touch preferences must persist locally');
-    for (const key of ['lookSensitivity', 'adsSensitivity', 'buttonScale', 'buttonOpacity', 'handedness']) {
+    for (const key of ['lookSensitivity', 'adsSensitivity', 'adsMode', 'buttonScale', 'buttonOpacity', 'handedness']) {
       assert(prefs.includes(key), `touch preference ${key} must be present`);
     }
+    assert(prefs.includes("adsMode: 'hold'") && prefs.includes("raw?.adsMode === 'toggle' ? 'toggle' : 'hold'"), 'ADS must default safely to HOLD while accepting persisted TOGGLE');
+    assert(prefs.includes('touch-ads-mode-hold') && prefs.includes('touch-ads-mode-toggle'), 'touch settings must expose HOLD and TOGGLE ADS choices');
+    assert(prefs.includes('goneTouchAdsMode'), 'active ADS preference must be exposed through a stable DOM dataset');
     assert(prefs.includes("buttonScale: clamp") && prefs.includes(', 1, 1.35)'), 'button scale must never shrink below the safe 100% baseline');
     assert(prefs.includes('gone-touch-left-handed') && prefs.includes('--gone-touch-scale') && prefs.includes('--gone-touch-opacity'), 'touch presentation must be applied through stable CSS hooks');
   });
@@ -71,12 +74,13 @@ export async function run(suite) {
     }
   });
 
-  suite.test('Left-handed layout mirrors movement, action cluster and compact HUD', () => {
+  suite.test('Left-handed layout mirrors interaction zones while centered combat information stays neutral', () => {
     const css = fs.readFileSync(mobileCssPath, 'utf-8');
     assert(css.includes('html.gone-touch-left-handed #mobile-stick') && css.includes('right:max('), 'left-handed layout must move the movement stick to the right');
     assert(css.includes('html.gone-touch-left-handed #gone-mobile-controls .mc-fire') && css.includes('left:max('), 'left-handed layout must move fire controls to the left');
     assert(css.includes('html.gone-touch-left-handed #mobile-look-pad') && css.includes('right:36%'), 'left-handed layout must mirror the look interaction zone');
-    assert(css.includes('gone-smartphone.gone-touch-left-handed #health-hud') && css.includes('gone-smartphone.gone-touch-left-handed #advanced-weapon-hud'), 'compact HUD anchors must follow handedness');
+    assert(!css.includes('gone-smartphone.gone-touch-left-handed #health-hud'), 'generic handedness CSS must not move the centered health HUD');
+    assert(!css.includes('gone-smartphone.gone-touch-left-handed #advanced-weapon-hud'), 'generic handedness CSS must not move the centered ammo HUD');
   });
 
   suite.test('Phone map and death feedback are stripped of oversized desktop chrome', () => {

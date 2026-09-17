@@ -23,6 +23,20 @@ type DragState = {
   dragging: boolean;
 };
 
+type QuickWeapon = {
+  index: number;
+  label: string;
+  aria: string;
+};
+
+const QUICK_WEAPONS: QuickWeapon[] = [
+  { index: 0, label: 'AR', aria: 'Fucile d’assalto' },
+  { index: 1, label: 'SR', aria: 'Fucile di precisione' },
+  { index: 2, label: 'SG', aria: 'Fucile a pompa' },
+  { index: 3, label: 'SMG', aria: 'Mitraglietta' },
+  { index: 4, label: 'KNF', aria: 'Coltello' },
+];
+
 const primaryDrag: DragState = {
   pointerId: null,
   startX: 0,
@@ -232,23 +246,64 @@ function bindSecondaryFire(button: HTMLButtonElement): void {
   button.addEventListener('lostpointercapture', finish, true);
 }
 
+function ensureQuickWeaponSlots(): void {
+  const switcher = document.getElementById('mc-weapon-switcher');
+  if (!switcher || document.getElementById('mc-weapon-slots')) return;
+
+  const slots = document.createElement('div');
+  slots.id = 'mc-weapon-slots';
+  slots.setAttribute('role', 'group');
+  slots.setAttribute('aria-label', 'Selezione arma rapida');
+  for (const weapon of QUICK_WEAPONS) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.id = `mc-weapon-slot-${weapon.index}`;
+    button.className = 'mc-weapon-slot';
+    button.dataset.goneWeaponIndex = String(weapon.index);
+    button.dataset.keycap = String(weapon.index + 1);
+    button.setAttribute('aria-label', `Seleziona ${weapon.aria}`);
+    button.setAttribute('aria-pressed', 'false');
+    button.textContent = weapon.label;
+    slots.appendChild(button);
+  }
+  switcher.appendChild(slots);
+}
+
 function updateWeaponLabel(): void {
   const label = document.getElementById('mc-weapon-name');
-  if (!label) return;
-  const raw = String((window as any).goneGame?.getActiveWeapon?.() ?? 'assalto');
+  const game = (window as any).goneGame;
+  const raw = String(game?.getActiveWeapon?.() ?? 'assalto');
+  const activeIndex = Number(game?.getActiveWeaponIndex?.() ?? 0);
   const names: Record<string, string> = {
     assalto: 'AR', cecchino: 'SNIPER', pompa: 'SHOTGUN', mitraglietta: 'SMG', coltello: 'KNIFE',
   };
-  label.textContent = names[raw] ?? raw.toUpperCase();
+  const nextLabel = names[raw] ?? raw.toUpperCase();
+  if (label && label.textContent !== nextLabel) label.textContent = nextLabel;
+
+  for (const weapon of QUICK_WEAPONS) {
+    const button = document.getElementById(`mc-weapon-slot-${weapon.index}`) as HTMLButtonElement | null;
+    if (!button) continue;
+    const active = weapon.index === activeIndex;
+    if (button.classList.contains('is-active') !== active) button.classList.toggle('is-active', active);
+    const pressed = String(active);
+    if (button.getAttribute('aria-pressed') !== pressed) button.setAttribute('aria-pressed', pressed);
+  }
+}
+
+function selectWeapon(index: number): void {
+  const game = (window as any).goneGame;
+  const count = Object.keys((window as any).goneWeapons?.config ?? {}).length || QUICK_WEAPONS.length;
+  if (!Number.isInteger(index) || index < 0 || index >= count) return;
+  const result = game?.switchWeapon?.(index);
+  void Promise.resolve(result).finally(() => window.setTimeout(updateWeaponLabel, 0));
 }
 
 function switchWeapon(delta: number): void {
   const game = (window as any).goneGame;
-  const count = Object.keys((window as any).goneWeapons?.config ?? {}).length || 5;
+  const count = Object.keys((window as any).goneWeapons?.config ?? {}).length || QUICK_WEAPONS.length;
   const current = Number(game?.getActiveWeaponIndex?.() ?? 0);
   const next = ((current + delta) % count + count) % count;
-  const result = game?.switchWeapon?.(next);
-  void Promise.resolve(result).finally(() => window.setTimeout(updateWeaponLabel, 0));
+  selectWeapon(next);
 }
 
 function bindReliableTap(id: string, action: () => void): void {
@@ -272,6 +327,7 @@ function bindActionButtons(): void {
   bindReliableTap('mc-reload', () => (window as any).goneWeapons?.reload?.());
   bindReliableTap('mc-prev', () => switchWeapon(-1));
   bindReliableTap('mc-next', () => switchWeapon(1));
+  for (const weapon of QUICK_WEAPONS) bindReliableTap(`mc-weapon-slot-${weapon.index}`, () => selectWeapon(weapon.index));
   bindReliableTap('mc-map', () => dispatchKey('KeyM'));
   bindReliableTap('mc-menu', () => {
     const controls = (window as any).goneMobileControls;
@@ -351,7 +407,9 @@ function attachWhenAvailable(): boolean {
   const aim = document.getElementById('mc-aim') as HTMLButtonElement | null;
   if (aim) bindAdsDrag(aim);
   bindSecondaryFire(ensureSecondaryFire(root));
+  ensureQuickWeaponSlots();
   bindActionButtons();
+  updateWeaponLabel();
   return true;
 }
 
