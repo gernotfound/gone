@@ -72,6 +72,7 @@ async function measureMain(page) {
       controls: rect('btn-controls'),
       music: rect('btn-music-toggle'),
       settings: rect('btn-settings'),
+      preloadWrapper: rect('performance-pack-controls'),
       preload: rect('btn-performance-pack'),
       gridDisplay: grid ? getComputedStyle(grid).display : null,
       clientHeight: main?.clientHeight ?? 0,
@@ -101,13 +102,16 @@ function assertMain(layout, label) {
     assert(rect.height >= 47.5, `${label}: ${name} target below 48px (${rect.height})`);
   }
 
+  assert(layout.preloadWrapper, `${label}: missing PRECARICA grid wrapper`);
+  assert(withinViewport(layout.preloadWrapper, layout.width, layout.height), `${label}: PRECARICA wrapper escaped viewport`);
   assert(sameRow(layout.enter, layout.multiplayer), `${label}: primary CTAs must share the top row`);
   assert(Math.abs(layout.enter.width - layout.multiplayer.width) <= 4, `${label}: primary CTAs must have equal visual weight`);
   assert(layout.enter.width >= layout.controls.width * 1.75, `${label}: ENTRA must remain visually dominant over utilities`);
   assert(layout.multiplayer.width >= layout.settings.width * 1.75, `${label}: MULTIPLAYER must remain visually dominant over utilities`);
   assert(sameRow(layout.controls, layout.music), `${label}: COMANDI/VOLUME must share utility row`);
   assert(sameRow(layout.music, layout.settings), `${label}: VOLUME/IMPOSTAZIONI must share utility row`);
-  assert(Math.abs(layout.settings.top - layout.preload.top) <= 4, `${label}: PRECARICA must stay in the utility band`);
+  assert(Math.abs(layout.settings.top - layout.preloadWrapper.top) <= 4,
+    `${label}: PRECARICA wrapper must stay in the utility band (${layout.settings.top} vs ${layout.preloadWrapper.top})`);
 }
 
 async function measureLobby(page) {
