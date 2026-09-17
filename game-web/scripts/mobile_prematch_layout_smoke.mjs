@@ -7,6 +7,7 @@ const LOCAL_UI_TIMEOUT = 5_000;
 const VIEWPORTS = [
   { label: 'iphone-landscape', width: 844, height: 390 },
   { label: 'compact-landscape', width: 740, height: 360 },
+  { label: 'large-phone-landscape', width: 932, height: 430 },
 ];
 
 async function waitFor(page, predicate, label, timeout = 60_000) {
@@ -114,6 +115,104 @@ function assertMain(layout, label) {
     `${label}: PRECARICA wrapper must stay in the utility band (${layout.settings.top} vs ${layout.preloadWrapper.top})`);
 }
 
+async function measureSettings(page) {
+  return page.evaluate(() => {
+    const rectOf = (element) => {
+      if (!element) return null;
+      const box = element.getBoundingClientRect();
+      return { left: box.left, right: box.right, top: box.top, bottom: box.bottom, width: box.width, height: box.height };
+    };
+    const byId = (id) => document.getElementById(id);
+    const settings = byId('settings-menu');
+    const stack = settings?.querySelector(':scope > .w-full.flex.flex-col');
+    const touch = byId('touch-control-settings');
+    const inputMode = byId('input-mode-setting');
+    const globalTargets = ['input-mode-keyboard', 'input-mode-screen', 'btn-back']
+      .map((id) => ({ id, rect: rectOf(byId(id)) }));
+    const touchTargets = [
+      'touch-ads-mode-hold',
+      'touch-ads-mode-toggle',
+      'touch-handedness-right',
+      'touch-handedness-left',
+      'touch-secondary-fire',
+      'touch-gyro-toggle',
+      'touch-layout-edit',
+      'touch-controls-reset',
+    ].map((id) => ({ id, rect: rectOf(byId(id)) }));
+    const audioRanges = ['vol-master', 'vol-music', 'vol-sfx']
+      .map((id) => ({ id, rect: rectOf(byId(id)) }));
+    return {
+      width: innerWidth,
+      height: innerHeight,
+      settings: rectOf(settings),
+      stack: rectOf(stack),
+      inputMode: rectOf(inputMode),
+      touchPanel: rectOf(touch),
+      touchReset: rectOf(byId('touch-controls-reset')),
+      back: rectOf(byId('btn-back')),
+      stackDisplay: stack ? getComputedStyle(stack).display : null,
+      stackColumns: stack ? getComputedStyle(stack).gridTemplateColumns : '',
+      touchOverflowY: touch ? getComputedStyle(touch).overflowY : null,
+      clientHeight: settings?.clientHeight ?? 0,
+      scrollHeight: settings?.scrollHeight ?? 0,
+      scrollTop: settings?.scrollTop ?? 0,
+      touchClientHeight: touch?.clientHeight ?? 0,
+      touchScrollHeight: touch?.scrollHeight ?? 0,
+      touchScrollTop: touch?.scrollTop ?? 0,
+      globalTargets,
+      touchTargets,
+      audioRanges,
+    };
+  });
+}
+
+function assertSettings(layout, label) {
+  assert(withinViewport(layout.settings, layout.width, layout.height), `${label}: settings card escaped viewport`);
+  assert(layout.settings.width >= layout.width * 0.82,
+    `${label}: settings still looks like a narrow desktop card (${layout.settings.width}/${layout.width})`);
+  assert(layout.scrollHeight <= layout.clientHeight + 2, `${label}: outer settings card should not scroll`);
+  assert(layout.stackDisplay === 'grid', `${label}: settings content must use the landscape split grid`);
+  assert(layout.stackColumns && layout.stackColumns !== 'none', `${label}: settings grid columns were not resolved`);
+  assert(layout.inputMode && layout.touchPanel, `${label}: settings columns missing`);
+  assert(layout.touchPanel.left >= layout.inputMode.right + 8, `${label}: touch customization must stay in the right column`);
+  assert(withinViewport(layout.back, layout.width, layout.height), `${label}: settings back action escaped viewport`);
+  assert(layout.touchOverflowY === 'auto' || layout.touchOverflowY === 'scroll', `${label}: touch settings must own vertical scroll`);
+  assert(layout.touchScrollHeight > layout.touchClientHeight + 2,
+    `${label}: touch settings should scroll internally (${layout.touchScrollHeight}/${layout.touchClientHeight})`);
+
+  for (const { id, rect } of layout.globalTargets) {
+    assert(rect, `${label}: missing settings target ${id}`);
+    assert(rect.width >= 47.5 && rect.height >= 47.5, `${label}: settings target ${id} below 48px (${rect.width}x${rect.height})`);
+  }
+  for (const { id, rect } of layout.touchTargets) {
+    assert(rect, `${label}: missing touch settings target ${id}`);
+    assert(rect.width >= 47.5 && rect.height >= 47.5, `${label}: touch settings target ${id} below 48px (${rect.width}x${rect.height})`);
+  }
+  for (const { id, rect } of layout.audioRanges) {
+    assert(rect, `${label}: missing audio range ${id}`);
+    assert(rect.width >= 160, `${label}: audio range ${id} is too compressed (${rect.width})`);
+  }
+}
+
+async function assertSettingsScrollOwnership(page, before, label) {
+  const backTopBefore = before.back.top;
+  await page.evaluate(() => {
+    const touch = document.getElementById('touch-control-settings');
+    if (touch) touch.scrollTop = touch.scrollHeight;
+  });
+  await page.waitForTimeout(60);
+  const after = await measureSettings(page);
+  assert(after.touchScrollTop > 0, `${label}: touch settings did not scroll internally`);
+  assert(after.scrollTop === 0, `${label}: outer settings card moved while touch settings scrolled`);
+  assert(Math.abs(after.back.top - backTopBefore) <= 2, `${label}: fixed settings back action moved during inner scroll`);
+  assert(after.touchReset.top >= after.touchPanel.top - 2 && after.touchReset.bottom <= after.touchPanel.bottom + 2,
+    `${label}: reset action is not reachable at the end of touch settings scroll`);
+  await page.evaluate(() => {
+    const touch = document.getElementById('touch-control-settings');
+    if (touch) touch.scrollTop = 0;
+  });
+}
+
 async function measureLobby(page) {
   return page.evaluate(() => {
     const rectOf = (element) => {
@@ -208,6 +307,8 @@ try {
     && window.goneRuntimeHealth?.snapshot
     && document.getElementById('btn-controls')
     && document.getElementById('btn-performance-pack')
+    && document.getElementById('input-mode-setting')
+    && document.getElementById('touch-control-settings')
   )), 'smartphone pre-match runtime');
 
   const results = [];
@@ -218,6 +319,18 @@ try {
 
     const main = await measureMain(page);
     assertMain(main, spec.label);
+
+    await page.locator('#btn-settings').click();
+    await waitFor(page, () => page.evaluate(() => !document.getElementById('settings-menu')?.classList.contains('hidden')),
+      `${spec.label} settings visible`, LOCAL_UI_TIMEOUT);
+    await page.waitForTimeout(80);
+    const settings = await measureSettings(page);
+    assertSettings(settings, spec.label);
+    await assertSettingsScrollOwnership(page, settings, spec.label);
+
+    await page.locator('#btn-back').click();
+    await waitFor(page, () => page.evaluate(() => !document.getElementById('main-menu')?.classList.contains('hidden')),
+      `${spec.label} return from settings`, LOCAL_UI_TIMEOUT);
 
     await page.locator('#btn-multiplayer').click();
     await waitFor(page, () => page.evaluate(() => {
@@ -233,7 +346,7 @@ try {
     await page.locator('#btn-back-lobby').click();
     await waitFor(page, () => page.evaluate(() => !document.getElementById('main-menu')?.classList.contains('hidden')),
       `${spec.label} return to main`, LOCAL_UI_TIMEOUT);
-    results.push({ spec, main, lobby });
+    results.push({ spec, main, settings, lobby });
   }
 
   const finalState = await page.evaluate(() => ({
