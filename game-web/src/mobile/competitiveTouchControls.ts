@@ -11,7 +11,17 @@ type DragState = {
   lastY: number;
 };
 
-const move = { pointerId: null as number | null, autoSprint: false };
+const SMART_SPRINT_ENTER_DISTANCE = 0.82;
+const SMART_SPRINT_EXIT_DISTANCE = 0.68;
+const SMART_SPRINT_ENTER_FORWARD = 0.35;
+const SMART_SPRINT_EXIT_FORWARD = 0.20;
+
+const move = {
+  pointerId: null as number | null,
+  autoSprint: false,
+  magnitude: 0,
+  forwardIntent: 0,
+};
 const look: DragState = { pointerId: null, startX: 0, startY: 0, lastX: 0, lastY: 0 };
 const ads: DragState = { pointerId: null, startX: 0, startY: 0, lastX: 0, lastY: 0 };
 const mapFire: DragState = { pointerId: null, startX: 0, startY: 0, lastX: 0, lastY: 0 };
@@ -94,8 +104,25 @@ function applyLookDelta(dx: number, dy: number, adsMode = inputState.aim): void 
 }
 
 function updateSprintState(): void {
-  inputState.shift = move.autoSprint || manualSprintPointers.size > 0;
+  const sprintActive = move.autoSprint || manualSprintPointers.size > 0;
+  inputState.shift = sprintActive;
   inputState.timestamp = performance.now();
+
+  const sprint = document.getElementById('mc-sprint') as HTMLButtonElement | null;
+  sprint?.classList.toggle('is-held', sprintActive);
+  sprint?.setAttribute('aria-pressed', String(sprintActive));
+
+  const stick = document.getElementById('mobile-stick') as HTMLElement | null;
+  stick?.classList.toggle('is-auto-sprinting', move.autoSprint);
+  if (stick) stick.dataset.goneAutoSprint = String(move.autoSprint);
+}
+
+function resolveSmartSprint(nx: number, ny: number): boolean {
+  move.magnitude = Math.min(1, Math.hypot(nx, ny));
+  move.forwardIntent = Math.max(0, -ny);
+  const distanceThreshold = move.autoSprint ? SMART_SPRINT_EXIT_DISTANCE : SMART_SPRINT_ENTER_DISTANCE;
+  const forwardThreshold = move.autoSprint ? SMART_SPRINT_EXIT_FORWARD : SMART_SPRINT_ENTER_FORWARD;
+  return move.magnitude >= distanceThreshold && move.forwardIntent >= forwardThreshold;
 }
 
 function updateMovement(clientX: number, clientY: number): void {
@@ -120,7 +147,7 @@ function updateMovement(clientX: number, clientY: number): void {
   inputState.right = nx > dead;
   inputState.forward = ny < -dead;
   inputState.backward = ny > dead;
-  move.autoSprint = ny < -0.82;
+  move.autoSprint = resolveSmartSprint(nx, ny);
   updateSprintState();
   knob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
 }
@@ -128,6 +155,8 @@ function updateMovement(clientX: number, clientY: number): void {
 function releaseMovement(): void {
   move.pointerId = null;
   move.autoSprint = false;
+  move.magnitude = 0;
+  move.forwardIntent = 0;
   inputState.forward = false;
   inputState.backward = false;
   inputState.left = false;
@@ -258,7 +287,6 @@ function onPointerDown(event: PointerEvent): void {
     manualSprintPointers.add(event.pointerId);
     updateSprintState();
     capture(sprint, event.pointerId);
-    (sprint as HTMLElement).classList.add('is-held');
     return;
   }
 
@@ -364,7 +392,6 @@ function onPointerEnd(event: PointerEvent): void {
   }
   if (manualSprintPointers.delete(event.pointerId)) {
     updateSprintState();
-    document.getElementById('mc-sprint')?.classList.remove('is-held');
     owned = true;
   }
   if (jumpPointers.delete(event.pointerId)) {
@@ -400,6 +427,7 @@ function releaseAll(): void {
   inputState.jump = false;
   inputState.ctrl = false;
   inputState.shift = false;
+  updateSprintState();
   setAdsActive(false, true);
   dispatchMouse(0, false);
 }
@@ -409,6 +437,7 @@ export function startCompetitiveTouchControls(): void {
   (window as any).__goneCompetitiveTouchControlsStarted = true;
   installPointerLockBridge();
   syncAdsButtonPresentation();
+  updateSprintState();
 
   document.addEventListener('pointerdown', onPointerDown, true);
   document.addEventListener('pointermove', onPointerMove, true);
@@ -435,6 +464,15 @@ export function startCompetitiveTouchControls(): void {
       gameplayActive: gameplayActive(),
       mapOpen: mapOpen(),
       autoSprint: move.autoSprint,
+      sprintActive: inputState.shift,
+      moveMagnitude: move.magnitude,
+      forwardIntent: move.forwardIntent,
+      smartSprintThresholds: {
+        enterDistance: SMART_SPRINT_ENTER_DISTANCE,
+        exitDistance: SMART_SPRINT_EXIT_DISTANCE,
+        enterForward: SMART_SPRINT_ENTER_FORWARD,
+        exitForward: SMART_SPRINT_EXIT_FORWARD,
+      },
       movePointer: move.pointerId,
       lookPointer: look.pointerId,
       adsPointer: ads.pointerId,
