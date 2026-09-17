@@ -2,6 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "git": {
     "deploymentEnabled": {
+      "_noop_should_not_create": false,
       "feat/high-end-fps-mobile-ui": false,
       "main": true
     }
