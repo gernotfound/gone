@@ -1,5 +1,6 @@
 import { soundSynth } from '../audio/index.ts';
 import { readDirectOfferFromLocation } from '../net/directWebRtc.ts';
+import { readFirestoreRoomFromLocation } from '../net/firestoreSignaling.ts';
 import { setupSelfHostedSessionFromLocation } from '../net/selfHostSession.ts';
 import { browserLifecycle } from '../runtime/browserLifecycle.ts';
 import { setupLobby, initLobbyEvents, resetMultiplayerSession } from './lobby.ts';
@@ -102,11 +103,14 @@ function installAudioLifecycle(): void {
     }, 20);
 }
 
-function openJoinLobby(directOfferCode: string, onPlayMultiplayer: () => void) {
+function openJoinLobby(
+    join: { directOfferCode?: string; roomId?: string },
+    onPlayMultiplayer: () => void,
+) {
     DOM.mainMenu.classList.add('hidden');
     DOM.multiplayerLobby.classList.remove('hidden');
     DOM.multiplayerLobby.classList.add('flex');
-    setupLobby(false, directOfferCode, onPlayMultiplayer);
+    setupLobby(false, join.directOfferCode, onPlayMultiplayer, { roomId: join.roomId });
 }
 
 function keepMenusAboveGameplayOverlays(): void {
@@ -210,10 +214,17 @@ export function setupMenu(callbacks: {
     const handleInvite = () => {
         if (setupSelfHostedSessionFromLocation(callbacks.onPlayMultiplayer)) return;
 
+        const roomId = readFirestoreRoomFromLocation();
+        if (roomId) {
+            resetMultiplayerSession();
+            openJoinLobby({ roomId }, callbacks.onPlayMultiplayer);
+            return;
+        }
+
         const directOffer = readDirectOfferFromLocation();
         if (!directOffer) return;
         resetMultiplayerSession();
-        openJoinLobby(directOffer, callbacks.onPlayMultiplayer);
+        openJoinLobby({ directOfferCode: directOffer }, callbacks.onPlayMultiplayer);
     };
 
     if (document.readyState === 'loading') {
