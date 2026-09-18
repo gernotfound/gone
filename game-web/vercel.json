@@ -5,6 +5,7 @@
       "feat/high-end-fps-mobile-ui": false,
       "feat/smartphone-controls-legend": false,
       "feat/spider-combat-tuning": false,
+      "feat/stable-internet-multiplayer": false,
       "main": true
     }
   },
