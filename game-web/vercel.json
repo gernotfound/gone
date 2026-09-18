@@ -3,6 +3,7 @@
   "git": {
     "deploymentEnabled": {
       "feat/high-end-fps-mobile-ui": false,
+      "feat/smartphone-controls-legend": false,
       "main": true
     }
   },
