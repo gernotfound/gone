@@ -51,7 +51,7 @@ Input release runs before network/session recovery. PWA checks, menu audio/netwo
 UI renders state and emits user intent. It does not own transports or network authority.
 
 - `menu.ts`: menu behavior and HTML media lifecycle; Safari/iOS media unlock remains gesture-driven.
-- `lobby.ts`: **presentation only** for multiplayer roster, color picker, invite/answer controls and lobby buttons. It subscribes to `MultiplayerSessionSnapshot` and forwards intent to the session controller. It must not construct `P2PClient`, `P2PHost`, SDP offers/answers or lag compensators.
+- `lobby.ts`: **presentation only** for multiplayer roster, color picker, invite/answer controls and lobby buttons. It subscribes to `MultiplayerSessionSnapshot` and forwards intent to the session controller. It must not construct `P2PClient`, `P2PHost`, SDP offers/answers, Firestore rooms or lag compensators.
 - `runtimeAvailabilityUi.ts`: actionable fail-closed startup surface.
 - HUD/minimap modules: presentation only.
 
@@ -65,6 +65,7 @@ This is the canonical owner of browser multiplayer session lifecycle:
 - local session id and color;
 - lobby roster snapshot;
 - direct-WebRTC host offer / guest answer orchestration;
+- ephemeral Firestore offer/answer signaling lifecycle and fallback to manual SDP exchange;
 - accepted host peer-channel tracking and deterministic teardown;
 - guest callbacks (join/color/roster/status/game-start);
 - host/client role transitions and `gone-session-changed`;
@@ -119,11 +120,13 @@ Touch sustained FIRE must route to `advancedWeaponController`; it must not leave
 
 The browser host remains authoritative for PvP. Visual rays/tracers never own damage.
 
-Direct WebRTC (`directWebRtc.ts`) uses `iceServers: []` by project policy. `NativeRtcDataChannel` owns heartbeat/transport resilience: ~3 s heartbeat, ~15 s expiry, ~6 s grace for transient `disconnected`, deterministic terminal teardown.
+Direct WebRTC (`directWebRtc.ts`) uses the public `stun:stun.cloudflare.com:3478` endpoint for ICE/STUN candidate discovery and configures **no TURN relay**. STUN never carries gameplay packets; after signaling, match traffic remains browser-to-browser. `NativeRtcDataChannel` owns heartbeat/transport resilience: ~3 s heartbeat, ~15 s expiry, ~6 s grace for transient `disconnected`, deterministic terminal teardown. Its `bufferedAmount` getter exposes the native RTC send queue to the adaptive network governor.
+
+`firestoreSignaling.ts` is an ephemeral signaling boundary only. It exchanges gathered WebRTC offer/answer payloads through the isolated `gone_signaling_rooms_v1` collection using Firestore REST, short random room IDs and a two-minute logical TTL. It must never carry `CLIENT_STATE`, snapshots, combat, health, player coordinates or persistent match state. If Firestore is unavailable or not configured, the session controller falls back to the existing manual direct offer/answer path. Firestore configuration is documented in `docs/firestore_multiplayer_signaling.md`.
 
 `selfHostSession.ts` owns only local relay transport/status presentation. It **reuses `multiplayerSessionController`** for host registration and guest client/session callbacks; it must not create a parallel `P2PClient` lifecycle or roster implementation.
 
-`mobileSessionResume.ts` can restart cadence when the same RTC survives background/network transitions. A terminally closed direct RTC still requires new SDP negotiation.
+`mobileSessionResume.ts` can restart cadence when the same RTC survives background/network transitions. A terminally closed direct RTC still requires new SDP negotiation; automatic ICE restart/full renegotiation is a separate future tranche.
 
 `adaptiveSnapshotRate.ts` owns host cadence adaptation. `p2pQualityHud.ts` is presentation only. `remoteShotPresentation.ts` is current binary remote-shot presentation; `legacyRemoteShotPresentation.ts` is compatibility-only.
 
@@ -157,6 +160,8 @@ Vite/Rolldown isolates Three.js into stable `three-vendor` with strict execution
 
 `game-web/vercel.json` owns main-only deployment plus CSP, frame denial, nosniff, referrer and permissions policies. Production verification after merge is separate from GitHub CI: deployment SHA, `/version.json`, headers and runtime logs must be checked on real Vercel when the connector is available.
 
+The only Firebase browser configuration needed for signaling is the public Vite value `VITE_FIREBASE_PROJECT_ID`. Firestore Security Rules must scope unauthenticated signaling access to `gone_signaling_rooms_v1/{roomId}`, forbid collection listing and preserve unrelated project rules. No service-account credential or private Firebase secret belongs in the browser bundle.
+
 ### 12. Rust/WASM
 
 `game-core/` owns pure/performance-sensitive terrain, physics and shared authoritative calculations. DOM/Three/browser ownership does not belong in Rust.
@@ -183,7 +188,11 @@ Do not split modules merely for line-count goals.
 ```text
 UI intent
   -> multiplayerSessionController
-     -> direct WebRTC OR self-host relay transport
+     -> direct WebRTC negotiation
+        -> Firestore signaling OR manual SDP fallback
+        -> STUN candidate discovery (no TURN)
+        -> browser-to-browser WebRTC gameplay
+     -> OR self-host relay transport
      -> SessionRuntimeBridge
         -> gameplay/networkBindings
            -> host-authoritative gameplay
