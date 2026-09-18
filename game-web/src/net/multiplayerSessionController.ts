@@ -10,6 +10,15 @@ import {
   type DirectGuestAnswer,
   type DirectHostOffer,
 } from './directWebRtc.ts';
+import {
+  buildFirestoreInviteUrl,
+  createFirestoreSignalingRoom,
+  deleteFirestoreSignalingRoom,
+  getFirestoreSignalingRoom,
+  isFirestoreSignalingConfigured,
+  publishFirestoreSignalingAnswer,
+  waitForFirestoreSignalingAnswer,
+} from './firestoreSignaling.ts';
 import { P2PClient, type ClientConnectionStatus } from './p2pClient.ts';
 import { P2PHost, type P2PHostOptions } from './p2pHost.ts';
 import { SimpleLagCompensator } from './simpleLagCompensator.ts';
@@ -24,7 +33,7 @@ export type LobbyPlayer = {
 
 export type SessionRole = 'none' | 'host' | 'client';
 export type SessionNoticeKind = 'info' | 'success' | 'error';
-export type SessionInviteKind = 'none' | 'host-link' | 'guest-answer';
+export type SessionInviteKind = 'none' | 'host-link' | 'host-room' | 'guest-answer';
 
 export type MultiplayerSessionSnapshot = {
   generation: number;
@@ -92,6 +101,10 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error ?? 'Errore sessione');
 }
 
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === 'AbortError';
+}
+
 /**
  * Compatibility adapter around the canonical P2PHost. It does not replace or
  * patch host methods at runtime: it only observes the lobby packets the host
@@ -129,6 +142,8 @@ class MultiplayerSessionController {
   private pendingHostOffer: DirectHostOffer | null = null;
   private guestDirectSession: DirectGuestAnswer | null = null;
   private readonly directHostSessions = new Set<DirectHostOffer>();
+  private hostSignalingRoomId: string | null = null;
+  private hostSignalingAbort: AbortController | null = null;
   private notice: MultiplayerSessionSnapshot['notice'] = null;
   private inviteKind: SessionInviteKind = 'none';
   private inviteValue = '';
@@ -266,7 +281,7 @@ class MultiplayerSessionController {
     const host = activeP2PHost;
     if (!host) throw new Error('La stanza host non è attiva.');
     this.closePendingHostOffer();
-    this.inviteKind = 'host-link';
+    this.inviteKind = 'none';
     this.inviteValue = '';
     this.setNotice('GENERAZIONE INVITO DIRETTO...', 'info');
 
@@ -278,6 +293,27 @@ class MultiplayerSessionController {
 
     this.pendingHostOffer = offer;
     this.directHostSessions.add(offer);
+
+    if (isFirestoreSignalingConfigured()) {
+      try {
+        const room = await createFirestoreSignalingRoom(offer.offerCode);
+        if (activeP2PHost !== host || this.pendingHostOffer !== offer) {
+          void deleteFirestoreSignalingRoom(room.roomId);
+          offer.close();
+          throw new Error('La stanza host è cambiata durante la pubblicazione dell’invito.');
+        }
+        this.hostSignalingRoomId = room.roomId;
+        this.inviteKind = 'host-room';
+        this.inviteValue = buildFirestoreInviteUrl(room.roomId);
+        this.watchHostSignalingRoom(host, offer, room.roomId);
+        this.setNotice('INVITO ONLINE PRONTO · CONNESSIONE AUTOMATICA', 'success');
+        return this.inviteValue;
+      } catch (error) {
+        console.warn('[G.O.N.E.] Firestore signaling non disponibile, fallback manuale:', error);
+      }
+    }
+
+    this.inviteKind = 'host-link';
     this.inviteValue = buildDirectInviteUrl(offer.offerCode);
     this.setNotice('INVITO PRONTO. INVIA IL LINK.', 'success');
     return this.inviteValue;
@@ -289,12 +325,15 @@ class MultiplayerSessionController {
       throw new Error('Manca una risposta valida dell’amico.');
     }
 
+    const signalingRoomId = this.hostSignalingRoomId;
+    this.stopHostSignalingRoom(false);
     this.setNotice('COLLEGAMENTO DIRETTO...', 'info');
     await accepted.applyAnswer(answerCode.trim(), (peerId) => {
       this.registerHostPeer(peerId, accepted.channel);
     });
     this.directHostSessions.delete(accepted);
     this.pendingHostOffer = null;
+    if (signalingRoomId) void deleteFirestoreSignalingRoom(signalingRoomId);
     this.setNotice('RISPOSTA ACCETTATA. ATTESA DEL GIOCATORE...', 'success');
 
     window.setTimeout(() => {
@@ -325,6 +364,32 @@ class MultiplayerSessionController {
       return session.answerCode;
     } catch (error) {
       if (activeP2PClient === client) this.setNotice('INVITO NON VALIDO', 'error');
+      throw error;
+    }
+  }
+
+  async startFirestoreGuest(roomId: string, options: GuestStartOptions): Promise<void> {
+    const client = this.createGuestClient(options);
+    this.inviteKind = 'none';
+    this.inviteValue = '';
+    this.setNotice('LETTURA INVITO ONLINE...', 'info');
+
+    try {
+      const room = await getFirestoreSignalingRoom(roomId);
+      if (activeP2PClient !== client) throw new Error('La sessione guest è cambiata durante il signaling.');
+      const session = await createDirectGuestAnswer(room.offerCode, client.playerId);
+      if (activeP2PClient !== client) {
+        session.close();
+        throw new Error('La sessione guest è cambiata durante la negoziazione.');
+      }
+
+      this.guestDirectSession?.close();
+      this.guestDirectSession = session;
+      client.connect(session.channel, localPlayerColor);
+      await publishFirestoreSignalingAnswer(room.roomId, session.answerCode);
+      this.setNotice('RISPOSTA INVIATA · COLLEGAMENTO ALL’HOST...', 'info');
+    } catch (error) {
+      if (activeP2PClient === client) this.setNotice('INVITO ONLINE NON DISPONIBILE', 'error');
       throw error;
     }
   }
@@ -501,7 +566,42 @@ class MultiplayerSessionController {
     };
   }
 
+  private watchHostSignalingRoom(host: P2PHost, offer: DirectHostOffer, roomId: string): void {
+    this.hostSignalingAbort?.abort();
+    const abort = new AbortController();
+    this.hostSignalingAbort = abort;
+
+    void waitForFirestoreSignalingAnswer(roomId, abort.signal).then(async (answerCode) => {
+      if (
+        abort.signal.aborted
+        || activeP2PHost !== host
+        || this.pendingHostOffer !== offer
+        || this.hostSignalingRoomId !== roomId
+      ) return;
+      await this.applyHostAnswer(answerCode);
+    }).catch((error) => {
+      if (isAbortError(error)) return;
+      console.warn('[G.O.N.E.] Attesa risposta Firestore fallita:', error);
+      if (activeP2PHost !== host || this.pendingHostOffer !== offer) return;
+      const staleRoom = this.hostSignalingRoomId;
+      this.stopHostSignalingRoom(false);
+      if (staleRoom) void deleteFirestoreSignalingRoom(staleRoom);
+      this.inviteKind = 'host-link';
+      this.inviteValue = buildDirectInviteUrl(offer.offerCode);
+      this.setNotice('SIGNALING ONLINE NON DISPONIBILE · USA INVITO DIRETTO', 'error');
+    });
+  }
+
+  private stopHostSignalingRoom(deleteRoom: boolean): void {
+    this.hostSignalingAbort?.abort();
+    this.hostSignalingAbort = null;
+    const roomId = this.hostSignalingRoomId;
+    this.hostSignalingRoomId = null;
+    if (deleteRoom && roomId) void deleteFirestoreSignalingRoom(roomId);
+  }
+
   private closePendingHostOffer(): void {
+    this.stopHostSignalingRoom(true);
     if (!this.pendingHostOffer) return;
     try { this.pendingHostOffer.close(); } catch { /* no-op */ }
     this.directHostSessions.delete(this.pendingHostOffer);
