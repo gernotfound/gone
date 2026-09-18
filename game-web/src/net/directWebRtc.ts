@@ -1,8 +1,9 @@
 import type { IDataChannel } from './protocol.ts';
 
-const SIGNAL_VERSION = 1;
+const SIGNAL_VERSION = 2;
 const ICE_GATHER_TIMEOUT_MS = 7000;
-const DATA_CHANNEL_ID = 0;
+const CONTROL_CHANNEL_ID = 0;
+const REALTIME_CHANNEL_ID = 1;
 const DISCONNECTED_GRACE_MS = 6000;
 const HEARTBEAT_INTERVAL_MS = 3000;
 const HEARTBEAT_TIMEOUT_MS = 15000;
@@ -189,14 +190,29 @@ function getOpcode(data: ArrayBuffer | ArrayBufferView): number | null {
 }
 
 function createNegotiatedChannel(pc: RTCPeerConnection): NativeRtcDataChannel {
-    const rawChannel = pc.createDataChannel('gone-game', {
+    const controlChannel = pc.createDataChannel('gone-control', {
         ordered: true,
         negotiated: true,
-        id: DATA_CHANNEL_ID,
+        id: CONTROL_CHANNEL_ID,
     });
-    return new NativeRtcDataChannel(rawChannel, pc);
+    const realtimeChannel = pc.createDataChannel('gone-realtime', {
+        ordered: false,
+        maxRetransmits: 0,
+        negotiated: true,
+        id: REALTIME_CHANNEL_ID,
+    });
+    return new NativeRtcDataChannel(controlChannel, pc, realtimeChannel);
 }
 
+/**
+ * Presents two native RTCDataChannels as the existing single IDataChannel
+ * boundary. Control/combat packets stay reliable+ordered; disposable movement
+ * and world snapshots use an unordered, zero-retransmit channel so packet loss
+ * cannot head-of-line block newer realtime state.
+ *
+ * The third constructor argument is optional for isolated legacy tests/adapters:
+ * when omitted, all traffic uses the supplied channel exactly as before.
+ */
 export class NativeRtcDataChannel implements IDataChannel {
     public binaryType: 'arraybuffer' = 'arraybuffer';
     public onmessage?: ((ev: { data: any }) => void) | null;
@@ -204,48 +220,60 @@ export class NativeRtcDataChannel implements IDataChannel {
     public onclose?: (() => void) | null;
     public onerror?: ((err: any) => void) | null;
 
-    private readonly channel: RTCDataChannel;
+    private readonly controlChannel: RTCDataChannel;
+    private readonly realtimeChannel: RTCDataChannel;
+    private readonly channels: readonly RTCDataChannel[];
     private readonly pc: RTCPeerConnection;
     private disconnectTimer: number | null = null;
     private heartbeatTimer: number | null = null;
     private lastInboundAt = performance.now();
+    private openNotified = false;
     private closeNotified = false;
+    private terminating = false;
     private readonly pageHideHandler: () => void;
 
-    constructor(channel: RTCDataChannel, pc: RTCPeerConnection) {
-        this.channel = channel;
+    constructor(controlChannel: RTCDataChannel, pc: RTCPeerConnection, realtimeChannel?: RTCDataChannel) {
+        this.controlChannel = controlChannel;
+        this.realtimeChannel = realtimeChannel ?? controlChannel;
+        this.channels = this.realtimeChannel === this.controlChannel
+            ? [this.controlChannel]
+            : [this.controlChannel, this.realtimeChannel];
         this.pc = pc;
-        this.channel.binaryType = 'arraybuffer';
         this.pageHideHandler = () => this.close();
 
-        this.channel.addEventListener('open', () => {
-            this.lastInboundAt = performance.now();
-            this.startHeartbeat();
-            this.onopen?.();
-        });
-        this.channel.addEventListener('close', () => this.notifyClose());
-        // Browsers may emit RTCErrorEvent immediately before a normal remote
-        // close. Treat that transport event as disconnect semantics; hard ICE
-        // failures and heartbeat expiry still surface through onerror below.
-        this.channel.addEventListener('error', () => this.terminate());
-        this.channel.addEventListener('message', (event) => this.handleRawMessage(event.data));
+        for (const channel of this.channels) {
+            channel.binaryType = 'arraybuffer';
+            channel.addEventListener('open', () => this.maybeNotifyOpen());
+            channel.addEventListener('close', () => this.terminate());
+            // Browsers may emit RTCErrorEvent immediately before a normal remote
+            // close. Treat that transport event as disconnect semantics; hard ICE
+            // failures and heartbeat expiry still surface through onerror below.
+            channel.addEventListener('error', () => this.terminate());
+            channel.addEventListener('message', (event) => this.handleRawMessage(event.data));
+        }
 
         this.pc.addEventListener('connectionstatechange', () => this.handlePeerConnectionState());
         this.pc.addEventListener('iceconnectionstatechange', () => this.handlePeerConnectionState());
         window.addEventListener('pagehide', this.pageHideHandler);
+        this.maybeNotifyOpen();
+    }
 
-        if (this.channel.readyState === 'open') {
-            this.startHeartbeat();
-        }
+    private maybeNotifyOpen(): void {
+        if (this.openNotified || this.closeNotified) return;
+        if (!this.channels.every((channel) => channel.readyState === 'open')) return;
+        this.openNotified = true;
+        this.lastInboundAt = performance.now();
+        this.startHeartbeat();
+        this.onopen?.();
     }
 
     private handleRawMessage(data: unknown): void {
         this.lastInboundAt = performance.now();
 
         if (data === HEARTBEAT_PING) {
-            if (this.channel.readyState === 'open') {
+            if (this.controlChannel.readyState === 'open') {
                 try {
-                    this.channel.send(HEARTBEAT_PONG);
+                    this.controlChannel.send(HEARTBEAT_PONG);
                 } catch (error) {
                     this.terminate(error instanceof Error ? error : new Error(String(error)));
                 }
@@ -260,7 +288,7 @@ export class NativeRtcDataChannel implements IDataChannel {
     private startHeartbeat(): void {
         if (this.heartbeatTimer !== null) return;
         this.heartbeatTimer = window.setInterval(() => {
-            if (this.channel.readyState !== 'open') return;
+            if (this.controlChannel.readyState !== 'open') return;
 
             const silenceMs = performance.now() - this.lastInboundAt;
             if (silenceMs >= HEARTBEAT_TIMEOUT_MS) {
@@ -269,7 +297,7 @@ export class NativeRtcDataChannel implements IDataChannel {
             }
 
             try {
-                this.channel.send(HEARTBEAT_PING);
+                this.controlChannel.send(HEARTBEAT_PING);
             } catch (error) {
                 this.terminate(error instanceof Error ? error : new Error(String(error)));
             }
@@ -300,19 +328,23 @@ export class NativeRtcDataChannel implements IDataChannel {
     }
 
     private terminate(error?: Error): void {
-        if (this.closeNotified) return;
+        if (this.closeNotified || this.terminating) return;
+        this.terminating = true;
         if (error) this.onerror?.(error);
-        try {
-            if (this.channel.readyState !== 'closed') this.channel.close();
-        } catch {
-            // Continue with deterministic local teardown even if the browser
-            // refuses to close an already-failed SCTP channel.
+        for (const channel of this.channels) {
+            try {
+                if (channel.readyState !== 'closed') channel.close();
+            } catch {
+                // Continue with deterministic local teardown even if the browser
+                // refuses to close an already-failed SCTP channel.
+            }
         }
         try {
             if (this.pc.connectionState !== 'closed') this.pc.close();
         } catch {
             // no-op
         }
+        this.terminating = false;
         this.notifyClose();
     }
 
@@ -343,44 +375,48 @@ export class NativeRtcDataChannel implements IDataChannel {
         }
     }
 
+    private channelFor(data: string | ArrayBuffer | ArrayBufferView): RTCDataChannel {
+        if (typeof data === 'string') return this.controlChannel;
+        const opcode = getOpcode(data);
+        return opcode === CLIENT_STATE_OPCODE || opcode === WORLD_SNAPSHOT_OPCODE
+            ? this.realtimeChannel
+            : this.controlChannel;
+    }
+
     get readyState(): string {
-        return this.channel.readyState;
+        if (this.closeNotified || this.channels.some((channel) => channel.readyState === 'closed')) return 'closed';
+        if (this.channels.some((channel) => channel.readyState === 'closing')) return 'closing';
+        if (this.channels.every((channel) => channel.readyState === 'open')) return 'open';
+        return 'connecting';
     }
 
     get bufferedAmount(): number {
-        return this.channel.bufferedAmount;
+        return this.channels.reduce((sum, channel) => sum + channel.bufferedAmount, 0);
     }
 
     send(data: string | ArrayBuffer | ArrayBufferView): void {
-        if (this.channel.readyState !== 'open') {
+        if (this.readyState !== 'open') {
             throw new Error('WebRTC DataChannel non aperto.');
         }
 
-        // State and snapshots are disposable realtime packets. If a connection
-        // stalls, dropping old movement data is preferable to building a large
-        // reliable-channel queue that would freeze gameplay after recovery.
-        if (typeof data !== 'string') {
-            const opcode = getOpcode(data);
-            if (
-                (opcode === CLIENT_STATE_OPCODE || opcode === WORLD_SNAPSHOT_OPCODE) &&
-                this.channel.bufferedAmount > REALTIME_BACKPRESSURE_BYTES
-            ) {
-                return;
-            }
+        const target = this.channelFor(data);
+        const isRealtime = target === this.realtimeChannel && this.realtimeChannel !== this.controlChannel;
+        if (isRealtime && target.bufferedAmount > REALTIME_BACKPRESSURE_BYTES) {
+            return;
         }
 
         if (typeof data === 'string') {
-            this.channel.send(data);
+            target.send(data);
             return;
         }
         if (data instanceof ArrayBuffer) {
-            this.channel.send(data);
+            target.send(data);
             return;
         }
 
         const copied = new Uint8Array(data.byteLength);
         copied.set(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
-        this.channel.send(copied);
+        target.send(copied);
     }
 
     close(): void {
@@ -425,7 +461,7 @@ export async function createDirectHostOffer(): Promise<DirectHostOffer> {
             }
             const peerId = answer.peerId!;
             // Bind the authoritative host channel to the actual guest identity
-            // before setRemoteDescription can open the negotiated DataChannel.
+            // before setRemoteDescription can open the negotiated DataChannels.
             onPeerIdentified?.(peerId);
             await pc.setRemoteDescription({ type: 'answer', sdp: answer.sdp });
             answerApplied = true;
