@@ -1,7 +1,7 @@
 import type { IDataChannel } from './protocol.ts';
 
 const SIGNAL_VERSION = 1;
-const ICE_GATHER_TIMEOUT_MS = 4500;
+const ICE_GATHER_TIMEOUT_MS = 7000;
 const DATA_CHANNEL_ID = 0;
 const DISCONNECTED_GRACE_MS = 6000;
 const HEARTBEAT_INTERVAL_MS = 3000;
@@ -11,6 +11,7 @@ const HEARTBEAT_PONG = '__gone_pong__';
 const REALTIME_BACKPRESSURE_BYTES = 128 * 1024;
 const CLIENT_STATE_OPCODE = 0x01;
 const WORLD_SNAPSHOT_OPCODE = 0x02;
+export const PUBLIC_STUN_URL = 'stun:stun.cloudflare.com:3478';
 
 interface SignalPayload {
     v: number;
@@ -170,12 +171,12 @@ function inspectSdp(sdp: string): DirectConnectionDiagnostics {
 }
 
 function createPeerConnection(): RTCPeerConnection {
-    // Intentionally no STUN/TURN: no third-party multiplayer/signaling/relay
-    // infrastructure is contacted. The room creator remains the game server.
+    // Public STUN discovers server-reflexive candidates without relaying gameplay.
+    // No TURN server is configured: game traffic remains browser-to-browser.
     return new RTCPeerConnection({
-        iceServers: [],
+        iceServers: [{ urls: PUBLIC_STUN_URL }],
         bundlePolicy: 'max-bundle',
-        iceCandidatePoolSize: 0,
+        iceCandidatePoolSize: 1,
     });
 }
 
@@ -344,6 +345,10 @@ export class NativeRtcDataChannel implements IDataChannel {
 
     get readyState(): string {
         return this.channel.readyState;
+    }
+
+    get bufferedAmount(): number {
+        return this.channel.bufferedAmount;
     }
 
     send(data: string | ArrayBuffer | ArrayBufferView): void {
