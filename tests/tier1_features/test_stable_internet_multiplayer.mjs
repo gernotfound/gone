@@ -24,10 +24,19 @@ export async function run(suite) {
     assert(!direct.includes('turn.cloudflare.com'), 'Cloudflare TURN must not be enabled');
   });
 
+  suite.test('Realtime state uses an unordered zero-retransmit channel', () => {
+    assert(direct.includes("createDataChannel('gone-control'"), 'critical traffic must have a dedicated control channel');
+    assert(direct.includes("createDataChannel('gone-realtime'"), 'movement/snapshot traffic must have a dedicated realtime channel');
+    assert(direct.includes('ordered: false') && direct.includes('maxRetransmits: 0'), 'realtime channel must not retransmit stale state or impose ordering');
+    assert(direct.includes('opcode === CLIENT_STATE_OPCODE || opcode === WORLD_SNAPSHOT_OPCODE'), 'only disposable state/snapshot opcodes should route to realtime');
+    assert(direct.includes("const SIGNAL_VERSION = 2;"), 'dual-channel signaling must reject incompatible v1 direct invitations explicitly');
+  });
+
   suite.test('Real WebRTC send queue is exposed to adaptive backpressure', () => {
     assert(protocol.includes('readonly bufferedAmount?: number;'), 'IDataChannel must expose bufferedAmount');
     assert(direct.includes('get bufferedAmount(): number'), 'native RTC adapter must expose the browser queue');
-    assert(direct.includes('return this.channel.bufferedAmount;'), 'bufferedAmount must proxy the native RTCDataChannel');
+    assert(direct.includes('this.channels.reduce((sum, channel) => sum + channel.bufferedAmount, 0)'), 'bufferedAmount must aggregate the native RTC queues');
+    assert(direct.includes('target.bufferedAmount > REALTIME_BACKPRESSURE_BYTES'), 'only congested realtime traffic should be disposable under backpressure');
   });
 
   suite.test('Firestore is signaling-only and expires pending rooms', () => {
