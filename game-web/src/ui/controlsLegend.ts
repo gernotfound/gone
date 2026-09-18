@@ -1,3 +1,5 @@
+import './controlsLegend.css';
+
 const CONTROL_ROWS: readonly [string, string][] = [
   ['W A S D / Frecce', 'Muoviti'],
   ['Mouse', 'Ruota la visuale'],
@@ -13,7 +15,43 @@ const CONTROL_ROWS: readonly [string, string][] = [
   ['Esc', 'Pausa / torna al menu'],
 ] as const;
 
+const TOUCH_GUIDANCE: readonly [string, string][] = [
+  ['MOVE', 'Joystick sinistro · spingi verso il bordo con intenzione in avanti per lo smart sprint.'],
+  ['AIM / FIRE', 'Swipe destro per la visuale · FIRE può trascinare la mira · ADS per mirare.'],
+  ['AZIONI', 'TAKE · R · JUMP · C · RUN · MAP e cambio arma restano separati e combinabili.'],
+] as const;
+
 let started = false;
+
+function createTouchGuidance(): HTMLElement {
+  const touch = document.createElement('aside');
+  touch.id = 'controls-legend-touch';
+  touch.className = 'w-full rounded-xl border border-purple-500/30 bg-purple-950/20 px-3 py-3 text-xs leading-relaxed text-purple-100 mb-6';
+  touch.setAttribute('aria-label', 'Comandi touch smartphone');
+
+  const heading = document.createElement('div');
+  heading.className = 'gone-controls-touch-title font-black tracking-[0.16em] text-purple-200 uppercase mb-2';
+  heading.textContent = 'TOUCH FPS';
+  touch.appendChild(heading);
+
+  for (const [label, copy] of TOUCH_GUIDANCE) {
+    const row = document.createElement('div');
+    row.className = 'gone-controls-touch-row';
+
+    const key = document.createElement('strong');
+    key.className = 'gone-controls-touch-key';
+    key.textContent = label;
+
+    const text = document.createElement('span');
+    text.className = 'gone-controls-touch-copy';
+    text.textContent = copy;
+
+    row.append(key, text);
+    touch.appendChild(row);
+  }
+
+  return touch;
+}
 
 function createLegendPanel(): HTMLDivElement {
   const panel = document.createElement('div');
@@ -22,6 +60,7 @@ function createLegendPanel(): HTMLDivElement {
   panel.setAttribute('role', 'dialog');
   panel.setAttribute('aria-modal', 'true');
   panel.setAttribute('aria-labelledby', 'controls-menu-title');
+  panel.setAttribute('aria-describedby', 'controls-menu-intro');
 
   const title = document.createElement('h2');
   title.id = 'controls-menu-title';
@@ -29,29 +68,33 @@ function createLegendPanel(): HTMLDivElement {
   title.textContent = 'COMANDI';
 
   const intro = document.createElement('p');
+  intro.id = 'controls-menu-intro';
   intro.className = 'w-full text-sm text-slate-300 mb-5 leading-relaxed';
   intro.textContent = 'Legenda completa per mouse e tastiera. Su smartphone gli stessi comandi sono disponibili tramite HUD touch.';
 
+  const body = document.createElement('div');
+  body.id = 'controls-legend-body';
+  body.className = 'w-full flex flex-col';
+
   const list = document.createElement('div');
+  list.id = 'controls-legend-grid';
   list.className = 'w-full flex flex-col gap-2 mb-6';
   for (const [key, action] of CONTROL_ROWS) {
     const row = document.createElement('div');
-    row.className = 'grid grid-cols-[minmax(112px,0.85fr)_1.4fr] gap-3 items-center rounded-xl border border-slate-700/60 bg-slate-950/55 px-3 py-2.5';
+    row.className = 'gone-controls-row grid grid-cols-[minmax(112px,0.85fr)_1.4fr] gap-3 items-center rounded-xl border border-slate-700/60 bg-slate-950/55 px-3 py-2.5';
 
     const keyElement = document.createElement('kbd');
-    keyElement.className = 'text-cyan-300 font-black font-mono text-xs tracking-wide';
+    keyElement.className = 'gone-controls-key text-cyan-300 font-black font-mono text-xs tracking-wide';
     keyElement.textContent = key;
 
     const actionElement = document.createElement('span');
-    actionElement.className = 'text-slate-200 text-sm';
+    actionElement.className = 'gone-controls-action text-slate-200 text-sm';
     actionElement.textContent = action;
     row.append(keyElement, actionElement);
     list.appendChild(row);
   }
 
-  const touch = document.createElement('div');
-  touch.className = 'w-full rounded-xl border border-purple-500/30 bg-purple-950/20 px-3 py-3 text-xs leading-relaxed text-purple-100 mb-6';
-  touch.textContent = 'SMARTPHONE: joystick sinistro = movimento, swipe destro = visuale, FIRE = spara e trascina per mirare, ADS = mira, TAKE = raccogli, più R / JUMP / C / RUN / MAP e cambio arma.';
+  body.append(list, createTouchGuidance());
 
   const back = document.createElement('button');
   back.id = 'btn-back-controls';
@@ -59,7 +102,7 @@ function createLegendPanel(): HTMLDivElement {
   back.className = 'w-full min-h-12 bg-slate-800 border border-slate-600/50 hover:bg-slate-700 text-white font-bold text-lg py-3 rounded-xl transition-all active:scale-95 shadow-md uppercase tracking-wider';
   back.textContent = 'INDIETRO';
 
-  panel.append(title, intro, list, touch, back);
+  panel.append(title, intro, body, back);
   return panel;
 }
 

@@ -121,6 +121,7 @@ jobs:
           run_smoke competitive_mobile_controls_smoke.mjs rescue-competitive-mobile.log
           run_smoke mobile_smart_sprint_smoke.mjs rescue-mobile-smart-sprint.log
           run_smoke mobile_prematch_layout_smoke.mjs rescue-mobile-prematch.log
+          run_smoke mobile_controls_legend_smoke.mjs rescue-mobile-controls-legend.log
           run_smoke mobile_adaptive_layout_smoke.mjs rescue-mobile-adaptive.log
           run_smoke mobile_layout_editor_smoke.mjs rescue-mobile-layout-editor.log
           run_smoke mobile_reload_progress_smoke.mjs rescue-mobile-reload-progress.log
@@ -143,6 +144,7 @@ jobs:
             rescue-competitive-mobile.log
             rescue-mobile-smart-sprint.log
             rescue-mobile-prematch.log
+            rescue-mobile-controls-legend.log
             rescue-mobile-adaptive.log
             rescue-mobile-layout-editor.log
             rescue-mobile-reload-progress.log
