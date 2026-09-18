@@ -16,10 +16,12 @@ import {
 } from '../models/bionicSpider.ts';
 
 export const BIONIC_SPIDER_MAX_HP = 100;
-export const BIONIC_SPIDER_MOVE_SPEED = (12 + 24) / 2;
+export const BIONIC_SPIDER_MOVE_SPEED = ((12 + 24) / 2) * 0.8;
 export const BIONIC_SPIDER_MELEE_DAMAGE = 20;
-export const BIONIC_SPIDER_MAX_ACTIVE = 8;
+export const BIONIC_SPIDER_MAX_ACTIVE = 5;
 export const BIONIC_SPIDER_CONTACT_RADIUS = 2.15 * BIONIC_SPIDER_SCALE;
+export const BIONIC_SPIDER_COLLISION_RADIUS = 2.7 * BIONIC_SPIDER_SCALE;
+export const BIONIC_SPIDER_LIMB_DAMAGE_MULTIPLIER = 0.5;
 
 const CRATER_GRID = 200;
 const SPAWN_MIN_DISTANCE = 105;
@@ -32,6 +34,8 @@ const DEATH_ANIM_DURATION = 1.25;
 const CORPSE_LIFETIME = 5.5;
 const ATTACK_COOLDOWN = 0.82;
 const ATTACK_ANIM_DURATION = 0.30;
+const MOB_COLLISION_PASSES = 3;
+const MOB_MIN_SEPARATION = BIONIC_SPIDER_COLLISION_RADIUS * 2;
 
 // The supplied preview advances actionTime by 0.02/frame and multiplies it by
 // 0.8 for the gait cycle. At its intended ~60 Hz that is 0.96 cycles/second.
@@ -207,7 +211,7 @@ export class BionicSpiderEnemySystem {
     const region = intersection.object.userData.bionicSpiderHitRegion as BionicSpiderHitRegion | undefined;
     const headshot = region === 'head';
     let damage = calculateWeaponDamageAtDistance(weaponId, intersection.distance, headshot);
-    if (region === 'limb') damage *= 0.72;
+    if (region === 'limb') damage *= BIONIC_SPIDER_LIMB_DAMAGE_MULTIPLIER;
     if (damage <= 0) return false;
     this.damageEnemy(id, damage, shotDirection);
     return true;
@@ -400,16 +404,11 @@ export class BionicSpiderEnemySystem {
     }
 
     enemy.model.root.rotation.y = enemy.yaw + Math.PI;
-    enemy.model.root.position.x = THREE.MathUtils.clamp(
-      enemy.model.root.position.x + Math.sin(enemy.yaw) * enemy.speed * delta,
-      -WORLD_LIMIT,
-      WORLD_LIMIT,
-    );
-    enemy.model.root.position.z = THREE.MathUtils.clamp(
-      enemy.model.root.position.z + Math.cos(enemy.yaw) * enemy.speed * delta,
-      -WORLD_LIMIT,
-      WORLD_LIMIT,
-    );
+    const nextX = enemy.model.root.position.x + Math.sin(enemy.yaw) * enemy.speed * delta;
+    const nextZ = enemy.model.root.position.z + Math.cos(enemy.yaw) * enemy.speed * delta;
+    const resolvedPosition = this.resolveMobCollisionPosition(enemy, nextX, nextZ);
+    enemy.model.root.position.x = resolvedPosition.x;
+    enemy.model.root.position.z = resolvedPosition.z;
     enemy.model.root.position.y = THREE.MathUtils.lerp(
       enemy.model.root.position.y,
       enemy.groundY,
@@ -470,6 +469,40 @@ export class BionicSpiderEnemySystem {
       enemy.attackTimer = ATTACK_ANIM_DURATION;
       this.onMeleeDamage?.(BIONIC_SPIDER_MELEE_DAMAGE, enemy.id);
     }
+  }
+
+  private resolveMobCollisionPosition(enemy: EnemyState, nextX: number, nextZ: number): { x: number; z: number } {
+    let x = THREE.MathUtils.clamp(nextX, -WORLD_LIMIT, WORLD_LIMIT);
+    let z = THREE.MathUtils.clamp(nextZ, -WORLD_LIMIT, WORLD_LIMIT);
+    const minDistanceSq = MOB_MIN_SEPARATION * MOB_MIN_SEPARATION;
+
+    for (let pass = 0; pass < MOB_COLLISION_PASSES; pass += 1) {
+      let adjusted = false;
+      for (const other of this.enemies.values()) {
+        if (other.id === enemy.id || !other.alive) continue;
+        const otherX = other.model.root.position.x;
+        const otherZ = other.model.root.position.z;
+        let dx = x - otherX;
+        let dz = z - otherZ;
+        const distanceSq = dx * dx + dz * dz;
+        if (distanceSq >= minDistanceSq) continue;
+
+        let distance = Math.sqrt(distanceSq);
+        if (distance < 1e-5) {
+          const angle = ((enemy.id * 53 + other.id * 97) % 360) * (Math.PI / 180);
+          dx = Math.cos(angle);
+          dz = Math.sin(angle);
+          distance = 1;
+        }
+        const scale = MOB_MIN_SEPARATION / distance;
+        x = THREE.MathUtils.clamp(otherX + dx * scale, -WORLD_LIMIT, WORLD_LIMIT);
+        z = THREE.MathUtils.clamp(otherZ + dz * scale, -WORLD_LIMIT, WORLD_LIMIT);
+        adjusted = true;
+      }
+      if (!adjusted) break;
+    }
+
+    return { x, z };
   }
 
   private probeTerrain(enemy: EnemyState): void {

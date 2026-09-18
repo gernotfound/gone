@@ -12,14 +12,23 @@ import {
   setBionicSpiderDamageVisual,
 } from '../../game-web/src/models/bionicSpider.ts';
 import {
+  BIONIC_SPIDER_COLLISION_RADIUS,
   BIONIC_SPIDER_CONTACT_RADIUS,
+  BIONIC_SPIDER_LIMB_DAMAGE_MULTIPLIER,
+  BIONIC_SPIDER_MAX_ACTIVE,
   BIONIC_SPIDER_MAX_HP,
   BIONIC_SPIDER_MELEE_DAMAGE,
   BIONIC_SPIDER_MOVE_SPEED,
   BionicSpiderEnemySystem,
   craterCenterForCell,
 } from '../../game-web/src/gameplay/bionicSpiderEnemies.ts';
-import { assert, assertCloseTo, assertEqual, assertGreaterThan } from '../helpers/assertions.mjs';
+import {
+  assert,
+  assertCloseTo,
+  assertEqual,
+  assertGreaterThan,
+  assertGreaterThanOrEqual,
+} from '../helpers/assertions.mjs';
 
 export async function run(suite) {
   suite.test('Armored cyber spider preserves the supplied model proportions and connected hierarchy exactly', () => {
@@ -72,8 +81,6 @@ export async function run(suite) {
       assertCloseTo(leg.defaultTargetLocal.y, 14 * BIONIC_SPIDER_SOURCE_UNIT, 1e-9, `Leg ${i} ankle target must stay L3 above ground`);
     }
 
-    // Pose one leg at its authored rest target. The talon should end on the
-    // floor while the foot/ankle anchor stays L3 above it.
     const scene = new THREE.Scene();
     scene.add(model.root);
     model.root.updateMatrixWorld(true);
@@ -92,10 +99,13 @@ export async function run(suite) {
     disposeBionicSpiderModel(model);
   });
 
-  suite.test('Enemy balance follows the requested HP and mean walk/run speed', () => {
+  suite.test('Enemy balance enforces 20% slower movement, five-spider cap and half damage on legs', () => {
     assertEqual(BIONIC_SPIDER_MAX_HP, 100);
-    assertCloseTo(BIONIC_SPIDER_MOVE_SPEED, (12 + 24) / 2, 1e-6, 'Speed must be mean of 12m/s walk and 24m/s sprint');
+    assertCloseTo(BIONIC_SPIDER_MOVE_SPEED, ((12 + 24) / 2) * 0.8, 1e-6, 'Spider chase speed must be reduced by exactly 20%');
+    assertEqual(BIONIC_SPIDER_MAX_ACTIVE, 5, 'No more than five spiders may exist at once');
+    assertEqual(BIONIC_SPIDER_LIMB_DAMAGE_MULTIPLIER, 0.5, 'Leg hits must apply exactly 50% weapon damage');
     assertGreaterThan(BIONIC_SPIDER_CONTACT_RADIUS, 8, 'Contact radius must keep the existing juggernaut gameplay footprint');
+    assertGreaterThan(BIONIC_SPIDER_COLLISION_RADIUS, BIONIC_SPIDER_CONTACT_RADIUS, 'Mob collision radius must cover the visible spider footprint');
   });
 
   suite.test('Procedural enemy spawn centers reproduce deterministic crater cells', () => {
@@ -105,6 +115,67 @@ export async function run(suite) {
     assertCloseTo(a.z, b.z, 1e-9);
     assert(a.x >= 600 && a.x < 800, 'Crater X must remain inside its 200m terrain cell');
     assert(a.z >= -400 && a.z < -200, 'Crater Z must remain inside its 200m terrain cell');
+  });
+
+  suite.test('Spawner refuses a sixth spider even when every crater key is unique', () => {
+    const scene = new THREE.Scene();
+    const system = new BionicSpiderEnemySystem();
+    system.init(scene, () => 0, () => {});
+    system.update(0, new THREE.Vector3(0, 0, 500), true, true, false);
+
+    const ids = [];
+    for (let i = 0; i < BIONIC_SPIDER_MAX_ACTIVE; i += 1) {
+      ids.push(system.spawnAtCrater(i * 40, 0, `cap-${i}`));
+    }
+    assert(ids.every((id) => id !== null), 'First five unique crater spawns must succeed');
+    assertEqual(system.getActiveCount(), 5, 'System must expose exactly five active spider entities at the cap');
+    assertEqual(system.spawnAtCrater(240, 0, 'cap-sixth'), null, 'Sixth spider spawn must be rejected');
+    assertEqual(system.getActiveCount(), 5, 'Rejected sixth spawn must not change active count');
+    system.dispose();
+  });
+
+  suite.test('Living spiders maintain deterministic mob separation instead of overlapping', () => {
+    const scene = new THREE.Scene();
+    const system = new BionicSpiderEnemySystem();
+    system.init(scene, () => 0, () => {});
+    system.update(0, new THREE.Vector3(0, 0, 100), true, true, false);
+    const firstId = system.spawnAtCrater(0, 0, 'collision-a');
+    const secondId = system.spawnAtCrater(4, 0, 'collision-b');
+    assert(firstId !== null && secondId !== null, 'Collision test requires two spiders');
+
+    for (let i = 0; i < 13; i += 1) {
+      system.update(0.1, new THREE.Vector3(0, 0, 100), true, true, false);
+    }
+    const first = system.getSnapshot(firstId);
+    const second = system.getSnapshot(secondId);
+    const separation = Math.hypot(first.x - second.x, first.z - second.z);
+    assertGreaterThanOrEqual(
+      separation,
+      BIONIC_SPIDER_COLLISION_RADIUS * 2 - 1e-3,
+      `Spider centers must stay outside the combined collision footprint; got ${separation}`,
+    );
+    system.dispose();
+  });
+
+  suite.test('Raycast hits on a leg apply exactly half of the weapon body damage', () => {
+    const scene = new THREE.Scene();
+    const system = new BionicSpiderEnemySystem();
+    system.init(scene, () => 0, () => {});
+    system.update(0, new THREE.Vector3(0, 0, 100), true, true, false);
+    const id = system.spawnAtCrater(0, 0, 'limb-damage');
+    assert(id !== null, 'Limb damage test must spawn a spider');
+
+    const limbObject = new THREE.Object3D();
+    limbObject.userData.bionicSpiderEnemyId = id;
+    limbObject.userData.bionicSpiderHitRegion = 'limb';
+    const accepted = system.applyRaycastHit(
+      { object: limbObject, distance: 0 },
+      0,
+      new THREE.Vector3(1, 0, 0),
+    );
+    assert(accepted, 'Leg raycast hit must be accepted');
+    assertCloseTo(system.getSnapshot(id).hp, 91, 1e-6, 'AR body damage 18 must become 9 damage on a leg');
+    system.dispose();
   });
 
   suite.test('Spider emerges with head clear of ground, chases, melees, flinches and dies at 0 HP', () => {
