@@ -156,17 +156,25 @@ try {
     return progress > Math.max(0.08, initial + 0.05) && progress < 0.98;
   }, started.progress), 'reload progress advance', LOCAL_UI_TIMEOUT);
 
-  const mid = await page.evaluate(() => {
-    const hud = document.getElementById('advanced-weapon-hud');
-    const track = document.getElementById('advanced-weapon-reload-track');
-    const fill = document.getElementById('advanced-weapon-reload-fill');
-    return {
-      progress: window.goneWeapons.getReloadProgress(),
-      fillTransform: fill.style.transform,
-      trackOpacity: track.style.opacity,
-      hudHeight: hud.getBoundingClientRect().height,
-    };
-  });
+  // Sample after two animation frames so the weapon owner's continuous RAF has
+  // refreshed the fill for the same canonical timer window we inspect below.
+  // This preserves the accuracy assertion instead of widening its tolerance
+  // when a busy CI runner executes Playwright between render frames.
+  const mid = await page.evaluate(() => new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        const hud = document.getElementById('advanced-weapon-hud');
+        const track = document.getElementById('advanced-weapon-reload-track');
+        const fill = document.getElementById('advanced-weapon-reload-fill');
+        resolve({
+          progress: window.goneWeapons.getReloadProgress(),
+          fillTransform: fill.style.transform,
+          trackOpacity: track.style.opacity,
+          hudHeight: hud.getBoundingClientRect().height,
+        });
+      });
+    });
+  }));
   const fillScale = scaleFrom(mid.fillTransform);
   assert(mid.trackOpacity === '1', 'reload track must stay visible while reloading');
   assert(mid.progress > started.progress, `reload progress must advance (${started.progress} -> ${mid.progress})`);
