@@ -9,8 +9,9 @@ Read this first. This is the dense working context for `gernotfound/gone`; use i
 - Vercel is configured for `main` deployment only. Never manually deploy a feature branch.
 - Recheck current `main` before branching/merging; do not rely on a remembered SHA.
 - The owner tests physical iPhone/PWA. Treat those reports as hardware QA; browser emulation is necessary but not equivalent.
-- No paid/external multiplayer runtime infrastructure: no hosted signaling/relay/database/STUN/TURN/PeerJS cloud/Firebase/Supabase.
-- Direct `iceServers: []` connectivity still depends on LAN/NAT/IPv6. A terminal RTC close requires renegotiation; never claim magic reconnect.
+- Multiplayer runtime must remain zero-cost under the owner-approved architecture: Vercel + the owner's existing Firestore project for ephemeral signaling + public free STUN. Do not add paid relays, TURN, PeerJS cloud, Supabase or another hosted multiplayer provider without explicit owner approval.
+- Firestore is signaling-only. Never put gameplay snapshots, coordinates, combat, health or persistent match state in Firestore.
+- Direct WebRTC uses public STUN but **no TURN**; some restrictive NAT/firewall pairs can still fail. A terminal RTC close still requires renegotiation until explicit reconnect work is implemented; never claim magic reconnect.
 - There are currently no production users requiring data migrations/backfills. Prefer current-state cleanup and canonical contracts over retroactive compatibility migrations unless explicitly requested.
 
 ## Production / Vercel
@@ -70,6 +71,7 @@ It owns:
 - local session id and local player color;
 - lobby roster snapshot;
 - direct WebRTC host offer / guest answer orchestration;
+- Firestore signaling room creation/wait/publish/cleanup and manual-SDP fallback;
 - accepted host peer channels and deterministic teardown;
 - P2P guest callbacks: join/color/roster/status/game-start;
 - role transition generation and `gone-session-changed`;
@@ -77,7 +79,9 @@ It owns:
 
 It must **not** import DOM or `engine.ts`.
 
-`ui/lobby.ts` is presentation + intent only. It may render roster/color/invite/answer controls and forward actions to `multiplayerSessionController`; it must not construct `P2PClient`, `P2PHost`, direct SDP sessions or lag compensators.
+`ui/lobby.ts` is presentation + intent only. It may render roster/color/invite/answer controls and forward actions to `multiplayerSessionController`; it must not construct `P2PClient`, `P2PHost`, direct SDP sessions, Firestore rooms or lag compensators.
+
+`net/firestoreSignaling.ts` is a transport boundary for ephemeral offer/answer signaling only. It may call Firestore REST and encode/decode room documents, but it must not own `P2PHost`, `P2PClient`, roster, combat or gameplay state.
 
 `gameplay/engine.ts` registers a typed `SessionRuntimeBridge` once. The bridge attaches host/client gameplay networking, clears/removes remote players, applies local color presentation and exposes gameplay readiness. Do not replace this with `window.goneGame` lookups from session code.
 
@@ -91,10 +95,12 @@ It must **not** import DOM or `engine.ts`.
 
 ## Direct WebRTC / network authority
 
-- `net/directWebRtc.ts`: manual offer/answer, `iceServers: []`, star host↔guests.
+- `net/directWebRtc.ts`: gathered SDP offer/answer, public `stun:stun.cloudflare.com:3478`, star host↔guests, **no TURN**.
+- `net/firestoreSignaling.ts`: optional automatic offer/answer exchange through `gone_signaling_rooms_v1`; REST only, two-minute logical TTL, gameplay forbidden.
+- If `VITE_FIREBASE_PROJECT_ID` is absent or Firestore signaling fails, preserve the manual direct offer/answer path.
 - Browser host is authoritative.
 - Binary core opcodes: 0x01 CLIENT_STATE, 0x02 WORLD_SNAPSHOT, 0x03 FIRE_HITSCAN, 0x04 HIT_CONFIRMED.
-- `NativeRtcDataChannel`: ~3 s heartbeat, ~15 s timeout, ~6 s grace for transient `disconnected`.
+- `NativeRtcDataChannel`: ~3 s heartbeat, ~15 s timeout, ~6 s grace for transient `disconnected`; its `bufferedAmount` getter exposes the real RTC send queue.
 - `adaptiveSnapshotRate.ts`: host cadence adaptation; normal target ~30 Hz.
 - `mobileSessionResume.ts`: release input on hidden/offline and restore safe cadence on surviving RTC after foreground/online.
 - Terminal direct RTC failure still needs new SDP negotiation; `gone-reconnect-requested` is intent, not transparent reconnection.
@@ -233,6 +239,8 @@ Current baseline:
 
 - `vercel.json`: CSP, frame denial, nosniff, referrer/permissions policies and deployment rules.
 - Gyroscope/accelerometer self-only; camera/mic/geolocation/payment/USB/magnetometer denied.
+- Firestore signaling uses only the public `VITE_FIREBASE_PROJECT_ID`; never put a service-account credential/private Firebase secret in the browser bundle.
+- Firestore Security Rules must scope unauthenticated signaling access to `gone_signaling_rooms_v1/{roomId}`, deny collection listing and preserve unrelated rules in the owner's shared Firebase project.
 - `observability/clientDiagnostics.ts`: bounded privacy-safe failure diagnostics, not continuous analytics.
 - Allowed context is coarse: build, event kind/message/stack, pathname, device bucket, input mode, standalone/online/visibility.
 - Do not upload raw UA, full query URLs, identities, positions, chat/session codes or continuous FPS.
@@ -241,7 +249,7 @@ Current baseline:
 ## High-value files
 
 - Composition/health: `src/main.ts`, `runtime/runtimeKernel.ts`, `runtime/browserLifecycle.ts`, `runtime/startClientRuntime.ts`.
-- Session: `net/multiplayerSessionController.ts`, `ui/lobby.ts`, `net/directWebRtc.ts`, `net/selfHostSession.ts`, `net/relayWebSocket.ts`.
+- Session: `net/multiplayerSessionController.ts`, `ui/lobby.ts`, `net/directWebRtc.ts`, `net/firestoreSignaling.ts`, `net/selfHostSession.ts`, `net/relayWebSocket.ts`.
 - Gameplay/network bridge: `gameplay/engine.ts`, `gameplay/networkBindings.ts`, `gameplay/remotePlayerRegistry.ts`.
 - Ammo/weapons: `gameplay/advancedWeaponController.ts`, `weapons/weaponConfig.ts`, `weapons/weaponCombatStats.ts`.
 - Interaction/menu: `gameplay/craterSupplyPickups.ts`, `controls/playerInput.ts`, `ui/controlsLegend.ts`, `ui/menu.ts`.
@@ -267,7 +275,7 @@ Do not refactor for line count alone.
 
 1. Read this file + `ARCHITECTURE.md`; inspect only relevant owners.
 2. Recheck `main`; dedicated branch only.
-3. Preserve host authority, finite ammo and zero-external-service networking unless task explicitly changes them.
+3. Preserve host authority, finite ammo and the approved zero-cost networking boundary unless the task explicitly changes them.
 4. Fix the canonical owner; do not add a patch layer.
 5. Preserve compatibility facade members used by browser smokes/adapters.
 6. Add deterministic Tier tests for architecture/contracts and real Chromium smoke for affected interaction/network behavior.
