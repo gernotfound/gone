@@ -214,7 +214,6 @@ export async function publishFirestoreSignalingAnswer(roomId: string, answerCode
 export async function waitForFirestoreSignalingAnswer(roomId: string, signal?: AbortSignal): Promise<string> {
   const normalized = validateRoomId(roomId);
   const startedAt = Date.now();
-  let attempts = 0;
 
   while (!signal?.aborted) {
     const room = await getFirestoreSignalingRoom(normalized, signal);
@@ -222,7 +221,6 @@ export async function waitForFirestoreSignalingAnswer(roomId: string, signal?: A
 
     const elapsed = Date.now() - startedAt;
     if (elapsed >= ROOM_TTL_MS) throw new Error('Invito multiplayer scaduto.');
-    attempts += 1;
     const delay = elapsed < 5000
       ? POLL_FAST_MS
       : elapsed < 30_000
