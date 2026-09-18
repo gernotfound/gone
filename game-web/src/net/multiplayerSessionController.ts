@@ -370,6 +370,7 @@ class MultiplayerSessionController {
 
   async startFirestoreGuest(roomId: string, options: GuestStartOptions): Promise<void> {
     const client = this.createGuestClient(options);
+    let session: DirectGuestAnswer | null = null;
     this.inviteKind = 'none';
     this.inviteValue = '';
     this.setNotice('LETTURA INVITO ONLINE...', 'info');
@@ -377,19 +378,37 @@ class MultiplayerSessionController {
     try {
       const room = await getFirestoreSignalingRoom(roomId);
       if (activeP2PClient !== client) throw new Error('La sessione guest è cambiata durante il signaling.');
-      const session = await createDirectGuestAnswer(room.offerCode, client.playerId);
+      session = await createDirectGuestAnswer(room.offerCode, client.playerId);
       if (activeP2PClient !== client) {
         session.close();
+        session = null;
         throw new Error('La sessione guest è cambiata durante la negoziazione.');
       }
 
       this.guestDirectSession?.close();
       this.guestDirectSession = session;
       client.connect(session.channel, localPlayerColor);
-      await publishFirestoreSignalingAnswer(room.roomId, session.answerCode);
+
+      try {
+        await publishFirestoreSignalingAnswer(room.roomId, session.answerCode);
+      } catch (publishError) {
+        // A failed fetch can be ambiguous if Firestore committed the PATCH before
+        // the response was lost. Read the room once before tearing down a channel
+        // that the host may already be applying.
+        const confirmedRoom = await getFirestoreSignalingRoom(room.roomId).catch(() => null);
+        if (confirmedRoom?.answerCode !== session.answerCode) throw publishError;
+      }
+
       this.setNotice('RISPOSTA INVIATA · COLLEGAMENTO ALL’HOST...', 'info');
     } catch (error) {
-      if (activeP2PClient === client) this.setNotice('INVITO ONLINE NON DISPONIBILE', 'error');
+      if (session) {
+        if (this.guestDirectSession === session) this.guestDirectSession = null;
+        try { session.close(); } catch { /* no-op */ }
+      }
+      if (activeP2PClient === client) {
+        try { client.disconnect(); } catch { /* no-op */ }
+        this.setNotice('INVITO ONLINE NON DISPONIBILE', 'error');
+      }
       throw error;
     }
   }
