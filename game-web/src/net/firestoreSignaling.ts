@@ -51,17 +51,9 @@ function validateSignal(value: string, label: string): string {
 }
 
 function randomRoomId(): string {
-  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
-    return crypto.randomUUID().replace(/-/g, '').toLowerCase();
-  }
   const bytes = new Uint8Array(16);
-  if (typeof crypto !== 'undefined' && 'getRandomValues' in crypto) {
-    crypto.getRandomValues(bytes);
-    return Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
-  }
-  let fallback = '';
-  for (let i = 0; i < 32; i += 1) fallback += Math.floor(Math.random() * 16).toString(16);
-  return fallback;
+  globalThis.crypto.getRandomValues(bytes);
+  return Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
 }
 
 function baseDocumentsUrl(): string {
@@ -110,13 +102,12 @@ function roomFromDocument(roomId: string, document: FirestoreDocument): Signalin
 }
 
 async function firestoreFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers);
+  headers.set('Content-Type', 'application/json');
   const response = await fetch(url, {
     cache: 'no-store',
     ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(init.headers ?? {}),
-    },
+    headers,
   });
   if (response.ok) return response;
 
@@ -136,11 +127,22 @@ function wait(ms: number, signal?: AbortSignal): Promise<void> {
       reject(new DOMException('Operazione annullata.', 'AbortError'));
       return;
     }
-    const timer = window.setTimeout(resolve, ms);
-    signal?.addEventListener('abort', () => {
+
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    };
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
       window.clearTimeout(timer);
       reject(new DOMException('Operazione annullata.', 'AbortError'));
-    }, { once: true });
+    };
+    const timer = window.setTimeout(finish, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
   });
 }
 
