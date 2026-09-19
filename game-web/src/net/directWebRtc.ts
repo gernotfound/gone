@@ -13,6 +13,8 @@ import {
 const SIGNAL_VERSION = 2;
 const ICE_GATHER_TIMEOUT_MS = 7000;
 const ICE_GATHER_HARD_TIMEOUT_MS = 15_000;
+const ICE_CANDIDATE_ATTEMPTS = 2;
+const ICE_RETRY_DELAY_MS = 250;
 const CONTROL_CHANNEL_ID = 0;
 const REALTIME_CHANNEL_ID = 1;
 const DISCONNECTED_GRACE_MS = 6000;
@@ -72,6 +74,23 @@ type NativeTransport = {
 };
 type RecoveryTransport = NativeTransport & { generation: number };
 type RecoveryHandler = (signal: AbortSignal) => Promise<RecoveryTransport | null>;
+
+class ZeroIceCandidatesError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'ZeroIceCandidatesError';
+    }
+}
+
+function isZeroIceCandidatesError(error: unknown): error is ZeroIceCandidatesError {
+    return error instanceof Error && error.name === 'ZeroIceCandidatesError';
+}
+
+async function waitForIceRetry(attempt: number): Promise<void> {
+    await new Promise<void>((resolve) => {
+        window.setTimeout(resolve, ICE_RETRY_DELAY_MS * attempt);
+    });
+}
 
 function randomId(): string {
     const raw = typeof crypto !== 'undefined' && 'randomUUID' in crypto
@@ -146,7 +165,7 @@ async function waitForIceGatheringComplete(pc: RTCPeerConnection, signal?: Abort
     throwIfAborted(signal);
     if (pc.iceGatheringState === 'complete') {
         if (hasIceCandidate(pc)) return;
-        throw new Error('Nessun candidato ICE disponibile per la connessione WebRTC.');
+        throw new ZeroIceCandidatesError('Nessun candidato ICE disponibile per la connessione WebRTC.');
     }
 
     await new Promise<void>((resolve, reject) => {
@@ -180,7 +199,7 @@ async function waitForIceGatheringComplete(pc: RTCPeerConnection, signal?: Abort
             refreshCandidateState();
             if (pc.iceGatheringState === 'complete') {
                 if (candidateSeen) finish();
-                else fail(new Error('Nessun candidato ICE disponibile per la connessione WebRTC.'));
+                else fail(new ZeroIceCandidatesError('Nessun candidato ICE disponibile per la connessione WebRTC.'));
                 return;
             }
             if (softTimeoutElapsed && candidateSeen) finish();
@@ -198,7 +217,7 @@ async function waitForIceGatheringComplete(pc: RTCPeerConnection, signal?: Abort
         const hardTimer = window.setTimeout(() => {
             refreshCandidateState();
             if (candidateSeen) finish();
-            else fail(new Error('Timeout ICE: nessun candidato di rete disponibile.'));
+            else fail(new ZeroIceCandidatesError('Timeout ICE: nessun candidato di rete disponibile.'));
         }, ICE_GATHER_HARD_TIMEOUT_MS);
 
         pc.addEventListener('icecandidate', onCandidate);
@@ -718,27 +737,40 @@ export class NativeRtcDataChannel implements IDataChannel {
     }
 }
 
-export async function createDirectHostOffer(): Promise<DirectHostOffer> {
+export async function createDirectHostOffer(retryAttempt = 1): Promise<DirectHostOffer> {
     const pc = createPeerConnection();
     const connectionId = randomId();
     const channel = createNegotiatedChannel(pc);
+    let localSdp = '';
+    let offerCode = '';
 
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    await waitForIceGatheringComplete(pc);
+    try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        await waitForIceGatheringComplete(pc);
 
-    if (!pc.localDescription?.sdp) {
-        pc.close();
-        throw new Error('Impossibile creare l\'invito WebRTC.');
+        if (!pc.localDescription?.sdp) {
+            throw new Error('Impossibile creare l\'invito WebRTC.');
+        }
+
+        localSdp = pc.localDescription.sdp;
+        offerCode = encodeSignal({
+            v: SIGNAL_VERSION,
+            type: 'offer',
+            connectionId,
+            sdp: localSdp,
+        });
+    } catch (error) {
+        try { channel.close(); } catch { /* no-op */ }
+        if (pc.connectionState !== 'closed') {
+            try { pc.close(); } catch { /* no-op */ }
+        }
+        if (isZeroIceCandidatesError(error) && retryAttempt < ICE_CANDIDATE_ATTEMPTS) {
+            await waitForIceRetry(retryAttempt);
+            return createDirectHostOffer(retryAttempt + 1);
+        }
+        throw error;
     }
-
-    const localSdp = pc.localDescription.sdp;
-    const offerCode = encodeSignal({
-        v: SIGNAL_VERSION,
-        type: 'offer',
-        connectionId,
-        sdp: localSdp,
-    });
 
     let answerApplied = false;
     let recoveryPeerId: string | null = null;
@@ -828,14 +860,19 @@ export async function createDirectHostOffer(): Promise<DirectHostOffer> {
     };
 }
 
-export async function createDirectGuestAnswer(offerCode: string, peerId: string): Promise<DirectGuestAnswer> {
+export async function createDirectGuestAnswer(
+    offerCode: string,
+    peerId: string,
+    retryAttempt = 1,
+): Promise<DirectGuestAnswer> {
     if (!peerId || peerId.length < 3) throw new Error('Identità giocatore non valida.');
     const offer = decodeSignal(offerCode, 'offer');
     const pc = createPeerConnection();
+    let channel: NativeRtcDataChannel | null = null;
 
     try {
         await pc.setRemoteDescription({ type: 'offer', sdp: offer.sdp });
-        const channel = createNegotiatedChannel(pc);
+        channel = createNegotiatedChannel(pc);
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         await waitForIceGatheringComplete(pc);
@@ -911,13 +948,21 @@ export async function createDirectGuestAnswer(offerCode: string, peerId: string)
             channel,
             diagnostics: inspectSdp(localSdp),
             close() {
-                try { channel.close?.(); } finally {
+                try { channel?.close(); } finally {
                     if (pc.connectionState !== 'closed') pc.close();
                 }
             },
         };
     } catch (error) {
-        pc.close();
+        if (channel) {
+            try { channel.close(); } catch { /* no-op */ }
+        } else {
+            try { pc.close(); } catch { /* no-op */ }
+        }
+        if (isZeroIceCandidatesError(error) && retryAttempt < ICE_CANDIDATE_ATTEMPTS) {
+            await waitForIceRetry(retryAttempt);
+            return createDirectGuestAnswer(offerCode, peerId, retryAttempt + 1);
+        }
         throw error;
     }
 }
