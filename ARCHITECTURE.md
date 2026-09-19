@@ -92,7 +92,7 @@ Low-level keyboard/mouse state belongs in `controls/`. Device gestures belong in
 - `pubgTouchControls.ts`: ammo-safe FIRE/drag, claw FIRE, ADS drag, gyro and iOS-safe actions.
 - `competitiveTouchControls.ts`: simultaneous movement/look/ADS/map-open combat composition.
 - `touchLayoutEditor.ts`: persistent draggable offsets.
-- `mobileSessionResume.ts`: hidden/offline suspension and foreground/online cadence repair through browser lifecycle.
+- `mobileSessionResume.ts`: hidden/offline suspension, foreground/online cadence repair and presentation of transport-recovery state through the shared browser lifecycle/events.
 
 Touch sustained FIRE must route to `advancedWeaponController`; it must not leave the legacy continuous `inputState.fire` path active.
 
@@ -120,13 +120,15 @@ Touch sustained FIRE must route to `advancedWeaponController`; it must not leave
 
 The browser host remains authoritative for PvP. Visual rays/tracers never own damage.
 
-Direct WebRTC (`directWebRtc.ts`) uses the public `stun:stun.cloudflare.com:3478` endpoint for ICE/STUN candidate discovery and configures **no TURN relay**. STUN never carries gameplay packets; after signaling, match traffic remains browser-to-browser. `NativeRtcDataChannel` owns heartbeat/transport resilience: ~3 s heartbeat, ~15 s expiry, ~6 s grace for transient `disconnected`, deterministic terminal teardown. Its `bufferedAmount` getter exposes the native RTC send queue to the adaptive network governor.
+Direct WebRTC (`directWebRtc.ts`) uses the public `stun:stun.cloudflare.com:3478` endpoint for ICE/STUN candidate discovery and configures **no TURN relay**. STUN never carries gameplay packets; after signaling, match traffic remains browser-to-browser. `NativeRtcDataChannel` owns heartbeat and transport resilience: ~3 s heartbeat, ~15 s expiry and ~6 s grace for transient `disconnected`. For Firestore-backed sessions, a terminal native RTC/SCTP failure can replace the underlying PeerConnection plus control/realtime DataChannels while keeping the same logical `IDataChannel`; `P2PHost`/`P2PClient`, authoritative slot/HP/roster and gameplay bindings therefore survive successful recovery. Its `bufferedAmount` getter exposes the live native RTC send queue to the adaptive network governor. Explicit close/reset still terminates immediately.
 
-`firestoreSignaling.ts` is an ephemeral signaling boundary only. It exchanges gathered WebRTC offer/answer payloads through the isolated `gone_signaling_rooms_v1` collection using Firestore REST, short random room IDs and a two-minute logical TTL. It must never carry `CLIENT_STATE`, snapshots, combat, health, player coordinates or persistent match state. If Firestore is unavailable or not configured, the session controller falls back to the existing manual direct offer/answer path. Firestore configuration is documented in `docs/firestore_multiplayer_signaling.md`.
+`firestoreSignaling.ts` is an ephemeral signaling boundary only. Initial connections exchange gathered WebRTC offer/answer payloads through the isolated `gone_signaling_rooms_v1` collection using Firestore REST, random 128-bit room IDs and a two-minute logical TTL. Terminal transport recovery derives a generation-specific 128-bit mailbox ID from the original room secret with SHA-256 and reuses the exact same one-shot `waiting -> answered -> delete` document schema. It never lists the collection and performs no reads/writes during healthy gameplay. It must never carry `CLIENT_STATE`, snapshots, combat, health, player coordinates or persistent match state. If Firestore is unavailable or not configured, the session controller falls back to the existing manual direct offer/answer path. Firestore configuration and recovery semantics are documented in `docs/firestore_multiplayer_signaling.md`.
+
+Transport recovery is not a second session lifecycle owner. `multiplayerSessionController` still owns host/client role and session teardown; `directWebRtc.ts` only swaps the native transport behind an already-owned logical channel. Outbound packets produced during the recovery gap are discarded rather than queued against a dead SCTP stream, and normal state snapshots resynchronize after the replacement control channel opens. If automatic recovery is unavailable or fails, the logical channel closes and the existing terminal/manual-invite fallback executes.
 
 `selfHostSession.ts` owns only local relay transport/status presentation. It **reuses `multiplayerSessionController`** for host registration and guest client/session callbacks; it must not create a parallel `P2PClient` lifecycle or roster implementation.
 
-`mobileSessionResume.ts` can restart cadence when the same RTC survives background/network transitions. A terminally closed direct RTC still requires new SDP negotiation; automatic ICE restart/full renegotiation is a separate future tranche.
+`mobileSessionResume.ts` can restart cadence when the same logical session survives background/network transitions and presents `gone-rtc-recovery-state` feedback on mobile. It does not negotiate SDP or own reconnect state. Manual direct sessions have no Firestore recovery anchor; they still require a new invite after terminal RTC failure. Firestore-backed direct sessions attempt generation-based automatic renegotiation first and fall back to the same manual recovery surface only if that attempt fails.
 
 `adaptiveSnapshotRate.ts` owns host cadence adaptation. `p2pQualityHud.ts` is presentation only. `remoteShotPresentation.ts` is current binary remote-shot presentation; `legacyRemoteShotPresentation.ts` is compatibility-only.
 
@@ -160,7 +162,7 @@ Vite/Rolldown isolates Three.js into stable `three-vendor` with strict execution
 
 `game-web/vercel.json` owns main-only deployment plus CSP, frame denial, nosniff, referrer and permissions policies. Production verification after merge is separate from GitHub CI: deployment SHA, `/version.json`, headers and runtime logs must be checked on real Vercel when the connector is available.
 
-The only Firebase browser configuration needed for signaling is the public Vite value `VITE_FIREBASE_PROJECT_ID`. Firestore Security Rules must scope unauthenticated signaling access to `gone_signaling_rooms_v1/{roomId}`, forbid collection listing and preserve unrelated project rules. No service-account credential or private Firebase secret belongs in the browser bundle.
+The only Firebase browser configuration needed for signaling is the public Vite value `VITE_FIREBASE_PROJECT_ID`. Firestore Security Rules must scope unauthenticated signaling access to `gone_signaling_rooms_v1/{roomId}`, forbid collection listing and preserve unrelated project rules. Initial invite and derived recovery mailboxes intentionally share the same 32-hex ID shape and one-shot schema, so recovery does not require broader Firestore permissions. No service-account credential or private Firebase secret belongs in the browser bundle.
 
 ### 12. Rust/WASM
 
@@ -192,6 +194,10 @@ UI intent
         -> Firestore signaling OR manual SDP fallback
         -> STUN candidate discovery (no TURN)
         -> browser-to-browser WebRTC gameplay
+        -> terminal native transport failure (Firestore-backed only)
+           -> deterministic generation mailbox in Firestore
+           -> replacement PeerConnection + control/realtime DataChannels
+           -> same logical IDataChannel / same session authority
      -> OR self-host relay transport
      -> SessionRuntimeBridge
         -> gameplay/networkBindings
