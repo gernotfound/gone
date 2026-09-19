@@ -11,7 +11,7 @@ Read this first. This is the dense working context for `gernotfound/gone`; use i
 - The owner tests physical iPhone/PWA. Treat those reports as hardware QA; browser emulation is necessary but not equivalent.
 - Multiplayer runtime must remain zero-cost under the owner-approved architecture: Vercel + the owner's existing Firestore project for ephemeral signaling + public free STUN. Do not add paid relays, TURN, PeerJS cloud, Supabase or another hosted multiplayer provider without explicit owner approval.
 - Firestore is signaling-only. Never put gameplay snapshots, coordinates, combat, health or persistent match state in Firestore.
-- Direct WebRTC uses public STUN but **no TURN**; some restrictive NAT/firewall pairs can still fail. A terminal RTC close still requires renegotiation until explicit reconnect work is implemented; never claim magic reconnect.
+- Direct WebRTC uses public STUN but **no TURN**; some restrictive NAT/firewall pairs can still fail. Firestore-backed sessions can automatically renegotiate a terminal native RTC transport through generation-specific one-shot signaling mailboxes while preserving the logical session. Manual-direct sessions and failed automatic recovery still require a new invite. Never claim host migration or universal reconnect.
 - There are currently no production users requiring data migrations/backfills. Prefer current-state cleanup and canonical contracts over retroactive compatibility migrations unless explicitly requested.
 
 ## Production / Vercel
@@ -42,7 +42,7 @@ Rules:
 - Browser FPS: TypeScript + Vite 8 + Three.js under `game-web/`.
 - Core: Rust/WASM under `game-core/`; `game-web/pkg/game_core.js` remains the functional browser fallback.
 - Browser compile gate: `tsc && vite build` with unused-code checks and `erasableSyntaxOnly`; do not use TypeScript syntax that requires runtime erasure transforms such as parameter properties.
-- Full PR gate: `.github/workflows/rescue-ci.yml` — TypeScript/Vite, all E2E tiers, Chromium runtime/direct multiplayer/scale/combat/session/self-host/full-match/mobile smokes, Rust and final quality gate.
+- Full PR gate: `.github/workflows/rescue-ci.yml` — TypeScript/Vite, all E2E tiers, Chromium runtime/direct multiplayer/scale/combat/session/Firestore-terminal-recovery/self-host/full-match/mobile smokes, Rust and final quality gate.
 - Vite/Rolldown keeps Three.js in the stable `three-vendor` chunk with strict execution order. Do not broadly split side-effect-heavy application modules without measurement.
 
 ## Runtime kernel / lifecycle
@@ -81,7 +81,7 @@ It must **not** import DOM or `engine.ts`.
 
 `ui/lobby.ts` is presentation + intent only. It may render roster/color/invite/answer controls and forward actions to `multiplayerSessionController`; it must not construct `P2PClient`, `P2PHost`, direct SDP sessions, Firestore rooms or lag compensators.
 
-`net/firestoreSignaling.ts` is a transport boundary for ephemeral offer/answer signaling only. It may call Firestore REST and encode/decode room documents, but it must not own `P2PHost`, `P2PClient`, roster, combat or gameplay state.
+`net/firestoreSignaling.ts` is a transport boundary for ephemeral offer/answer signaling only. It may call Firestore REST, encode/decode room documents and coordinate deterministic one-shot recovery mailboxes, but it must not own `P2PHost`, `P2PClient`, roster, combat or gameplay state. Healthy gameplay performs no Firestore reads/writes.
 
 `gameplay/engine.ts` registers a typed `SessionRuntimeBridge` once. The bridge attaches host/client gameplay networking, clears/removes remote players, applies local color presentation and exposes gameplay readiness. Do not replace this with `window.goneGame` lookups from session code.
 
@@ -96,14 +96,17 @@ It must **not** import DOM or `engine.ts`.
 ## Direct WebRTC / network authority
 
 - `net/directWebRtc.ts`: gathered SDP offer/answer, public `stun:stun.cloudflare.com:3478`, star host↔guests, **no TURN**.
-- `net/firestoreSignaling.ts`: optional automatic offer/answer exchange through `gone_signaling_rooms_v1`; REST only, two-minute logical TTL, gameplay forbidden.
-- If `VITE_FIREBASE_PROJECT_ID` is absent or Firestore signaling fails, preserve the manual direct offer/answer path.
+- `net/firestoreSignaling.ts`: optional automatic initial offer/answer plus terminal transport-recovery mailboxes through `gone_signaling_rooms_v1`; REST only, two-minute logical TTL, gameplay forbidden.
+- Initial invite room IDs are random 128-bit secrets. Recovery generation IDs are deterministic 128-bit derivatives of the original secret (`SHA-256` domain-separated); they reuse the same one-shot `waiting -> answered -> delete` schema and never require collection listing.
+- If `VITE_FIREBASE_PROJECT_ID` is absent or initial Firestore signaling fails, preserve the manual direct offer/answer path.
 - Browser host is authoritative.
 - Binary core opcodes: 0x01 CLIENT_STATE, 0x02 WORLD_SNAPSHOT, 0x03 FIRE_HITSCAN, 0x04 HIT_CONFIRMED.
-- `NativeRtcDataChannel`: ~3 s heartbeat, ~15 s timeout, ~6 s grace for transient `disconnected`; its `bufferedAmount` getter exposes the real RTC send queue.
+- `NativeRtcDataChannel`: ~3 s heartbeat, ~15 s timeout, ~6 s grace for transient `disconnected`; its `bufferedAmount` getter exposes the real RTC send queue. For Firestore-backed sessions it can swap a terminal underlying PeerConnection/control/realtime pair without emitting logical close, preserving host/client session identity and authority.
+- During a replacement gap outbound packets are discarded rather than queued against dead SCTP. After the replacement control channel opens, existing state/snapshot cadence resynchronizes the same session.
+- Firestore recovery retries only transient transport/408/429/5xx failures in bounded windows and confirms ambiguous one-shot writes before repeating them. Permission/schema failures remain fail-fast outside the exact not-yet-created recovery-mailbox GET case.
 - `adaptiveSnapshotRate.ts`: host cadence adaptation; normal target ~30 Hz.
-- `mobileSessionResume.ts`: release input on hidden/offline and restore safe cadence on surviving RTC after foreground/online.
-- Terminal direct RTC failure still needs new SDP negotiation; `gone-reconnect-requested` is intent, not transparent reconnection.
+- `mobileSessionResume.ts`: release input on hidden/offline, restore safe cadence on foreground/online and present `gone-rtc-recovery-state`; it does not own SDP/reconnect negotiation.
+- If automatic recovery is unavailable or fails, logical close triggers the existing `gone-reconnect-requested` terminal/manual-invite fallback. Manual direct sessions have no Firestore recovery anchor and therefore use that fallback directly.
 
 ## Self-host
 
@@ -130,7 +133,7 @@ Owners:
 4. `mobile/competitiveTouchControls.ts` — simultaneous joystick/look/actions and live-map combat composition.
 5. `mobile/touchPreferences.ts` — sensitivity, FIRE dead-zone, gyro, size/opacity, handedness, secondary FIRE.
 6. `mobile/touchLayoutEditor.ts` — draggable persistent HUD offsets.
-7. `mobile/mobileSessionResume.ts` — mobile background/network cadence repair.
+7. `mobile/mobileSessionResume.ts` — mobile background/network cadence repair and presentation of automatic RTC recovery state; transport recovery itself remains in `net/directWebRtc.ts`.
 
 Explicit `Comandi a schermo` overrides device heuristics; `Mouse + tastiera` hides touch UI. Input mode changes reconcile device modules through the runtime kernel; start attempts must remain one.
 
@@ -240,7 +243,7 @@ Current baseline:
 - `vercel.json`: CSP, frame denial, nosniff, referrer/permissions policies and deployment rules.
 - Gyroscope/accelerometer self-only; camera/mic/geolocation/payment/USB/magnetometer denied.
 - Firestore signaling uses only the public `VITE_FIREBASE_PROJECT_ID`; never put a service-account credential/private Firebase secret in the browser bundle.
-- Firestore Security Rules must scope unauthenticated signaling access to `gone_signaling_rooms_v1/{roomId}`, deny collection listing and preserve unrelated rules in the owner's shared Firebase project.
+- Firestore Security Rules must scope unauthenticated signaling access to `gone_signaling_rooms_v1/{roomId}`, deny collection listing and preserve unrelated rules in the owner's shared Firebase project. Initial and recovery documents intentionally use the same 32-hex ID shape and one-shot schema; do not broaden rules for recovery.
 - `observability/clientDiagnostics.ts`: bounded privacy-safe failure diagnostics, not continuous analytics.
 - Allowed context is coarse: build, event kind/message/stack, pathname, device bucket, input mode, standalone/online/visibility.
 - Do not upload raw UA, full query URLs, identities, positions, chat/session codes or continuous FPS.
@@ -279,7 +282,7 @@ Do not refactor for line count alone.
 4. Fix the canonical owner; do not add a patch layer.
 5. Preserve compatibility facade members used by browser smokes/adapters.
 6. Add deterministic Tier tests for architecture/contracts and real Chromium smoke for affected interaction/network behavior.
-7. Full Rescue CI must be green on the final head: TypeScript/Vite, all E2E, browser multiplayer/direct/self-host/full-match/mobile, Rust, quality gate.
+7. Full Rescue CI must be green on the final head: TypeScript/Vite, all E2E, browser multiplayer/direct/Firestore-recovery/self-host/full-match/mobile, Rust, quality gate.
 8. Mark PR ready only after full green.
 9. Squash exactly once to `main`.
 10. Verify resulting main has previous main as sole parent and valid signature when available.
