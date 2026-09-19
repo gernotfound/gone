@@ -56,6 +56,16 @@ function recoveryRoomId(anchorRoomId, generation) {
 function createFirestoreMock() {
   const documents = new Map();
   const operations = [];
+  const injected = {
+    recoveryPost503: 0,
+    recoveryMissing403: 0,
+    recoveryPatchCommitted503: 0,
+  };
+  let recoveryFaultRoomId = null;
+
+  const configureRecoveryFaults = (roomId) => {
+    recoveryFaultRoomId = roomId;
+  };
 
   const attach = async (page) => {
     await page.route('https://firestore.googleapis.com/**', async (route) => {
@@ -78,7 +88,14 @@ function createFirestoreMock() {
         return;
       }
 
+      const faultingRecoveryRoom = roomId === recoveryFaultRoomId;
+
       if (method === 'POST') {
+        if (faultingRecoveryRoom && injected.recoveryPost503 === 0) {
+          injected.recoveryPost503 += 1;
+          await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: { message: 'injected transient create outage' } }) });
+          return;
+        }
         if (documents.has(roomId)) {
           await route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: { message: 'already exists' } }) });
           return;
@@ -93,6 +110,11 @@ function createFirestoreMock() {
       if (method === 'GET') {
         const document = documents.get(roomId);
         if (!document) {
+          if (faultingRecoveryRoom && injected.recoveryMissing403 === 0) {
+            injected.recoveryMissing403 += 1;
+            await route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ error: { message: 'injected rules-style missing document denial' } }) });
+            return;
+          }
           await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: { message: 'not found' } }) });
           return;
         }
@@ -109,6 +131,11 @@ function createFirestoreMock() {
         const body = request.postDataJSON();
         document.fields = { ...document.fields, ...(body?.fields || {}) };
         documents.set(roomId, document);
+        if (faultingRecoveryRoom && injected.recoveryPatchCommitted503 === 0) {
+          injected.recoveryPatchCommitted503 += 1;
+          await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: { message: 'injected lost PATCH response after commit' } }) });
+          return;
+        }
         await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(document) });
         return;
       }
@@ -123,7 +150,7 @@ function createFirestoreMock() {
     });
   };
 
-  return { attach, documents, operations };
+  return { attach, configureRecoveryFaults, documents, operations, injected };
 }
 
 async function installRtcTracking(context) {
@@ -196,6 +223,8 @@ async function main() {
     }, 'Firestore room invite', 25_000);
     const anchorRoomId = new URLSearchParams(new URL(invite).hash.replace(/^#/, '')).get('room');
     invariant(anchorRoomId && /^[a-f0-9]{32}$/.test(anchorRoomId), `Invalid anchor room id: ${anchorRoomId}`);
+    const expectedRecoveryRoomId = recoveryRoomId(anchorRoomId, 2);
+    firestore.configureRecoveryFaults(expectedRecoveryRoomId);
 
     console.log('[rtc-recovery] Guest opens automatic room link');
     await guest.goto(invite, { waitUntil: 'domcontentloaded', timeout: 20_000 });
@@ -227,7 +256,7 @@ async function main() {
     }, before.playerId);
     await waitFor(async () => guest.evaluate(() => window.goneGame.getP2PClient()?.clientHp === 73), 'pre-recovery authoritative HP');
 
-    console.log('[rtc-recovery] Forcing terminal close of guest PeerConnection');
+    console.log('[rtc-recovery] Forcing terminal close with injected Firestore 503/403 ambiguity');
     await guest.evaluate(() => {
       const pc = window.__goneTrackedPeerConnections[0];
       if (!pc) throw new Error('Initial guest PeerConnection missing');
@@ -279,7 +308,6 @@ async function main() {
       return !!record && Math.abs(record.position.x - x) > 3;
     }, [before.playerId, positionBefore]), 'post-recovery client state traffic', 12_000);
 
-    const expectedRecoveryRoomId = recoveryRoomId(anchorRoomId, 2);
     invariant(
       firestore.operations.some((entry) => entry.method === 'POST' && entry.roomId === expectedRecoveryRoomId),
       `Host never created deterministic generation-2 recovery room ${expectedRecoveryRoomId}`,
@@ -294,6 +322,9 @@ async function main() {
       5_000,
     );
     invariant(!firestore.documents.has(expectedRecoveryRoomId), 'Recovery mailbox should be deleted after transport replacement');
+    invariant(firestore.injected.recoveryPost503 === 1, `Transient recovery POST failure was not exercised: ${JSON.stringify(firestore.injected)}`);
+    invariant(firestore.injected.recoveryMissing403 === 1, `Missing-document 403 path was not exercised: ${JSON.stringify(firestore.injected)}`);
+    invariant(firestore.injected.recoveryPatchCommitted503 === 1, `Ambiguous committed PATCH path was not exercised: ${JSON.stringify(firestore.injected)}`);
 
     if (browserErrors.length > 0) {
       throw new Error(`Browser exceptions detected:\n${browserErrors.join('\n')}`);
@@ -308,6 +339,7 @@ async function main() {
       sameClient: after.sameClient,
       hostClients: hostAfter.clients,
       guestPeerConnections: after.pcCount,
+      injected: firestore.injected,
     }));
   } finally {
     await context.close();
