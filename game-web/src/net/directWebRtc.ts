@@ -733,6 +733,7 @@ export async function createDirectHostOffer(): Promise<DirectHostOffer> {
                 anchorRoomId,
                 generation,
                 recoveryOfferCode,
+                signal,
             );
             recoveryRoomId = room.roomId;
             const answerCode = await waitForFirestoreSignalingAnswer(room.roomId, signal);
@@ -843,7 +844,7 @@ export async function createDirectGuestAnswer(offerCode: string, peerId: string)
                 });
 
                 try {
-                    await publishFirestoreSignalingAnswer(room.roomId, recoveryAnswerCode);
+                    await publishFirestoreSignalingAnswer(room.roomId, recoveryAnswerCode, signal);
                 } catch (publishError) {
                     const confirmedRoom = await getFirestoreSignalingRoom(room.roomId, signal).catch(() => null);
                     if (confirmedRoom?.answerCode !== recoveryAnswerCode) throw publishError;
