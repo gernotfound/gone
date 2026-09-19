@@ -1,0 +1,109 @@
+name: Temporary recovery zero-ICE hardening
+
+on:
+  push:
+    branches:
+      - feat/stable-internet-multiplayer
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/stable-internet-multiplayer
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: game-web/package-lock.json
+
+      - name: Apply bounded zero-candidate recovery retry
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('game-web/src/net/directWebRtc.ts')
+          text = path.read_text()
+
+          old_delay = """async function waitForIceRetry(attempt: number): Promise<void> {
+              await new Promise<void>((resolve) => {
+                  window.setTimeout(resolve, ICE_RETRY_DELAY_MS * attempt);
+              });
+          }
+          """
+          new_delay = """async function waitForIceRetry(attempt: number, signal?: AbortSignal): Promise<void> {
+              throwIfAborted(signal);
+              await new Promise<void>((resolve, reject) => {
+                  let timer: number | null = null;
+                  const cleanup = () => {
+                      if (timer !== null) window.clearTimeout(timer);
+                      signal?.removeEventListener('abort', onAbort);
+                  };
+                  const onAbort = () => {
+                      cleanup();
+                      reject(abortError());
+                  };
+                  timer = window.setTimeout(() => {
+                      cleanup();
+                      resolve();
+                  }, ICE_RETRY_DELAY_MS * attempt);
+                  signal?.addEventListener('abort', onAbort, { once: true });
+              });
+          }
+          """
+
+          old_recovery = """        try {
+                      const replacement = await this.recoveryHandler(abort.signal);
+                      if (abort.signal.aborted || this.closeNotified) {
+          """
+          new_recovery = """        try {
+                      let replacement: RecoveryTransport | null = null;
+                      for (let attempt = 1; attempt <= ICE_CANDIDATE_ATTEMPTS; attempt += 1) {
+                          try {
+                              replacement = await this.recoveryHandler(abort.signal);
+                              break;
+                          } catch (error) {
+                              if (
+                                  !isZeroIceCandidatesError(error)
+                                  || attempt >= ICE_CANDIDATE_ATTEMPTS
+                                  || abort.signal.aborted
+                                  || this.closeNotified
+                              ) {
+                                  throw error;
+                              }
+                              await waitForIceRetry(attempt, abort.signal);
+                          }
+                      }
+                      if (abort.signal.aborted || this.closeNotified) {
+          """
+
+          if text.count(old_delay) != 1:
+              raise SystemExit(f'expected one ICE retry delay block, found {text.count(old_delay)}')
+          if text.count(old_recovery) != 1:
+              raise SystemExit(f'expected one recovery invocation block, found {text.count(old_recovery)}')
+
+          text = text.replace(old_delay, new_delay, 1)
+          text = text.replace(old_recovery, new_recovery, 1)
+          path.write_text(text)
+          PY
+
+      - name: Validate TypeScript and existing E2E model suites
+        run: |
+          npm ci --prefix game-web
+          npm run build --prefix game-web
+          node tests/e2e_runner.mjs
+
+      - name: Commit source hardening
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add game-web/src/net/directWebRtc.ts
+          git diff --cached --check
+          git commit -m "Retry zero-candidate WebRTC recovery with fresh transport"
+          git push origin HEAD:feat/stable-internet-multiplayer
