@@ -210,9 +210,10 @@ function createNegotiatedChannel(pc: RTCPeerConnection): NativeRtcDataChannel {
  * and world snapshots use an unordered, zero-retransmit channel so packet loss
  * cannot head-of-line block newer realtime state.
  *
- * Session/lobby readiness depends only on the reliable control channel. A
- * realtime channel that is still connecting simply drops disposable state until
- * it opens; it must never block JOIN or other critical control traffic.
+ * Session/lobby readiness and terminal lifecycle depend only on the reliable
+ * control channel plus the peer connection. If the optional realtime channel is
+ * unavailable, disposable state falls back to control instead of killing the
+ * session; this preserves playability while sacrificing only latency isolation.
  *
  * The third constructor argument is optional for isolated legacy tests/adapters:
  * when omitted, all traffic uses the supplied channel exactly as before.
@@ -248,13 +249,14 @@ export class NativeRtcDataChannel implements IDataChannel {
         for (const channel of this.channels) {
             channel.binaryType = 'arraybuffer';
             channel.addEventListener('open', () => this.maybeNotifyOpen());
-            channel.addEventListener('close', () => this.terminate());
-            // Browsers may emit RTCErrorEvent immediately before a normal remote
-            // close. Treat that transport event as disconnect semantics; hard ICE
-            // failures and heartbeat expiry still surface through onerror below.
-            channel.addEventListener('error', () => this.terminate());
             channel.addEventListener('message', (event) => this.handleRawMessage(event.data));
         }
+
+        // The reliable control stream owns the logical session. A realtime
+        // stream can fail or close independently; sends then fall back to
+        // control. PeerConnection failure still terminates both streams below.
+        this.controlChannel.addEventListener('close', () => this.terminate());
+        this.controlChannel.addEventListener('error', () => this.terminate());
 
         this.pc.addEventListener('connectionstatechange', () => this.handlePeerConnectionState());
         this.pc.addEventListener('iceconnectionstatechange', () => this.handlePeerConnectionState());
@@ -379,12 +381,21 @@ export class NativeRtcDataChannel implements IDataChannel {
         }
     }
 
-    private channelFor(data: string | ArrayBuffer | ArrayBufferView): RTCDataChannel {
-        if (typeof data === 'string') return this.controlChannel;
+    private isRealtimePayload(data: string | ArrayBuffer | ArrayBufferView): boolean {
+        if (typeof data === 'string') return false;
         const opcode = getOpcode(data);
-        return opcode === CLIENT_STATE_OPCODE || opcode === WORLD_SNAPSHOT_OPCODE
-            ? this.realtimeChannel
-            : this.controlChannel;
+        return opcode === CLIENT_STATE_OPCODE || opcode === WORLD_SNAPSHOT_OPCODE;
+    }
+
+    private channelFor(data: string | ArrayBuffer | ArrayBufferView): RTCDataChannel {
+        if (
+            this.isRealtimePayload(data)
+            && this.realtimeChannel !== this.controlChannel
+            && this.realtimeChannel.readyState === 'open'
+        ) {
+            return this.realtimeChannel;
+        }
+        return this.controlChannel;
     }
 
     get readyState(): string {
@@ -403,15 +414,15 @@ export class NativeRtcDataChannel implements IDataChannel {
             throw new Error('WebRTC DataChannel non aperto.');
         }
 
+        const realtimePayload = this.isRealtimePayload(data);
         const target = this.channelFor(data);
-        const isRealtime = target === this.realtimeChannel && this.realtimeChannel !== this.controlChannel;
-        if (isRealtime && target.readyState !== 'open') {
+        const usesRealtimeChannel = target === this.realtimeChannel && this.realtimeChannel !== this.controlChannel;
+
+        if (usesRealtimeChannel && target.bufferedAmount > REALTIME_BACKPRESSURE_BYTES) {
             return;
         }
-        if (isRealtime && target.bufferedAmount > REALTIME_BACKPRESSURE_BYTES) {
-            return;
-        }
-        if (!isRealtime && target.readyState !== 'open') {
+        if (target.readyState !== 'open') {
+            if (realtimePayload) return;
             throw new Error('WebRTC control DataChannel non aperto.');
         }
 
