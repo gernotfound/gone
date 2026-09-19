@@ -86,9 +86,23 @@ function isZeroIceCandidatesError(error: unknown): error is ZeroIceCandidatesErr
     return error instanceof Error && error.name === 'ZeroIceCandidatesError';
 }
 
-async function waitForIceRetry(attempt: number): Promise<void> {
-    await new Promise<void>((resolve) => {
-        window.setTimeout(resolve, ICE_RETRY_DELAY_MS * attempt);
+async function waitForIceRetry(attempt: number, signal?: AbortSignal): Promise<void> {
+    throwIfAborted(signal);
+    await new Promise<void>((resolve, reject) => {
+        let timer: number | null = null;
+        const cleanup = () => {
+            if (timer !== null) window.clearTimeout(timer);
+            signal?.removeEventListener('abort', onAbort);
+        };
+        const onAbort = () => {
+            cleanup();
+            reject(abortError());
+        };
+        timer = window.setTimeout(() => {
+            cleanup();
+            resolve();
+        }, ICE_RETRY_DELAY_MS * attempt);
+        signal?.addEventListener('abort', onAbort, { once: true });
     });
 }
 
@@ -584,7 +598,23 @@ export class NativeRtcDataChannel implements IDataChannel {
         this.retireCurrentTransport();
 
         try {
-            const replacement = await this.recoveryHandler(abort.signal);
+            let replacement: RecoveryTransport | null = null;
+            for (let attempt = 1; attempt <= ICE_CANDIDATE_ATTEMPTS; attempt += 1) {
+                try {
+                    replacement = await this.recoveryHandler(abort.signal);
+                    break;
+                } catch (error) {
+                    if (
+                        !isZeroIceCandidatesError(error)
+                        || attempt >= ICE_CANDIDATE_ATTEMPTS
+                        || abort.signal.aborted
+                        || this.closeNotified
+                    ) {
+                        throw error;
+                    }
+                    await waitForIceRetry(attempt, abort.signal);
+                }
+            }
             if (abort.signal.aborted || this.closeNotified) {
                 if (replacement) closeNativeTransport(replacement);
                 return;
