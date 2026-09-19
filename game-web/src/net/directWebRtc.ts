@@ -12,6 +12,7 @@ import {
 
 const SIGNAL_VERSION = 2;
 const ICE_GATHER_TIMEOUT_MS = 7000;
+const ICE_GATHER_HARD_TIMEOUT_MS = 15_000;
 const CONTROL_CHANNEL_ID = 0;
 const REALTIME_CHANNEL_ID = 1;
 const DISCONNECTED_GRACE_MS = 6000;
@@ -137,14 +138,26 @@ function throwIfAborted(signal?: AbortSignal): void {
     if (signal?.aborted) throw abortError();
 }
 
+function hasIceCandidate(pc: RTCPeerConnection): boolean {
+    return /(^|\r?\n)a=candidate:/m.test(pc.localDescription?.sdp ?? '');
+}
+
 async function waitForIceGatheringComplete(pc: RTCPeerConnection, signal?: AbortSignal): Promise<void> {
     throwIfAborted(signal);
-    if (pc.iceGatheringState === 'complete') return;
+    if (pc.iceGatheringState === 'complete') {
+        if (hasIceCandidate(pc)) return;
+        throw new Error('Nessun candidato ICE disponibile per la connessione WebRTC.');
+    }
 
     await new Promise<void>((resolve, reject) => {
         let done = false;
+        let softTimeoutElapsed = false;
+        let candidateSeen = hasIceCandidate(pc);
+
         const cleanup = () => {
-            clearTimeout(timer);
+            window.clearTimeout(softTimer);
+            window.clearTimeout(hardTimer);
+            pc.removeEventListener('icecandidate', onCandidate);
             pc.removeEventListener('icegatheringstatechange', onState);
             signal?.removeEventListener('abort', onAbort);
         };
@@ -154,19 +167,44 @@ async function waitForIceGatheringComplete(pc: RTCPeerConnection, signal?: Abort
             cleanup();
             resolve();
         };
-        const fail = () => {
+        const fail = (error: Error | DOMException) => {
             if (done) return;
             done = true;
             cleanup();
-            reject(abortError());
+            reject(error);
         };
-        const onState = () => {
-            if (pc.iceGatheringState === 'complete') finish();
+        const refreshCandidateState = () => {
+            candidateSeen = candidateSeen || hasIceCandidate(pc);
         };
-        const onAbort = () => fail();
-        const timer = window.setTimeout(finish, ICE_GATHER_TIMEOUT_MS);
+        const finishIfReady = () => {
+            refreshCandidateState();
+            if (pc.iceGatheringState === 'complete') {
+                if (candidateSeen) finish();
+                else fail(new Error('Nessun candidato ICE disponibile per la connessione WebRTC.'));
+                return;
+            }
+            if (softTimeoutElapsed && candidateSeen) finish();
+        };
+        const onCandidate = (event: RTCPeerConnectionIceEvent) => {
+            if (event.candidate) candidateSeen = true;
+            finishIfReady();
+        };
+        const onState = () => finishIfReady();
+        const onAbort = () => fail(abortError());
+        const softTimer = window.setTimeout(() => {
+            softTimeoutElapsed = true;
+            finishIfReady();
+        }, ICE_GATHER_TIMEOUT_MS);
+        const hardTimer = window.setTimeout(() => {
+            refreshCandidateState();
+            if (candidateSeen) finish();
+            else fail(new Error('Timeout ICE: nessun candidato di rete disponibile.'));
+        }, ICE_GATHER_HARD_TIMEOUT_MS);
+
+        pc.addEventListener('icecandidate', onCandidate);
         pc.addEventListener('icegatheringstatechange', onState);
         signal?.addEventListener('abort', onAbort, { once: true });
+        finishIfReady();
     });
 }
 

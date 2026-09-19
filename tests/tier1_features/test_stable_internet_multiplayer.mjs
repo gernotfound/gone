@@ -19,11 +19,21 @@ export async function run(suite) {
   const vercel = source('game-web', 'vercel.json');
   const setup = source('docs', 'firestore_multiplayer_signaling.md');
 
-  suite.test('Direct WebRTC uses public STUN without TURN relay', () => {
-    assert(direct.includes("PUBLIC_STUN_URL = 'stun:stun.cloudflare.com:3478'"), 'direct WebRTC must use the approved public STUN endpoint');
-    assert(direct.includes('iceServers: [{ urls: PUBLIC_STUN_URL }]'), 'peer connection must install the STUN server');
+  suite.test('Direct WebRTC uses redundant public STUN without TURN relay', () => {
+    assert(direct.includes("PUBLIC_STUN_URL = 'stun:stun.cloudflare.com:3478'"), 'direct WebRTC must keep Cloudflare as its primary public STUN endpoint');
+    assert(direct.includes("'stun:stun.l.google.com:19302'"), 'direct WebRTC must have a second public STUN discovery endpoint');
+    assert(direct.includes('iceServers: [{ urls: [...PUBLIC_STUN_URLS] }]'), 'every peer connection must install the redundant STUN list');
     assert(!direct.includes("'turn:"), 'no TURN endpoint may be configured under the zero-cost architecture');
     assert(!direct.includes('turn.cloudflare.com'), 'Cloudflare TURN must not be enabled');
+  });
+
+  suite.test('ICE signaling never publishes an SDP with zero candidates', () => {
+    assert(direct.includes('const ICE_GATHER_HARD_TIMEOUT_MS = 15_000;'), 'ICE gathering must have a bounded hard deadline');
+    assert(direct.includes('function hasIceCandidate(pc: RTCPeerConnection): boolean'), 'ICE gathering must inspect the actual local SDP for candidates');
+    assert(direct.includes("throw new Error('Nessun candidato ICE disponibile per la connessione WebRTC.')"), 'completed zero-candidate gathering must fail explicitly');
+    assert(direct.includes("fail(new Error('Timeout ICE: nessun candidato di rete disponibile.'))"), 'hard timeout must reject zero-candidate SDP instead of publishing it');
+    assert(direct.includes('if (softTimeoutElapsed && candidateSeen) finish();'), 'soft timeout may return only after at least one candidate exists');
+    assert(direct.includes("pc.addEventListener('icecandidate', onCandidate)"), 'late candidates must be observed after the soft deadline');
   });
 
   suite.test('Realtime state uses an unordered zero-retransmit channel', () => {
