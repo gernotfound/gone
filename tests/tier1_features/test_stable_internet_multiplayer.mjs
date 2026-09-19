@@ -30,8 +30,8 @@ export async function run(suite) {
   suite.test('ICE signaling never publishes an SDP with zero candidates', () => {
     assert(direct.includes('const ICE_GATHER_HARD_TIMEOUT_MS = 15_000;'), 'ICE gathering must have a bounded hard deadline');
     assert(direct.includes('function hasIceCandidate(pc: RTCPeerConnection): boolean'), 'ICE gathering must inspect the actual local SDP for candidates');
-    assert(direct.includes("throw new Error('Nessun candidato ICE disponibile per la connessione WebRTC.')"), 'completed zero-candidate gathering must fail explicitly');
-    assert(direct.includes("fail(new Error('Timeout ICE: nessun candidato di rete disponibile.'))"), 'hard timeout must reject zero-candidate SDP instead of publishing it');
+    assert(direct.includes("throw new ZeroIceCandidatesError('Nessun candidato ICE disponibile per la connessione WebRTC.')"), 'completed zero-candidate gathering must fail explicitly with the retryable error class');
+    assert(direct.includes("fail(new ZeroIceCandidatesError('Timeout ICE: nessun candidato di rete disponibile.'))"), 'hard timeout must reject zero-candidate SDP with the retryable error class instead of publishing it');
     assert(direct.includes('if (softTimeoutElapsed && candidateSeen) finish();'), 'soft timeout may return only after at least one candidate exists');
     assert(direct.includes("pc.addEventListener('icecandidate', onCandidate)"), 'late candidates must be observed after the soft deadline');
   });
