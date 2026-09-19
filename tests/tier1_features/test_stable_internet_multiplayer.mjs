@@ -64,9 +64,18 @@ export async function run(suite) {
     assert(signaling.includes("crypto.subtle.digest('SHA-256'"), 'recovery mailbox ids must derive deterministically from the original room secret');
     assert(signaling.includes('createFirestoreRecoverySignalingRoom'), 'host must be able to publish a one-shot recovery offer');
     assert(signaling.includes('waitForFirestoreSignalingRoom'), 'guest must be able to wait for the matching recovery generation without collection listing');
-    assert(signaling.includes('error.status !== 404'), 'guest recovery polling must tolerate a not-yet-created deterministic mailbox');
-    assert(signaling.includes('error.status !== 409'), 'stale one-shot recovery mailboxes must be replaced deterministically');
+    assert(signaling.includes('(error.status === 403 || error.status === 404)'), 'exact recovery mailbox polling must tolerate not-yet-created documents without enabling collection listing');
+    assert(signaling.includes('error.status === 409'), 'deterministic mailbox collisions must be reconciled explicitly');
     assert(!signaling.includes('setInterval('), 'Firestore recovery signaling must not install a continuous gameplay poller');
+  });
+
+  suite.test('Firestore recovery retries only transient network/write ambiguity within a bounded window', () => {
+    assert(signaling.includes('TRANSIENT_WRITE_RETRY_MS = 30_000'), 'write recovery must have a bounded transient retry window');
+    assert(signaling.includes('isTransientFirestoreError'), 'network/429/5xx errors must be classified separately from schema and permission failures');
+    assert(signaling.includes('error.status === 408 || error.status === 429 || error.status >= 500'), 'only retryable HTTP classes should enter transient backoff');
+    assert(signaling.includes('existing?.offerCode === offer'), 'ambiguous deterministic POST must confirm an already-created matching offer before retrying');
+    assert(signaling.includes("existing?.answerCode === answer && existing.status === 'answered'"), 'ambiguous one-shot PATCH must confirm the stored answer before retrying');
+    assert(signaling.includes('retryDelay(elapsed)'), 'transient retries must back off instead of spinning');
   });
 
   suite.test('Logical RTC channel preserves authoritative session state across transport replacement', () => {
