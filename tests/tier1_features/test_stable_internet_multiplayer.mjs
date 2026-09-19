@@ -31,7 +31,8 @@ export async function run(suite) {
     assert(direct.includes('opcode === CLIENT_STATE_OPCODE || opcode === WORLD_SNAPSHOT_OPCODE'), 'only disposable state/snapshot opcodes should route to realtime');
     assert(direct.includes("const SIGNAL_VERSION = 2;"), 'dual-channel signaling must reject incompatible v1 direct invitations explicitly');
     assert(direct.includes("if (this.controlChannel.readyState !== 'open') return;"), 'critical session readiness must depend on the reliable control channel only');
-    assert(direct.includes("if (isRealtime && target.readyState !== 'open')"), 'disposable realtime state must be dropped while its channel is still opening');
+    assert(direct.includes("&& this.realtimeChannel.readyState === 'open'"), 'realtime packets must prefer the unordered channel only while it is usable');
+    assert(direct.includes('return this.controlChannel;'), 'realtime degradation must preserve playability through reliable control fallback');
   });
 
   suite.test('Real WebRTC send queue is exposed to adaptive backpressure', () => {
