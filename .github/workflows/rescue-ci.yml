@@ -114,6 +114,7 @@ jobs:
           run_smoke rescue_webrtc_scale_smoke.mjs rescue-webrtc-scale.log
           run_smoke rescue_combat_network_smoke.mjs rescue-combat-network.log
           run_smoke rescue_session_resilience_smoke.mjs rescue-session-resilience.log
+          run_smoke rescue_firestore_recovery_smoke.mjs rescue-firestore-recovery.log
           run_smoke rescue_selfhost_relay_smoke.mjs rescue-selfhost-relay.log
           run_smoke rescue_selfhost_scale_smoke.mjs rescue-selfhost-scale.log
           run_smoke rescue_full_match_smoke.mjs rescue-full-match.log
@@ -137,6 +138,7 @@ jobs:
             rescue-webrtc-scale.log
             rescue-combat-network.log
             rescue-session-resilience.log
+            rescue-firestore-recovery.log
             rescue-selfhost-relay.log
             rescue-selfhost-scale.log
             rescue-full-match.log
