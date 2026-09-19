@@ -1,4 +1,14 @@
 import type { IDataChannel } from './protocol.ts';
+import {
+    createFirestoreRecoverySignalingRoom,
+    deleteFirestoreSignalingRoom,
+    deriveFirestoreRecoveryRoomId,
+    getFirestoreRecoveryAnchorForOffer,
+    getFirestoreSignalingRoom,
+    publishFirestoreSignalingAnswer,
+    waitForFirestoreSignalingAnswer,
+    waitForFirestoreSignalingRoom,
+} from './firestoreSignaling.ts';
 
 const SIGNAL_VERSION = 2;
 const ICE_GATHER_TIMEOUT_MS = 7000;
@@ -10,6 +20,7 @@ const HEARTBEAT_TIMEOUT_MS = 15000;
 const HEARTBEAT_PING = '__gone_ping__';
 const HEARTBEAT_PONG = '__gone_pong__';
 const REALTIME_BACKPRESSURE_BYTES = 128 * 1024;
+const RECOVERY_OPEN_TIMEOUT_MS = 20_000;
 const CLIENT_STATE_OPCODE = 0x01;
 const WORLD_SNAPSHOT_OPCODE = 0x02;
 export const PUBLIC_STUN_URL = 'stun:stun.cloudflare.com:3478';
@@ -47,6 +58,15 @@ export interface DirectGuestAnswer {
     diagnostics: DirectConnectionDiagnostics;
     close(): void;
 }
+
+type RecoveryRole = 'host' | 'guest';
+type NativeTransport = {
+    pc: RTCPeerConnection;
+    controlChannel: RTCDataChannel;
+    realtimeChannel: RTCDataChannel;
+};
+type RecoveryTransport = NativeTransport & { generation: number };
+type RecoveryHandler = (signal: AbortSignal) => Promise<RecoveryTransport | null>;
 
 function randomId(): string {
     const raw = typeof crypto !== 'undefined' && 'randomUUID' in crypto
@@ -105,23 +125,44 @@ function decodeSignal(code: string, expectedType: SignalPayload['type']): Signal
     return payload as SignalPayload;
 }
 
-async function waitForIceGatheringComplete(pc: RTCPeerConnection): Promise<void> {
+function abortError(): DOMException {
+    return new DOMException('Operazione annullata.', 'AbortError');
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+    if (signal?.aborted) throw abortError();
+}
+
+async function waitForIceGatheringComplete(pc: RTCPeerConnection, signal?: AbortSignal): Promise<void> {
+    throwIfAborted(signal);
     if (pc.iceGatheringState === 'complete') return;
 
-    await new Promise<void>((resolve) => {
+    await new Promise<void>((resolve, reject) => {
         let done = false;
+        const cleanup = () => {
+            clearTimeout(timer);
+            pc.removeEventListener('icegatheringstatechange', onState);
+            signal?.removeEventListener('abort', onAbort);
+        };
         const finish = () => {
             if (done) return;
             done = true;
-            clearTimeout(timer);
-            pc.removeEventListener('icegatheringstatechange', onState);
+            cleanup();
             resolve();
+        };
+        const fail = () => {
+            if (done) return;
+            done = true;
+            cleanup();
+            reject(abortError());
         };
         const onState = () => {
             if (pc.iceGatheringState === 'complete') finish();
         };
+        const onAbort = () => fail();
         const timer = window.setTimeout(finish, ICE_GATHER_TIMEOUT_MS);
         pc.addEventListener('icegatheringstatechange', onState);
+        signal?.addEventListener('abort', onAbort, { once: true });
     });
 }
 
@@ -189,7 +230,7 @@ function getOpcode(data: ArrayBuffer | ArrayBufferView): number | null {
     return new Uint8Array(data.buffer, data.byteOffset, 1)[0];
 }
 
-function createNegotiatedChannel(pc: RTCPeerConnection): NativeRtcDataChannel {
+function createNegotiatedTransport(pc: RTCPeerConnection): NativeTransport {
     const controlChannel = pc.createDataChannel('gone-control', {
         ordered: true,
         negotiated: true,
@@ -201,22 +242,53 @@ function createNegotiatedChannel(pc: RTCPeerConnection): NativeRtcDataChannel {
         negotiated: true,
         id: REALTIME_CHANNEL_ID,
     });
-    return new NativeRtcDataChannel(controlChannel, pc, realtimeChannel);
+    return { pc, controlChannel, realtimeChannel };
+}
+
+function createNegotiatedChannel(pc: RTCPeerConnection): NativeRtcDataChannel {
+    const transport = createNegotiatedTransport(pc);
+    return new NativeRtcDataChannel(transport.controlChannel, pc, transport.realtimeChannel);
+}
+
+function closeNativeTransport(transport: NativeTransport): void {
+    for (const channel of [transport.controlChannel, transport.realtimeChannel]) {
+        try {
+            if (channel.readyState !== 'closed') channel.close();
+        } catch {
+            // Best-effort cleanup only.
+        }
+    }
+    try {
+        if (transport.pc.connectionState !== 'closed') transport.pc.close();
+    } catch {
+        // Best-effort cleanup only.
+    }
+}
+
+function dispatchRecoveryState(
+    state: 'recovering' | 'recovered' | 'failed',
+    role: RecoveryRole,
+    generation: number,
+): void {
+    window.dispatchEvent(new CustomEvent('gone-rtc-recovery-state', {
+        detail: { state, role, generation },
+    }));
 }
 
 /**
- * Presents two native RTCDataChannels as the existing single IDataChannel
+ * Presents replaceable native RTC transports as the existing single IDataChannel
  * boundary. Control/combat packets stay reliable+ordered; disposable movement
  * and world snapshots use an unordered, zero-retransmit channel so packet loss
  * cannot head-of-line block newer realtime state.
  *
- * Session/lobby readiness and terminal lifecycle depend only on the reliable
- * control channel plus the peer connection. If the optional realtime channel is
- * unavailable, disposable state falls back to control instead of killing the
- * session; this preserves playability while sacrificing only latency isolation.
+ * When Firestore signaling created the original session, a terminal ICE/SCTP
+ * failure can replace the underlying PeerConnection without closing this logical
+ * IDataChannel. P2PHost/P2PClient therefore keep authoritative slot, HP, roster
+ * and gameplay bindings while transport traffic is temporarily dropped.
  *
- * The third constructor argument is optional for isolated legacy tests/adapters:
- * when omitted, all traffic uses the supplied channel exactly as before.
+ * Session/lobby readiness still depends on the reliable control stream. If the
+ * optional realtime stream is unavailable, disposable state falls back to the
+ * control stream instead of killing the session.
  */
 export class NativeRtcDataChannel implements IDataChannel {
     public binaryType: 'arraybuffer' = 'arraybuffer';
@@ -225,12 +297,19 @@ export class NativeRtcDataChannel implements IDataChannel {
     public onclose?: (() => void) | null;
     public onerror?: ((err: any) => void) | null;
 
-    private readonly controlChannel: RTCDataChannel;
-    private readonly realtimeChannel: RTCDataChannel;
-    private readonly channels: readonly RTCDataChannel[];
-    private readonly pc: RTCPeerConnection;
+    private controlChannel: RTCDataChannel;
+    private realtimeChannel: RTCDataChannel;
+    private channels: readonly RTCDataChannel[];
+    private pc: RTCPeerConnection;
+    private transportEpoch = 0;
     private disconnectTimer: number | null = null;
     private heartbeatTimer: number | null = null;
+    private recoveryOpenTimer: number | null = null;
+    private recoveryAbort: AbortController | null = null;
+    private recoveryHandler: RecoveryHandler | null = null;
+    private recoveryRole: RecoveryRole | null = null;
+    private recoveryGeneration = 1;
+    private recovering = false;
     private lastInboundAt = performance.now();
     private openNotified = false;
     private closeNotified = false;
@@ -245,27 +324,75 @@ export class NativeRtcDataChannel implements IDataChannel {
             : [this.controlChannel, this.realtimeChannel];
         this.pc = pc;
         this.pageHideHandler = () => this.close();
+        this.installTransport(controlChannel, pc, realtimeChannel ?? controlChannel, false);
+        window.addEventListener('pagehide', this.pageHideHandler);
+    }
+
+    public setRecoveryHandler(role: RecoveryRole, handler: RecoveryHandler): void {
+        this.recoveryRole = role;
+        this.recoveryHandler = handler;
+    }
+
+    private installTransport(
+        controlChannel: RTCDataChannel,
+        pc: RTCPeerConnection,
+        realtimeChannel: RTCDataChannel,
+        recovery: boolean,
+    ): void {
+        const epoch = ++this.transportEpoch;
+        this.controlChannel = controlChannel;
+        this.realtimeChannel = realtimeChannel;
+        this.channels = realtimeChannel === controlChannel
+            ? [controlChannel]
+            : [controlChannel, realtimeChannel];
+        this.pc = pc;
 
         for (const channel of this.channels) {
             channel.binaryType = 'arraybuffer';
-            channel.addEventListener('open', () => this.maybeNotifyOpen());
-            channel.addEventListener('message', (event) => this.handleRawMessage(event.data));
+            channel.addEventListener('open', () => {
+                if (epoch !== this.transportEpoch) return;
+                if (recovery && channel === this.controlChannel) this.completeRecovery();
+                else this.maybeNotifyOpen();
+            });
+            channel.addEventListener('message', (event) => {
+                if (epoch !== this.transportEpoch) return;
+                this.handleRawMessage(event.data);
+            });
         }
 
-        // The reliable control stream owns the logical session. A realtime
-        // stream can fail or close independently; sends then fall back to
-        // control. PeerConnection failure still terminates both streams below.
-        this.controlChannel.addEventListener('close', () => this.terminate());
-        this.controlChannel.addEventListener('error', () => this.terminate());
+        controlChannel.addEventListener('close', () => {
+            if (epoch !== this.transportEpoch || this.closeNotified || this.terminating) return;
+            this.handleTransportFailure(new Error('WebRTC control DataChannel chiuso.'));
+        });
+        controlChannel.addEventListener('error', () => {
+            if (epoch !== this.transportEpoch || this.closeNotified || this.terminating) return;
+            this.handleTransportFailure(new Error('WebRTC control DataChannel in errore.'));
+        });
 
-        this.pc.addEventListener('connectionstatechange', () => this.handlePeerConnectionState());
-        this.pc.addEventListener('iceconnectionstatechange', () => this.handlePeerConnectionState());
-        window.addEventListener('pagehide', this.pageHideHandler);
-        this.maybeNotifyOpen();
+        pc.addEventListener('connectionstatechange', () => {
+            if (epoch !== this.transportEpoch) return;
+            this.handlePeerConnectionState(pc, epoch);
+        });
+        pc.addEventListener('iceconnectionstatechange', () => {
+            if (epoch !== this.transportEpoch) return;
+            this.handlePeerConnectionState(pc, epoch);
+        });
+
+        if (recovery) {
+            this.clearRecoveryOpenTimer();
+            this.recoveryOpenTimer = window.setTimeout(() => {
+                this.recoveryOpenTimer = null;
+                if (epoch !== this.transportEpoch || !this.recovering) return;
+                this.failRecovery(new Error('Recovery WebRTC completata nel signaling ma DataChannel non riaperto.'));
+            }, RECOVERY_OPEN_TIMEOUT_MS);
+            if (controlChannel.readyState === 'open') this.completeRecovery();
+        } else {
+            this.maybeNotifyOpen();
+        }
     }
 
     private maybeNotifyOpen(): void {
-        if (this.openNotified || this.closeNotified) return;
+        if (this.openNotified || this.closeNotified || this.recovering) return;
         if (this.controlChannel.readyState !== 'open') return;
         this.openNotified = true;
         this.lastInboundAt = performance.now();
@@ -281,7 +408,7 @@ export class NativeRtcDataChannel implements IDataChannel {
                 try {
                     this.controlChannel.send(HEARTBEAT_PONG);
                 } catch (error) {
-                    this.terminate(error instanceof Error ? error : new Error(String(error)));
+                    this.handleTransportFailure(error instanceof Error ? error : new Error(String(error)));
                 }
             }
             return;
@@ -292,20 +419,20 @@ export class NativeRtcDataChannel implements IDataChannel {
     }
 
     private startHeartbeat(): void {
-        if (this.heartbeatTimer !== null) return;
+        if (this.heartbeatTimer !== null || this.recovering || this.closeNotified) return;
         this.heartbeatTimer = window.setInterval(() => {
             if (this.controlChannel.readyState !== 'open') return;
 
             const silenceMs = performance.now() - this.lastInboundAt;
             if (silenceMs >= HEARTBEAT_TIMEOUT_MS) {
-                this.terminate(new Error('Peer non raggiungibile: heartbeat WebRTC scaduto.'));
+                this.handleTransportFailure(new Error('Peer non raggiungibile: heartbeat WebRTC scaduto.'));
                 return;
             }
 
             try {
                 this.controlChannel.send(HEARTBEAT_PING);
             } catch (error) {
-                this.terminate(error instanceof Error ? error : new Error(String(error)));
+                this.handleTransportFailure(error instanceof Error ? error : new Error(String(error)));
             }
         }, HEARTBEAT_INTERVAL_MS);
     }
@@ -324,39 +451,135 @@ export class NativeRtcDataChannel implements IDataChannel {
         }
     }
 
+    private clearRecoveryOpenTimer(): void {
+        if (this.recoveryOpenTimer !== null) {
+            window.clearTimeout(this.recoveryOpenTimer);
+            this.recoveryOpenTimer = null;
+        }
+    }
+
     private notifyClose(): void {
         if (this.closeNotified) return;
         this.closeNotified = true;
         this.clearDisconnectTimer();
         this.clearHeartbeat();
+        this.clearRecoveryOpenTimer();
         window.removeEventListener('pagehide', this.pageHideHandler);
         this.onclose?.();
+    }
+
+    private retireCurrentTransport(): void {
+        const transport: NativeTransport = {
+            pc: this.pc,
+            controlChannel: this.controlChannel,
+            realtimeChannel: this.realtimeChannel,
+        };
+        ++this.transportEpoch;
+        closeNativeTransport(transport);
     }
 
     private terminate(error?: Error): void {
         if (this.closeNotified || this.terminating) return;
         this.terminating = true;
+        this.recoveryAbort?.abort();
+        this.recoveryAbort = null;
+        this.recovering = false;
+        this.clearDisconnectTimer();
+        this.clearHeartbeat();
+        this.clearRecoveryOpenTimer();
         if (error) this.onerror?.(error);
-        for (const channel of this.channels) {
-            try {
-                if (channel.readyState !== 'closed') channel.close();
-            } catch {
-                // Continue with deterministic local teardown even if the browser
-                // refuses to close an already-failed SCTP channel.
-            }
-        }
-        try {
-            if (this.pc.connectionState !== 'closed') this.pc.close();
-        } catch {
-            // no-op
-        }
+        this.retireCurrentTransport();
         this.terminating = false;
         this.notifyClose();
     }
 
-    private handlePeerConnectionState(): void {
-        const state = this.pc.connectionState;
-        const iceState = this.pc.iceConnectionState;
+    private handleTransportFailure(error: Error): void {
+        if (this.closeNotified || this.terminating) return;
+        if (this.recovering) {
+            this.failRecovery(error);
+            return;
+        }
+        if (!this.recoveryHandler || !this.recoveryRole) {
+            this.terminate(error);
+            return;
+        }
+        void this.beginRecovery(error);
+    }
+
+    private async beginRecovery(originalError: Error): Promise<void> {
+        if (this.recovering || this.closeNotified || !this.recoveryHandler || !this.recoveryRole) return;
+        this.recovering = true;
+        this.clearDisconnectTimer();
+        this.clearHeartbeat();
+        this.clearRecoveryOpenTimer();
+        const abort = new AbortController();
+        this.recoveryAbort = abort;
+        const role = this.recoveryRole;
+        const nextGeneration = this.recoveryGeneration + 1;
+
+        // Retire the broken native transport without notifying P2PHost/P2PClient.
+        // The logical channel remains alive and drops outbound traffic while the
+        // one-shot Firestore mailbox negotiates a replacement PeerConnection.
+        this.retireCurrentTransport();
+
+        try {
+            const replacement = await this.recoveryHandler(abort.signal);
+            if (abort.signal.aborted || this.closeNotified) {
+                if (replacement) closeNativeTransport(replacement);
+                return;
+            }
+            if (!replacement) {
+                this.recovering = false;
+                this.recoveryAbort = null;
+                this.terminate(originalError);
+                return;
+            }
+
+            this.recoveryGeneration = replacement.generation;
+            dispatchRecoveryState('recovering', role, replacement.generation || nextGeneration);
+            this.installTransport(
+                replacement.controlChannel,
+                replacement.pc,
+                replacement.realtimeChannel,
+                true,
+            );
+        } catch (error) {
+            if (abort.signal.aborted || this.closeNotified) return;
+            const recoveryError = error instanceof Error ? error : new Error(String(error));
+            this.recovering = false;
+            this.recoveryAbort = null;
+            dispatchRecoveryState('failed', role, nextGeneration);
+            this.terminate(new Error(`${originalError.message} Recovery automatica fallita: ${recoveryError.message}`));
+        }
+    }
+
+    private completeRecovery(): void {
+        if (!this.recovering || this.closeNotified || this.controlChannel.readyState !== 'open') return;
+        this.recovering = false;
+        this.recoveryAbort = null;
+        this.clearRecoveryOpenTimer();
+        this.lastInboundAt = performance.now();
+        if (!this.openNotified) this.maybeNotifyOpen();
+        else this.startHeartbeat();
+        if (this.recoveryRole) dispatchRecoveryState('recovered', this.recoveryRole, this.recoveryGeneration);
+    }
+
+    private failRecovery(error: Error): void {
+        if (!this.recovering || this.closeNotified) return;
+        const role = this.recoveryRole;
+        const generation = this.recoveryGeneration;
+        this.recoveryAbort?.abort();
+        this.recoveryAbort = null;
+        this.recovering = false;
+        this.clearRecoveryOpenTimer();
+        if (role) dispatchRecoveryState('failed', role, generation);
+        this.terminate(error);
+    }
+
+    private handlePeerConnectionState(pc: RTCPeerConnection, epoch: number): void {
+        if (epoch !== this.transportEpoch || this.closeNotified) return;
+        const state = pc.connectionState;
+        const iceState = pc.iceConnectionState;
 
         if (state === 'connected' || iceState === 'connected' || iceState === 'completed') {
             this.clearDisconnectTimer();
@@ -365,7 +588,7 @@ export class NativeRtcDataChannel implements IDataChannel {
 
         if (state === 'failed' || iceState === 'failed') {
             this.clearDisconnectTimer();
-            this.terminate(new Error('Connessione WebRTC diretta fallita: rete/NAT non raggiungibile.'));
+            this.handleTransportFailure(new Error('Connessione WebRTC diretta fallita: rete/NAT non raggiungibile.'));
             return;
         }
 
@@ -373,8 +596,9 @@ export class NativeRtcDataChannel implements IDataChannel {
             if (this.disconnectTimer === null) {
                 this.disconnectTimer = window.setTimeout(() => {
                     this.disconnectTimer = null;
-                    if (this.pc.connectionState === 'disconnected' || this.pc.iceConnectionState === 'disconnected') {
-                        this.terminate(new Error('Connessione WebRTC diretta interrotta.'));
+                    if (epoch !== this.transportEpoch) return;
+                    if (pc.connectionState === 'disconnected' || pc.iceConnectionState === 'disconnected') {
+                        this.handleTransportFailure(new Error('Connessione WebRTC diretta interrotta.'));
                     }
                 }, DISCONNECTED_GRACE_MS);
             }
@@ -399,17 +623,24 @@ export class NativeRtcDataChannel implements IDataChannel {
     }
 
     get readyState(): string {
-        if (this.closeNotified || this.controlChannel.readyState === 'closed') return 'closed';
+        if (this.closeNotified) return 'closed';
+        if (this.recovering) return this.openNotified ? 'open' : 'connecting';
+        if (this.controlChannel.readyState === 'closed') return 'closed';
         if (this.controlChannel.readyState === 'closing') return 'closing';
         if (this.controlChannel.readyState === 'open') return 'open';
         return 'connecting';
     }
 
     get bufferedAmount(): number {
+        if (this.recovering) return 0;
         return this.channels.reduce((sum, channel) => sum + channel.bufferedAmount, 0);
     }
 
     send(data: string | ArrayBuffer | ArrayBufferView): void {
+        // A recoverable logical session intentionally drops traffic while the
+        // replacement RTC transport is negotiated. This prevents higher layers
+        // from tearing down authoritative match state because SCTP is transiently absent.
+        if (this.recovering) return;
         if (this.readyState !== 'open') {
             throw new Error('WebRTC DataChannel non aperto.');
         }
@@ -468,6 +699,61 @@ export async function createDirectHostOffer(): Promise<DirectHostOffer> {
     });
 
     let answerApplied = false;
+    let recoveryPeerId: string | null = null;
+    let recoveryGeneration = 1;
+
+    channel.setRecoveryHandler('host', async (signal) => {
+        const anchorRoomId = getFirestoreRecoveryAnchorForOffer(offerCode);
+        if (!anchorRoomId || !recoveryPeerId) return null;
+        throwIfAborted(signal);
+
+        const generation = recoveryGeneration + 1;
+        const recoveryPc = createPeerConnection();
+        const transport = createNegotiatedTransport(recoveryPc);
+        let recoveryRoomId: string | null = null;
+
+        try {
+            const recoveryConnectionId = randomId();
+            const recoveryOffer = await recoveryPc.createOffer();
+            throwIfAborted(signal);
+            await recoveryPc.setLocalDescription(recoveryOffer);
+            await waitForIceGatheringComplete(recoveryPc, signal);
+            throwIfAborted(signal);
+            if (!recoveryPc.localDescription?.sdp) {
+                throw new Error('Impossibile creare l\'offerta di recovery WebRTC.');
+            }
+
+            const recoveryOfferCode = encodeSignal({
+                v: SIGNAL_VERSION,
+                type: 'offer',
+                connectionId: recoveryConnectionId,
+                sdp: recoveryPc.localDescription.sdp,
+            });
+            const room = await createFirestoreRecoverySignalingRoom(
+                anchorRoomId,
+                generation,
+                recoveryOfferCode,
+            );
+            recoveryRoomId = room.roomId;
+            const answerCode = await waitForFirestoreSignalingAnswer(room.roomId, signal);
+            throwIfAborted(signal);
+            const answer = decodeSignal(answerCode, 'answer');
+            if (answer.connectionId !== recoveryConnectionId) {
+                throw new Error('La risposta recovery appartiene a un altro trasporto.');
+            }
+            if (answer.peerId !== recoveryPeerId) {
+                throw new Error('Identità guest non valida durante la recovery.');
+            }
+            await recoveryPc.setRemoteDescription({ type: 'answer', sdp: answer.sdp });
+            recoveryGeneration = generation;
+            void deleteFirestoreSignalingRoom(room.roomId);
+            return { ...transport, generation };
+        } catch (error) {
+            closeNativeTransport(transport);
+            if (recoveryRoomId) void deleteFirestoreSignalingRoom(recoveryRoomId);
+            throw error;
+        }
+    });
 
     return {
         connectionId,
@@ -481,6 +767,7 @@ export async function createDirectHostOffer(): Promise<DirectHostOffer> {
                 throw new Error('La risposta appartiene a un altro invito.');
             }
             const peerId = answer.peerId!;
+            recoveryPeerId = peerId;
             // Bind the authoritative host channel to the actual guest identity
             // before setRemoteDescription can open the negotiated DataChannels.
             onPeerIdentified?.(peerId);
@@ -519,6 +806,58 @@ export async function createDirectGuestAnswer(offerCode: string, peerId: string)
             connectionId: offer.connectionId,
             peerId,
             sdp: localSdp,
+        });
+        let recoveryGeneration = 1;
+
+        channel.setRecoveryHandler('guest', async (signal) => {
+            const anchorRoomId = getFirestoreRecoveryAnchorForOffer(offerCode);
+            if (!anchorRoomId) return null;
+            throwIfAborted(signal);
+
+            const generation = recoveryGeneration + 1;
+            const recoveryRoomId = await deriveFirestoreRecoveryRoomId(anchorRoomId, generation);
+            const room = await waitForFirestoreSignalingRoom(recoveryRoomId, signal);
+            throwIfAborted(signal);
+            const recoveryOffer = decodeSignal(room.offerCode, 'offer');
+            const recoveryPc = createPeerConnection();
+            let transport: NativeTransport | null = null;
+
+            try {
+                await recoveryPc.setRemoteDescription({ type: 'offer', sdp: recoveryOffer.sdp });
+                transport = createNegotiatedTransport(recoveryPc);
+                const recoveryAnswer = await recoveryPc.createAnswer();
+                throwIfAborted(signal);
+                await recoveryPc.setLocalDescription(recoveryAnswer);
+                await waitForIceGatheringComplete(recoveryPc, signal);
+                throwIfAborted(signal);
+                if (!recoveryPc.localDescription?.sdp) {
+                    throw new Error('Impossibile creare la risposta recovery WebRTC.');
+                }
+
+                const recoveryAnswerCode = encodeSignal({
+                    v: SIGNAL_VERSION,
+                    type: 'answer',
+                    connectionId: recoveryOffer.connectionId,
+                    peerId,
+                    sdp: recoveryPc.localDescription.sdp,
+                });
+
+                try {
+                    await publishFirestoreSignalingAnswer(room.roomId, recoveryAnswerCode);
+                } catch (publishError) {
+                    const confirmedRoom = await getFirestoreSignalingRoom(room.roomId, signal).catch(() => null);
+                    if (confirmedRoom?.answerCode !== recoveryAnswerCode) throw publishError;
+                }
+
+                recoveryGeneration = generation;
+                return { ...transport, generation };
+            } catch (error) {
+                if (transport) closeNativeTransport(transport);
+                else {
+                    try { recoveryPc.close(); } catch { /* no-op */ }
+                }
+                throw error;
+            }
         });
 
         return {
