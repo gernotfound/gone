@@ -71,15 +71,17 @@ async function main() {
     const guestId = await guest.evaluate(() => window.goneGame.getP2PClient().playerId);
     invariant(typeof guestId === 'string' && guestId.length > 0, 'Guest player id missing');
 
-    console.log('[combat] Positioning authoritative shooter and victim');
-    await guest.evaluate(() => {
-      window.goneGame.player.position.set(0, 17.5, 0);
-    });
+    console.log('[combat] Reading authoritative shooter state and positioning victim relative to it');
+    const shooterState = await waitFor(async () => host.evaluate((id) => {
+      const record = window.goneGame.getP2PHost().playerRecords.get(id);
+      if (!record || record.lastClientSeq <= 0) return null;
+      return { x: record.position.x, y: record.position.y, z: record.position.z };
+    }, guestId), 'guest state history on authoritative host', 8_000);
 
-    await host.evaluate(() => {
+    await host.evaluate((shooter) => {
       const session = window.goneGame.getP2PHost();
       session.updateHostPlayerState({
-        position: { x: 0, y: 17.5, z: 10 },
+        position: { x: shooter.x, y: shooter.y, z: shooter.z + 10 },
         yaw: Math.PI,
         pitch: 0,
         activeWeapon: 0,
@@ -87,23 +89,22 @@ async function main() {
       const hostRecord = session.playerRecords.get(session.hostPlayer.id);
       if (!hostRecord) throw new Error('Host combat record missing');
       hostRecord.shieldExpiresAt = 0;
-    });
-
-    await waitFor(async () => host.evaluate((id) => {
-      const record = window.goneGame.getP2PHost().playerRecords.get(id);
-      return !!record && Math.abs(record.position.x) < 0.5 && Math.abs(record.position.z) < 0.5 && record.lastClientSeq > 0;
-    }, guestId), 'guest state history on authoritative host', 8_000);
+    }, shooterState);
 
     console.log('[combat] Firing guest shot over WebRTC with intentionally offset muzzle origin');
     const beforeHp = await host.evaluate(() => window.goneGame.getP2PHost().playerRecords.get('host').hp);
     invariant(beforeHp === 100, `Host HP should start at 100, got ${beforeHp}`);
 
-    await guest.evaluate(() => {
-      // X=3 deliberately represents the old viewmodel-muzzle mismatch. The
-      // authoritative lag compensator must anchor X/Z to the shooter state so
+    await guest.evaluate((shooter) => {
+      // X+3 deliberately represents the old viewmodel-muzzle mismatch. The
+      // authoritative host must anchor X/Z to the accepted shooter state so
       // the server validates the same ray the crosshair represents.
-      window.goneGame.getP2PClient().fireHitscan(0, [3, 17.3, 0], [0, 0, 1]);
-    });
+      window.goneGame.getP2PClient().fireHitscan(
+        0,
+        [shooter.x + 3, shooter.y - 0.2, shooter.z],
+        [0, 0, 1],
+      );
+    }, shooterState);
 
     const hitHp = await waitFor(async () => host.evaluate(() => {
       const hp = window.goneGame.getP2PHost().playerRecords.get('host')?.hp;
@@ -119,9 +120,14 @@ async function main() {
     );
 
     console.log('[combat] Verifying an opposite-direction shot cannot damage through the server');
-    await guest.evaluate(() => {
-      window.goneGame.getP2PClient().fireHitscan(0, [3, 17.3, 0], [0, 0, -1]);
-    });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await guest.evaluate((shooter) => {
+      window.goneGame.getP2PClient().fireHitscan(
+        0,
+        [shooter.x + 3, shooter.y - 0.2, shooter.z],
+        [0, 0, -1],
+      );
+    }, shooterState);
     await new Promise((resolve) => setTimeout(resolve, 300));
     const afterMissHp = await host.evaluate(() => window.goneGame.getP2PHost().playerRecords.get('host')?.hp);
     invariant(afterMissHp === hitHp, `Miss changed authoritative HP from ${hitHp} to ${afterMissHp}`);

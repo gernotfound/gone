@@ -32,6 +32,14 @@ import { CLIENT_STATE_EXT_FLAGS, HEALTH_PICKUP_AUTHORITY } from './clientStateEx
 import type { WasmLagCompensator } from '../../pkg/game_core.js';
 import { calculateWeaponDamageAtDistance, getWeaponRuntimeById, WEAPON_KEYS } from '../weapons/weaponConfig.ts';
 import { intersectRobotHitbox } from './robotHitbox.ts';
+import {
+  isFiniteClientTransform,
+  isForwardSequence,
+  isPositionInsideAuthorityBounds,
+  movementEnvelopeAllows,
+  sanitizePlayerName,
+  validatePeerClaim,
+} from './hostAuthorityPolicy.ts';
 
 export interface IWasmLagCompensator {
   record_player_position(
@@ -269,22 +277,34 @@ export type RespawnPositionResolver = (slot: number) => { x: number; y: number; 
 export interface CombatValidationStats {
   lastClientShotTime: Map<string, number>;
   lastShotSeq: Map<string, number>;
+  lastAcceptedStateAt: Map<string, number>;
   accepted: number;
   rejected: number;
   rejectedCadence: number;
   rejectedWeapon: number;
   rejectedDirection: number;
+  acceptedStates: number;
+  rejectedMovement: number;
+  rejectedMalformedState: number;
+  rejectedIdentity: number;
+  rejectedDuplicateJoin: number;
 }
 
 function createCombatValidationStats(): CombatValidationStats {
   return {
     lastClientShotTime: new Map(),
     lastShotSeq: new Map(),
+    lastAcceptedStateAt: new Map(),
     accepted: 0,
     rejected: 0,
     rejectedCadence: 0,
     rejectedWeapon: 0,
     rejectedDirection: 0,
+    acceptedStates: 0,
+    rejectedMovement: 0,
+    rejectedMalformedState: 0,
+    rejectedIdentity: 0,
+    rejectedDuplicateJoin: 0,
   };
 }
 
@@ -306,6 +326,7 @@ export class P2PHost {
   private respawnPositionResolver: RespawnPositionResolver | null = null;
   private authoritativeRespawnCount = 0;
   private readonly lastHealthPickupAt = new Map<string, number>();
+  private readonly seenClientStatePeers = new Set<string>();
   public readonly __gonePvpHardeningState: CombatValidationStats = createCombatValidationStats();
 
   constructor(options: P2PHostOptions) {
@@ -379,6 +400,8 @@ export class P2PHost {
       this.playerIdToSlot.delete(playerId);
     }
     this.lastHealthPickupAt.delete(playerId);
+    this.__gonePvpHardeningState.lastAcceptedStateAt.delete(playerId);
+    this.seenClientStatePeers.delete(playerId);
     return slot;
   }
 
@@ -396,6 +419,12 @@ export class P2PHost {
     if (isBinaryMessage(rawData)) this.handleBinaryChannelMessage(peerId, channel, toArrayBuffer(rawData));
   }
 
+  private rejectPeer(channel: IDataChannel, duplicateJoin = false): void {
+    this.__gonePvpHardeningState.rejectedIdentity += 1;
+    if (duplicateJoin) this.__gonePvpHardeningState.rejectedDuplicateJoin += 1;
+    try { channel.close?.(); } catch { /* best-effort hostile peer teardown */ }
+  }
+
   private handleBinaryChannelMessage(peerId: string, channel: IDataChannel, buffer: ArrayBuffer): void {
     if (buffer.byteLength < 1) return;
     const opcode = new DataView(buffer).getUint8(0);
@@ -404,8 +433,8 @@ export class P2PHost {
       const msg = decodeLobbyMessage(buffer);
       if (!msg) return;
       switch (msg.type) {
-        case 'JOIN_REQUEST': this.processJoinRequest(channel, msg as any); break;
-        case 'COLOR_REQUEST': this.processColorChangeRequest(channel, msg as any); break;
+        case 'JOIN_REQUEST': this.processJoinRequest(peerId, channel, msg as any); break;
+        case 'COLOR_REQUEST': this.processColorChangeRequest(peerId, channel, msg as any); break;
       }
       return;
     }
@@ -435,8 +464,40 @@ export class P2PHost {
     const record = this.playerRecords.get(peerId);
     if (!record || !record.isAlive) return;
 
-    const seqDiff = (state.seq - record.lastClientSeq) & 0xffff;
-    if (seqDiff > 32768 && record.lastClientSeq !== 0) return;
+    const hardening = this.__gonePvpHardeningState;
+    const seenState = this.seenClientStatePeers.has(peerId);
+    if (seenState && !isForwardSequence(record.lastClientSeq, state.seq, 16)) {
+      hardening.rejectedMalformedState += 1;
+      return;
+    }
+
+    if (
+      !isFiniteClientTransform(state)
+      || !Number.isFinite(state.timestamp)
+      || !Number.isInteger(state.activeWeapon)
+      || state.activeWeapon < 0
+      || state.activeWeapon >= WEAPON_KEYS.length
+      || !isPositionInsideAuthorityBounds(state)
+    ) {
+      hardening.rejectedMalformedState += 1;
+      return;
+    }
+
+    const now = performance.now();
+    let lastAcceptedAt = hardening.lastAcceptedStateAt.get(peerId);
+    if (!seenState && lastAcceptedAt === undefined && this.respawnPositionResolver) {
+      record.position = this.resolveRespawnPosition(record.slot);
+      lastAcceptedAt = now;
+      hardening.lastAcceptedStateAt.set(peerId, now);
+    }
+
+    if (
+      lastAcceptedAt !== undefined
+      && !movementEnvelopeAllows(record.position, state, now - lastAcceptedAt)
+    ) {
+      hardening.rejectedMovement += 1;
+      return;
+    }
 
     record.position = { x: state.x, y: state.y, z: state.z };
     record.yaw = state.yaw;
@@ -444,12 +505,14 @@ export class P2PHost {
     record.activeWeapon = state.activeWeapon;
     record.lastClientSeq = state.seq;
     record.lastClientTimestamp = state.timestamp;
+    hardening.lastAcceptedStateAt.set(peerId, now);
+    hardening.acceptedStates += 1;
+    this.seenClientStatePeers.add(peerId);
 
-    const now = performance.now();
     if ((state.flags & CLIENT_STATE_EXT_FLAGS.HEALTH_PICKUP_REQUEST) !== 0 && record.hp < 100) {
       const craterDistance = Math.hypot(
-        state.x - HEALTH_PICKUP_AUTHORITY.centerX,
-        state.z - HEALTH_PICKUP_AUTHORITY.centerZ,
+        record.position.x - HEALTH_PICKUP_AUTHORITY.centerX,
+        record.position.z - HEALTH_PICKUP_AUTHORITY.centerZ,
       );
       const previousPickupAt = this.lastHealthPickupAt.get(peerId) ?? -Infinity;
       if (
@@ -462,7 +525,15 @@ export class P2PHost {
     }
 
     if (this.lagCompensator) {
-      this.lagCompensator.record_player_position(record.slot, now, state.x, state.y, state.z, 0.45, 2.0);
+      this.lagCompensator.record_player_position(
+        record.slot,
+        now,
+        record.position.x,
+        record.position.y,
+        record.position.z,
+        0.45,
+        2.0,
+      );
     }
   }
 
@@ -523,11 +594,10 @@ export class P2PHost {
 
       const state = this.__gonePvpHardeningState;
       const cfg = getWeaponRuntimeById(weaponType);
-      const clientTime = Number(shot.clientTimestamp);
-      const effectiveTime = Number.isFinite(clientTime) ? clientTime : performance.now();
+      const receiveTime = performance.now();
       const previousTime = state.lastClientShotTime.get(shooterId);
       if (previousTime !== undefined) {
-        const elapsed = effectiveTime - previousTime;
+        const elapsed = receiveTime - previousTime;
         const minimumCadenceMs = (1000 / Math.max(0.1, cfg.fireRateRps)) * 0.68;
         if (elapsed < 0 || elapsed < minimumCadenceMs) {
           this.rejectShot('cadence');
@@ -537,12 +607,12 @@ export class P2PHost {
 
       const seq = Number(shot.shotSeq) & 0xff;
       const previousSeq = state.lastShotSeq.get(shooterId);
-      if (previousSeq !== undefined && seq === previousSeq) {
+      if (previousSeq !== undefined && !isForwardSequence(previousSeq, seq, 8)) {
         this.rejectShot('cadence');
         return false;
       }
       state.lastShotSeq.set(shooterId, seq);
-      state.lastClientShotTime.set(shooterId, effectiveTime);
+      state.lastClientShotTime.set(shooterId, receiveTime);
     }
 
     // The client sends the camera/crosshair origin. Horizontal coordinates are
@@ -785,6 +855,9 @@ export class P2PHost {
     record.shieldExpiresAt = now + 10000;
     record.stateFlags = STATE_FLAGS.ALIVE | STATE_FLAGS.SHIELD_ACTIVE;
     this.lagCompensator?.clear_player(record.slot);
+    if (record.id !== this.hostPlayer.id) {
+      this.__gonePvpHardeningState.lastAcceptedStateAt.set(record.id, now);
+    }
     this.authoritativeRespawnCount += 1;
     this.options.onPlayerRespawned?.(record.id);
     return true;
@@ -846,6 +919,9 @@ export class P2PHost {
         record.position = this.resolveRespawnPosition(record.slot);
         record.shieldExpiresAt = now + 10000;
         this.lagCompensator?.clear_player(record.slot);
+        if (record.id !== this.hostPlayer.id) {
+          this.__gonePvpHardeningState.lastAcceptedStateAt.set(record.id, now);
+        }
         this.authoritativeRespawnCount += 1;
         this.options.onPlayerRespawned?.(record.id);
       }
@@ -902,15 +978,26 @@ export class P2PHost {
   }
 
   private processJoinRequest(
+    peerId: string,
     channel: IDataChannel,
     msg: { type: 'JOIN_REQUEST'; playerId: string; playerName: string; proposedColor: string }
   ): void {
-    const { playerId, playerName, proposedColor } = msg;
-    const validation = this.colorRegistry.requestColor(playerId, proposedColor);
+    const { playerId, proposedColor } = msg;
+    const identity = validatePeerClaim(peerId, playerId, this.hostPlayer.id);
+    if (!identity.ok) {
+      this.rejectPeer(channel);
+      return;
+    }
 
+    if (this.peers.has(peerId) || this.playerIdToSlot.has(peerId) || this.playerRecords.has(peerId)) {
+      this.rejectPeer(channel, true);
+      return;
+    }
+
+    const validation = this.colorRegistry.requestColor(peerId, proposedColor);
     if (!validation.success) {
       channel.send(encodeLobbyColorRejected(
-        playerId,
+        peerId,
         proposedColor,
         validation.error || COLOR_REJECT_REASONS.COLOR_ALREADY_TAKEN,
         validation.availableColors || this.colorRegistry.getAvailablePalette()
@@ -918,20 +1005,24 @@ export class P2PHost {
       return;
     }
 
-    const assignedSlot = this.allocateSlot(playerId);
+    const assignedSlot = this.allocateSlot(peerId);
     const assignedColor = validation.color!;
+    const playerName = sanitizePlayerName(msg.playerName);
     const newPlayerInfo: SessionPlayerInfo = {
-      id: playerId,
+      id: peerId,
       name: playerName,
       color: assignedColor,
       slot: assignedSlot,
     };
 
-    this.peers.set(playerId, { channel, info: newPlayerInfo });
+    this.peers.set(peerId, { channel, info: newPlayerInfo });
 
     const now = performance.now();
-    this.playerRecords.set(playerId, {
-      id: playerId,
+    const initialPosition = this.respawnPositionResolver
+      ? this.resolveRespawnPosition(assignedSlot)
+      : { x: 0, y: 17.5, z: 0 };
+    this.playerRecords.set(peerId, {
+      id: peerId,
       slot: assignedSlot,
       name: playerName,
       color: assignedColor,
@@ -939,7 +1030,7 @@ export class P2PHost {
       isAlive: true,
       deathTime: 0,
       shieldExpiresAt: now + 10000,
-      position: { x: 0, y: 17.5, z: 0 },
+      position: initialPosition,
       yaw: 0,
       pitch: 0,
       activeWeapon: 0,
@@ -947,25 +1038,33 @@ export class P2PHost {
       lastClientSeq: 0,
       lastClientTimestamp: 0,
     });
+    if (this.respawnPositionResolver) {
+      this.__gonePvpHardeningState.lastAcceptedStateAt.set(peerId, now);
+    }
 
     const sessionPlayers = this.getAllSessionPlayers();
-    channel.send(encodeLobbyJoinAccepted(playerId, assignedColor, assignedSlot, sessionPlayers));
-    this.broadcastBinary(encodeLobbyPlayerJoined(newPlayerInfo), playerId);
+    channel.send(encodeLobbyJoinAccepted(peerId, assignedColor, assignedSlot, sessionPlayers));
+    this.broadcastBinary(encodeLobbyPlayerJoined(newPlayerInfo), peerId);
     this.options.onPlayerJoined?.(newPlayerInfo);
   }
 
   private processColorChangeRequest(
+    peerId: string,
     channel: IDataChannel,
     msg: { type: 'COLOR_REQUEST'; playerId: string; requestedColor: string }
   ): void {
-    const { playerId, requestedColor } = msg;
-    const peer = this.peers.get(playerId);
-    if (!peer) return;
+    const identity = validatePeerClaim(peerId, msg.playerId, this.hostPlayer.id);
+    const peer = this.peers.get(peerId);
+    if (!identity.ok || !peer) {
+      this.rejectPeer(channel);
+      return;
+    }
 
-    const validation = this.colorRegistry.requestColor(playerId, requestedColor);
+    const requestedColor = msg.requestedColor;
+    const validation = this.colorRegistry.requestColor(peerId, requestedColor);
     if (!validation.success) {
       channel.send(encodeLobbyColorRejected(
-        playerId,
+        peerId,
         requestedColor,
         validation.error || COLOR_REJECT_REASONS.COLOR_ALREADY_TAKEN,
         validation.availableColors || this.colorRegistry.getAvailablePalette()
@@ -974,9 +1073,9 @@ export class P2PHost {
     }
 
     peer.info.color = validation.color!;
-    const record = this.playerRecords.get(playerId);
+    const record = this.playerRecords.get(peerId);
     if (record) record.color = validation.color!;
-    this.broadcastBinary(encodeLobbyColorChanged(playerId, validation.color!));
+    this.broadcastBinary(encodeLobbyColorChanged(peerId, validation.color!));
   }
 
   public handlePeerDisconnect(peerId: string): void {
@@ -1025,7 +1124,9 @@ export class P2PHost {
     this.slotToPlayerId.clear();
     this.playerIdToSlot.clear();
     this.lastHealthPickupAt.clear();
+    this.seenClientStatePeers.clear();
     this.__gonePvpHardeningState.lastClientShotTime.clear();
     this.__gonePvpHardeningState.lastShotSeq.clear();
+    this.__gonePvpHardeningState.lastAcceptedStateAt.clear();
   }
 }
