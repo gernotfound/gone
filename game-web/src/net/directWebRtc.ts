@@ -729,6 +729,8 @@ export async function createDirectHostOffer(): Promise<DirectHostOffer> {
                 connectionId: recoveryConnectionId,
                 sdp: recoveryPc.localDescription.sdp,
             });
+            recoveryRoomId = await deriveFirestoreRecoveryRoomId(anchorRoomId, generation);
+            throwIfAborted(signal);
             const room = await createFirestoreRecoverySignalingRoom(
                 anchorRoomId,
                 generation,
