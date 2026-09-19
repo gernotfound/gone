@@ -1,6 +1,11 @@
 name: Live Firestore Browser Smoke
 
 on:
+  push:
+    branches:
+      - feat/stable-internet-multiplayer
+    paths:
+      - .github/workflows/live-firestore-browser-smoke.yml
   workflow_dispatch:
 
 permissions:
