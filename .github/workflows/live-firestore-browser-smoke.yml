@@ -1,0 +1,151 @@
+name: Live Firestore Browser Smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live-firestore-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: game-web/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          npm ci --prefix game-web
+          cd game-web
+          npm install --no-save --package-lock=false playwright
+          npx playwright install --with-deps chromium
+
+      - name: Build with live Firestore signaling
+        env:
+          VITE_FIREBASE_PROJECT_ID: gone-29c51
+        run: npm run build --prefix game-web
+
+      - name: Verify live Firestore room to automatic WebRTC connection
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd game-web
+          npm run preview -- --host 127.0.0.1 --port 4173 > ../live-firestore-preview.log 2>&1 &
+          PREVIEW_PID=$!
+          trap 'kill $PREVIEW_PID 2>/dev/null || true' EXIT
+          for i in {1..40}; do
+            if curl -fsS http://127.0.0.1:4173/ >/dev/null; then
+              break
+            fi
+            sleep 0.25
+          done
+          curl -fsS http://127.0.0.1:4173/ >/dev/null
+
+          timeout --foreground --signal=TERM --kill-after=10s 150s node --input-type=module <<'NODE'
+          import { chromium } from 'playwright';
+
+          const BASE_URL = 'http://127.0.0.1:4173';
+          const FIRESTORE_PROJECT = 'gone-29c51';
+          const TIMEOUT = 40_000;
+
+          function invariant(condition, message) {
+            if (!condition) throw new Error(message);
+          }
+
+          async function waitFor(fn, description, timeout = TIMEOUT, interval = 150) {
+            const started = Date.now();
+            let lastError;
+            while (Date.now() - started < timeout) {
+              try {
+                const value = await fn();
+                if (value) return value;
+              } catch (error) {
+                lastError = error;
+              }
+              await new Promise((resolve) => setTimeout(resolve, interval));
+            }
+            throw new Error(`Timed out waiting for ${description}${lastError ? `: ${lastError.message}` : ''}`);
+          }
+
+          const browser = await chromium.launch({ headless: true });
+          const hostContext = await browser.newContext({ viewport: { width: 1000, height: 700 } });
+          const guestContext = await browser.newContext({ viewport: { width: 1000, height: 700 } });
+          const host = await hostContext.newPage();
+          const guest = await guestContext.newPage();
+          const pageErrors = [];
+          host.on('pageerror', (error) => pageErrors.push(`[host] ${error.message}`));
+          guest.on('pageerror', (error) => pageErrors.push(`[guest] ${error.message}`));
+
+          try {
+            console.log('[firestore-live] Opening host lobby');
+            await host.goto(BASE_URL, { waitUntil: 'domcontentloaded', timeout: TIMEOUT });
+            await host.locator('#btn-multiplayer').click();
+            await host.locator('#multiplayer-lobby').waitFor({ state: 'visible', timeout: TIMEOUT });
+
+            const invite = await waitFor(async () => {
+              const value = await host.locator('#invite-link-input').inputValue().catch(() => '');
+              return value.includes('#room=') ? value : null;
+            }, 'Firestore room invite');
+
+            const roomMatch = invite.match(/#room=([0-9a-f]{32})(?:&|$)/i);
+            invariant(roomMatch, `Expected a 32-hex Firestore room invite, got: ${invite}`);
+            const roomId = roomMatch[1].toLowerCase();
+            console.log('[firestore-live] Room created', roomId);
+
+            console.log('[firestore-live] Guest opens room link; no manual answer exchange');
+            await guest.goto(invite, { waitUntil: 'domcontentloaded', timeout: TIMEOUT });
+            await guest.locator('#multiplayer-lobby').waitFor({ state: 'visible', timeout: TIMEOUT });
+
+            await waitFor(
+              async () => guest.evaluate(() => window.goneGame?.getP2PClient?.()?.status === 'connected'),
+              'guest automatic WebRTC connection through Firestore signaling',
+            );
+            await waitFor(
+              async () => host.evaluate(() => window.goneGame?.getP2PHost?.()?.getClientCount?.() === 1),
+              'host authoritative peer registration',
+            );
+            await waitFor(async () => host.locator('#lobby-player-list > li').count().then((count) => count === 2), 'host roster with two players');
+            await waitFor(async () => guest.locator('#lobby-player-list > li').count().then((count) => count === 2), 'guest roster with two players');
+
+            const states = {
+              host: await host.evaluate(() => ({
+                clients: window.goneGame?.getP2PHost?.()?.getClientCount?.(),
+                snapshot: window.goneSession?.snapshot?.() ?? null,
+              })),
+              guest: await guest.evaluate(() => ({
+                status: window.goneGame?.getP2PClient?.()?.status,
+                slot: window.goneGame?.getP2PClient?.()?.playerSlot,
+                snapshot: window.goneSession?.snapshot?.() ?? null,
+              })),
+            };
+            invariant(states.host.clients === 1, `Host client count mismatch: ${JSON.stringify(states)}`);
+            invariant(states.guest.status === 'connected', `Guest not connected: ${JSON.stringify(states)}`);
+            invariant(states.guest.slot === 1, `First guest should receive slot 1: ${JSON.stringify(states)}`);
+
+            const roomUrl = `https://firestore.googleapis.com/v1/projects/${FIRESTORE_PROJECT}/databases/(default)/documents/gone_signaling_rooms_v1/${roomId}`;
+            const cleanupStatus = await waitFor(async () => {
+              const response = await fetch(roomUrl);
+              return response.status === 403 || response.status === 404 ? response.status : null;
+            }, 'original signaling room cleanup', 12_000, 300);
+
+            invariant(pageErrors.length === 0, `Browser page errors: ${pageErrors.join(' | ')}`);
+            console.log('[firestore-live] PASS', JSON.stringify({
+              roomId,
+              cleanupStatus,
+              hostClients: states.host.clients,
+              guestSlot: states.guest.slot,
+              automaticSignaling: true,
+            }));
+          } finally {
+            await Promise.allSettled([hostContext.close(), guestContext.close()]);
+            await browser.close();
+          }
+          NODE
