@@ -31,9 +31,19 @@ function attachDiagnostics(page, label, errors) {
   });
 }
 
-function isExpectedIntentionalHostLossError(message) {
-  if (!message.startsWith('[host]') && !message.startsWith('[guest-b]')) return false;
+function isExpectedIntentionalTransportLossError(message) {
+  if (!message.startsWith('[host]') && !message.startsWith('[guest-a]') && !message.startsWith('[guest-b]')) return false;
   return /WebRTC control DataChannel (?:chiuso|in errore)|DataChannel error: Error: WebRTC control DataChannel (?:chiuso|in errore)/i.test(message);
+}
+
+function consumeExpectedTransportErrors(errors, startIndex, phase) {
+  const phaseErrors = errors.slice(startIndex);
+  const unexpected = phaseErrors.filter((message) => !isExpectedIntentionalTransportLossError(message));
+  if (unexpected.length > 0) {
+    throw new Error(`Browser exceptions detected during ${phase}:\n${unexpected.join('\n')}`);
+  }
+  errors.splice(startIndex, phaseErrors.length);
+  return phaseErrors.length;
 }
 
 async function playerCount(page) {
@@ -122,6 +132,10 @@ async function main() {
     }));
     invariant(guestAState.slot === 1, `First guest should own slot 1: ${JSON.stringify(guestAState)}`);
 
+    // Closing an independent browser context deliberately tears down SCTP/ICE.
+    // Capture only this bounded window so expected low-level close/error events
+    // cannot mask an unrelated browser exception elsewhere in the scenario.
+    const errorsBeforeGuestClose = errors.length;
     console.log('[resilience] Abruptly closing first guest and checking authoritative cleanup');
     await guestA.close();
     await waitFor(async () => host.evaluate(() => {
@@ -133,6 +147,7 @@ async function main() {
       'lobby cleanup after guest close',
       10_000,
     );
+    const expectedGuestCloseErrors = consumeExpectedTransportErrors(errors, errorsBeforeGuestClose, 'intentional guest teardown');
 
     console.log('[resilience] Connecting replacement guest without recreating the room');
     await connectGuest(host, guestB, firstInvite);
@@ -152,10 +167,6 @@ async function main() {
     invariant(guestBState.slot === 1, `Released slot should be reusable, got ${guestBState.slot}`);
     invariant(guestBState.id !== guestAState.id, 'Replacement guest must have a fresh identity');
 
-    // The test intentionally kills the server transport below. Capture the
-    // diagnostics boundary first so only the expected terminal WebRTC errors
-    // emitted by that action are tolerated; any earlier or unrelated browser
-    // exception remains a hard failure.
     const errorsBeforeIntentionalHostLoss = errors.length;
     console.log('[resilience] Closing host and verifying client observes server loss');
     await host.close();
@@ -164,19 +175,17 @@ async function main() {
       'guest to detect host/server shutdown',
       PEER_LOSS_TIMEOUT,
     );
+    const expectedHostCloseErrors = consumeExpectedTransportErrors(errors, errorsBeforeIntentionalHostLoss, 'intentional host teardown');
 
-    const unexpectedErrors = errors.filter((message, index) =>
-      index < errorsBeforeIntentionalHostLoss || !isExpectedIntentionalHostLossError(message)
-    );
-    if (unexpectedErrors.length > 0) {
-      throw new Error(`Browser exceptions detected:\n${unexpectedErrors.join('\n')}`);
+    if (errors.length > 0) {
+      throw new Error(`Browser exceptions detected:\n${errors.join('\n')}`);
     }
 
     console.log('[resilience] PASS', JSON.stringify({
       firstGuestSlot: guestAState.slot,
       replacementGuestSlot: guestBState.slot,
       hostLossDetected: true,
-      expectedTerminalErrors: errors.length - unexpectedErrors.length - errorsBeforeIntentionalHostLoss,
+      expectedTerminalErrors: expectedGuestCloseErrors + expectedHostCloseErrors,
     }));
   } finally {
     await Promise.allSettled([
