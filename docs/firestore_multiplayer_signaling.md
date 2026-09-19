@@ -10,7 +10,8 @@ G.O.N.E. uses Firestore only as an ephemeral WebRTC signaling mailbox. Gameplay 
 - Firestore stores one short-lived offer/answer document per pending guest connection.
 - After SDP exchange, the guest connects directly to the browser host over WebRTC.
 - No TURN server is configured.
-- If Firestore is not configured or the signaling request fails, the existing manual offer/answer path remains available.
+- If Firestore is not configured or the initial signaling request fails, the existing manual offer/answer path remains available.
+- For a session that was established through Firestore, a terminal WebRTC transport failure can negotiate a replacement PeerConnection automatically without replacing the logical `P2PClient`/`P2PHost` session state.
 
 ## Vercel environment
 
@@ -30,7 +31,23 @@ The browser uses only:
 gone_signaling_rooms_v1/{roomId}
 ```
 
-Room IDs are random 128-bit values represented as 32 lowercase hex characters. Documents expire logically after two minutes and are deleted best-effort after connection/reset.
+Initial room IDs are random 128-bit values represented as 32 lowercase hex characters. Documents expire logically after two minutes and are deleted best-effort after connection/reset.
+
+### Terminal transport recovery
+
+A healthy match does **not** poll Firestore. Firestore is consulted again only after the direct RTC transport has become terminal after the normal disconnect grace/heartbeat checks.
+
+For a Firestore-backed connection, the original random room ID remains an in-memory recovery secret even after its document is deleted. Host and guest independently derive the same generation-specific recovery mailbox:
+
+```text
+first16bytes(SHA-256("gone-recovery-v1:<originalRoomId>:<generation>"))
+```
+
+Generation 1 is the original connection; terminal recovery starts at generation 2. The host creates the derived document with a fresh WebRTC offer, the guest waits for that exact document ID and writes one answer, then the host deletes it. No collection listing or persistent presence record is required.
+
+The replacement occurs behind the existing logical `IDataChannel`. During the short renegotiation window outgoing gameplay packets are discarded rather than queued against a dead SCTP transport. The authoritative host roster, player slot, HP/combat record and the guest `P2PClient` identity are retained. Once the replacement control DataChannel opens, normal direct P2P traffic resumes.
+
+If this recovery cannot complete, the logical channel closes normally and the existing explicit “new invite” recovery UI remains the terminal fallback. Manual SDP sessions do not have a Firestore recovery secret and therefore retain that fallback behavior.
 
 ## Security Rules snippet
 
@@ -84,10 +101,14 @@ match /gone_signaling_rooms_v1/{roomId} {
 }
 ```
 
-These rules deliberately allow unauthenticated access only to a single random-ID signaling document and disallow collection listing. This avoids adding Firebase Authentication as another runtime requirement while keeping the rest of the database governed by its existing rules.
+The same rules cover both the initial random invite document and derived recovery documents: they have the same 32-hex ID shape and the same one-shot `waiting -> answered -> delete` schema. No broader permission is required for recovery.
+
+These rules deliberately allow unauthenticated access only to a single unguessable signaling document and disallow collection listing. This avoids adding Firebase Authentication as another runtime requirement while keeping the rest of the database governed by its existing rules.
 
 ## Operational limits
 
-Without TURN, some restrictive NAT/firewall combinations can still fail even with STUN. Firestore improves discovery and removes the manual answer exchange; it is not a relay and cannot make an impossible peer-to-peer route reachable.
+Without TURN, some restrictive NAT/firewall combinations can still fail even with STUN. Firestore improves discovery, removes the manual answer exchange and can renegotiate a dead direct transport; it is not a relay and cannot make an impossible peer-to-peer route reachable.
 
-The host polls only while an invite is pending, using 500 ms polling for the first 5 seconds, 1 second up to 30 seconds, then 2 seconds until the two-minute room expiry. No Firestore reads/writes occur during gameplay.
+The host polls only while an initial invite or a terminal-recovery offer is pending, using 500 ms polling for the first 5 seconds, 1 second up to 30 seconds, then 2 seconds until the two-minute room expiry. No Firestore reads/writes occur during healthy gameplay.
+
+Automatic recovery preserves the current browser host; it is **not host migration**. If the authoritative host tab/process disappears, the current match still ends.
