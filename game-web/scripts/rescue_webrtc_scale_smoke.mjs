@@ -35,6 +35,18 @@ function attachDiagnostics(page, label, errors) {
   });
 }
 
+async function guestConnectionDiagnostics(guest) {
+  return guest.evaluate(() => {
+    const client = window.goneGame?.getP2PClient?.();
+    return {
+      clientStatus: client?.status ?? 'missing',
+      channelReadyState: client?.channel?.readyState ?? 'missing',
+      playerSlot: client?.playerSlot ?? null,
+      session: window.goneSession?.snapshot?.() ?? null,
+    };
+  }).catch((error) => ({ diagnosticsError: error?.message || String(error) }));
+}
+
 async function readFreshInvite(host, previousInvite = null) {
   return waitFor(async () => {
     const value = await host.locator('#invite-link-input').inputValue();
@@ -60,16 +72,21 @@ async function connectGuest(host, guest, guestIndex, previousInvite) {
   await host.locator('#direct-host-answer-input').fill(answer);
   await host.locator('#btn-direct-apply-answer').click();
 
-  await waitFor(
-    async () => guest.evaluate(() => window.goneGame?.getP2PClient?.()?.status === 'connected'),
-    `${label} connected`,
-    15_000,
-  );
+  try {
+    await waitFor(
+      async () => guest.evaluate(() => window.goneGame?.getP2PClient?.()?.status === 'connected'),
+      `${label} connected`,
+      TIMEOUT,
+    );
+  } catch (error) {
+    const diagnostics = await guestConnectionDiagnostics(guest);
+    throw new Error(`${error?.message || error} Transport diagnostics: ${JSON.stringify(diagnostics)}`);
+  }
 
   await waitFor(
     async () => host.evaluate((expected) => window.goneGame?.getP2PHost?.()?.getClientCount?.() === expected, guestIndex + 1),
     `host client count ${guestIndex + 1}`,
-    15_000,
+    TIMEOUT,
   );
 
   console.log(`[scale] ${label} connected`);
@@ -111,14 +128,14 @@ async function main() {
     await waitFor(
       async () => (await lobbyPlayerCount(host)) === GUEST_COUNT + 1,
       'host lobby to contain 8 players',
-      15_000,
+      TIMEOUT,
     );
 
     for (let i = 0; i < guests.length; i += 1) {
       await waitFor(
         async () => (await lobbyPlayerCount(guests[i])) === GUEST_COUNT + 1,
         `guest-${i + 1} lobby to contain 8 players`,
-        15_000,
+        TIMEOUT,
       );
     }
 
