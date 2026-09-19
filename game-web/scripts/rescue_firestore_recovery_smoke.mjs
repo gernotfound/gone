@@ -46,6 +46,38 @@ async function waitForServer(child) {
   }, 'isolated Vite dev server', 20_000, 150);
 }
 
+function signalProcessTree(child, signal) {
+  const pid = child.pid;
+  if (!pid) return;
+  try {
+    if (process.platform === 'win32') {
+      child.kill(signal);
+    } else {
+      process.kill(-pid, signal);
+    }
+  } catch (error) {
+    if (error?.code !== 'ESRCH') throw error;
+  }
+}
+
+async function stopServer(child) {
+  signalProcessTree(child, 'SIGTERM');
+  await new Promise((resolve) => {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      resolve();
+      return;
+    }
+    const timer = setTimeout(resolve, 1500);
+    child.once('exit', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+  signalProcessTree(child, 'SIGKILL');
+  child.stdout?.destroy();
+  child.stderr?.destroy();
+}
+
 function recoveryRoomId(anchorRoomId, generation) {
   return createHash('sha256')
     .update(`gone-recovery-v1:${anchorRoomId}:${generation}`)
@@ -195,6 +227,7 @@ async function main() {
     cwd: process.cwd(),
     env: { ...process.env, VITE_FIREBASE_PROJECT_ID: FIREBASE_PROJECT_ID },
     stdio: ['ignore', 'pipe', 'pipe'],
+    detached: process.platform !== 'win32',
   });
   await waitForServer(server);
 
@@ -344,15 +377,7 @@ async function main() {
   } finally {
     await context.close();
     await browser.close();
-    server.kill('SIGTERM');
-    await new Promise((resolve) => {
-      const timer = setTimeout(resolve, 1500);
-      server.once('exit', () => {
-        clearTimeout(timer);
-        resolve();
-      });
-    });
-    if (!server.killed) server.kill('SIGKILL');
+    await stopServer(server);
   }
 }
 
