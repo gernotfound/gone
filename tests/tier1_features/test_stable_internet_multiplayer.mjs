@@ -86,8 +86,11 @@ export async function run(suite) {
     assert(direct.includes("new CustomEvent('gone-rtc-recovery-state'"), 'recovery state must be observable by presentation/diagnostics');
     assert(direct.includes('answer.peerId !== recoveryPeerId'), 'host recovery must reject an answer from a different guest identity');
     assert(direct.includes('createFirestoreRecoverySignalingRoom('), 'host recovery must publish the replacement offer through the one-shot mailbox');
-    assert(direct.includes('waitForFirestoreSignalingRoom(recoveryRoomId'), 'guest recovery must use the matching deterministic generation');
-    assert(direct.includes('publishFirestoreSignalingAnswer(room.roomId, recoveryAnswerCode)'), 'guest must publish the replacement answer automatically');
+    assert(direct.includes('recoveryOfferCode,\n                signal,'), 'host recovery mailbox creation must abort immediately with the logical session');
+    assert(direct.includes('waitForFirestoreSignalingRoom(recoveryRoomId, signal)'), 'guest recovery must use the matching deterministic generation with the recovery abort signal');
+    assert(direct.includes('publishFirestoreSignalingAnswer(room.roomId, recoveryAnswerCode, signal)'), 'guest recovery answer publish must abort immediately with the logical session');
+    assert(direct.includes('getFirestoreSignalingRoom(room.roomId, signal)'), 'ambiguous PATCH confirmation GET must share the recovery abort signal');
+    assert(direct.includes('void deleteFirestoreSignalingRoom(room.roomId);'), 'best-effort mailbox cleanup must remain independent from an already-aborted recovery signal');
   });
 
   suite.test('Room links enter the existing lobby/session owner', () => {
