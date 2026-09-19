@@ -24,6 +24,10 @@ const RECOVERY_OPEN_TIMEOUT_MS = 20_000;
 const CLIENT_STATE_OPCODE = 0x01;
 const WORLD_SNAPSHOT_OPCODE = 0x02;
 export const PUBLIC_STUN_URL = 'stun:stun.cloudflare.com:3478';
+export const PUBLIC_STUN_URLS = [
+    PUBLIC_STUN_URL,
+    'stun:stun.l.google.com:19302',
+] as const;
 
 interface SignalPayload {
     v: number;
@@ -213,10 +217,10 @@ function inspectSdp(sdp: string): DirectConnectionDiagnostics {
 }
 
 function createPeerConnection(): RTCPeerConnection {
-    // Public STUN discovers server-reflexive candidates without relaying gameplay.
+    // Redundant public STUN discovery avoids a single discovery endpoint without relaying gameplay.
     // No TURN server is configured: game traffic remains browser-to-browser.
     return new RTCPeerConnection({
-        iceServers: [{ urls: PUBLIC_STUN_URL }],
+        iceServers: [{ urls: [...PUBLIC_STUN_URLS] }],
         bundlePolicy: 'max-bundle',
         iceCandidatePoolSize: 1,
     });
