@@ -92,7 +92,7 @@ jobs:
               created = false;
 
               result = await request(documentUrl);
-              assertStatus(result.response.status, 404, 'get after delete', result.text);
+              assertStatus(result.response.status, 403, 'get after delete must stay denied', result.text);
 
               console.log(JSON.stringify({
                 projectId,
@@ -102,7 +102,7 @@ jobs:
                 update: 200,
                 list: 403,
                 delete: 200,
-                getAfterDelete: 404,
+                getAfterDelete: 403,
               }));
             } finally {
               if (created) {
