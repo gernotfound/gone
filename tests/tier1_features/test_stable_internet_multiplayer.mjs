@@ -90,6 +90,8 @@ export async function run(suite) {
     assert(direct.includes('waitForFirestoreSignalingRoom(recoveryRoomId, signal)'), 'guest recovery must use the matching deterministic generation with the recovery abort signal');
     assert(direct.includes('publishFirestoreSignalingAnswer(room.roomId, recoveryAnswerCode, signal)'), 'guest recovery answer publish must abort immediately with the logical session');
     assert(direct.includes('getFirestoreSignalingRoom(room.roomId, signal)'), 'ambiguous PATCH confirmation GET must share the recovery abort signal');
+    assert(direct.includes('recoveryRoomId = await deriveFirestoreRecoveryRoomId(anchorRoomId, generation);'), 'host must know the deterministic recovery mailbox before an abortable POST can become ambiguous');
+    assert(direct.includes('if (recoveryRoomId) void deleteFirestoreSignalingRoom(recoveryRoomId);'), 'abort/failure cleanup must retain the deterministic mailbox id even if create never returns');
     assert(direct.includes('void deleteFirestoreSignalingRoom(room.roomId);'), 'best-effort mailbox cleanup must remain independent from an already-aborted recovery signal');
   });
 
