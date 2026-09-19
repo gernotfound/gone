@@ -4,6 +4,8 @@ const MAX_SIGNAL_LENGTH = 96_000;
 const POLL_FAST_MS = 500;
 const POLL_NORMAL_MS = 1000;
 const POLL_SLOW_MS = 2000;
+const RECOVERY_ROOM_DOMAIN = 'gone-recovery-v1';
+const RECOVERY_ANCHOR_LIMIT = 32;
 
 type FirestoreField =
   | { stringValue: string }
@@ -21,6 +23,15 @@ export type SignalingRoom = {
   createdAtMs: number;
   expiresAtMs: number;
 };
+
+class FirestoreSignalingHttpError extends Error {
+  constructor(public readonly status: number, message: string) {
+    super(message);
+    this.name = 'FirestoreSignalingHttpError';
+  }
+}
+
+const recoveryAnchorsByOffer = new Map<string, string>();
 
 function envProjectId(): string {
   const env = (import.meta as any).env as Record<string, string | undefined> | undefined;
@@ -54,6 +65,18 @@ function randomRoomId(): string {
   const bytes = new Uint8Array(16);
   globalThis.crypto.getRandomValues(bytes);
   return Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
+}
+
+function rememberRecoveryAnchor(offerCode: string, roomId: string): void {
+  const offer = validateSignal(offerCode, 'Offerta');
+  const anchor = validateRoomId(roomId);
+  if (recoveryAnchorsByOffer.has(offer)) recoveryAnchorsByOffer.delete(offer);
+  recoveryAnchorsByOffer.set(offer, anchor);
+  while (recoveryAnchorsByOffer.size > RECOVERY_ANCHOR_LIMIT) {
+    const oldest = recoveryAnchorsByOffer.keys().next().value as string | undefined;
+    if (!oldest) break;
+    recoveryAnchorsByOffer.delete(oldest);
+  }
 }
 
 function baseDocumentsUrl(): string {
@@ -118,7 +141,10 @@ async function firestoreFetch(url: string, init: RequestInit = {}): Promise<Resp
   } catch {
     // Keep the status-only fallback below.
   }
-  throw new Error(`Firestore signaling HTTP ${response.status}${detail}`);
+  throw new FirestoreSignalingHttpError(
+    response.status,
+    `Firestore signaling HTTP ${response.status}${detail}`,
+  );
 }
 
 function wait(ms: number, signal?: AbortSignal): Promise<void> {
@@ -146,17 +172,8 @@ function wait(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-export function isFirestoreSignalingConfigured(): boolean {
-  try {
-    validateProjectId(envProjectId());
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export async function createFirestoreSignalingRoom(offerCode: string): Promise<SignalingRoom> {
-  const roomId = randomRoomId();
+async function createFirestoreSignalingRoomWithId(roomId: string, offerCode: string): Promise<SignalingRoom> {
+  const normalizedRoomId = validateRoomId(roomId);
   const offer = validateSignal(offerCode, 'Offerta');
   const now = Date.now();
   const body: FirestoreDocument = {
@@ -171,12 +188,61 @@ export async function createFirestoreSignalingRoom(offerCode: string): Promise<S
     },
   };
 
-  const response = await firestoreFetch(collectionUrl(roomId), {
+  const response = await firestoreFetch(collectionUrl(normalizedRoomId), {
     method: 'POST',
     body: JSON.stringify(body),
   });
   const document = await response.json() as FirestoreDocument;
-  return roomFromDocument(roomId, document);
+  const room = roomFromDocument(normalizedRoomId, document);
+  rememberRecoveryAnchor(room.offerCode, normalizedRoomId);
+  return room;
+}
+
+export function isFirestoreSignalingConfigured(): boolean {
+  try {
+    validateProjectId(envProjectId());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function getFirestoreRecoveryAnchorForOffer(offerCode: string): string | null {
+  const offer = offerCode.trim();
+  if (!offer) return null;
+  return recoveryAnchorsByOffer.get(offer) ?? null;
+}
+
+export async function deriveFirestoreRecoveryRoomId(anchorRoomId: string, generation: number): Promise<string> {
+  const anchor = validateRoomId(anchorRoomId);
+  if (!Number.isSafeInteger(generation) || generation < 2 || generation > 1_000_000) {
+    throw new Error('Generazione recovery Firestore non valida.');
+  }
+  const payload = new TextEncoder().encode(`${RECOVERY_ROOM_DOMAIN}:${anchor}:${generation}`);
+  const digest = new Uint8Array(await globalThis.crypto.subtle.digest('SHA-256', payload));
+  return Array.from(digest.subarray(0, 16), (value) => value.toString(16).padStart(2, '0')).join('');
+}
+
+export async function createFirestoreSignalingRoom(offerCode: string): Promise<SignalingRoom> {
+  return createFirestoreSignalingRoomWithId(randomRoomId(), offerCode);
+}
+
+export async function createFirestoreRecoverySignalingRoom(
+  anchorRoomId: string,
+  generation: number,
+  offerCode: string,
+): Promise<SignalingRoom> {
+  const roomId = await deriveFirestoreRecoveryRoomId(anchorRoomId, generation);
+  try {
+    return await createFirestoreSignalingRoomWithId(roomId, offerCode);
+  } catch (error) {
+    if (!(error instanceof FirestoreSignalingHttpError) || error.status !== 409) throw error;
+    // A crashed previous attempt can leave the deterministic mailbox behind.
+    // The room id is an unguessable derivative of the original 128-bit secret;
+    // delete and recreate it rather than falling back to a second namespace.
+    await deleteFirestoreSignalingRoom(roomId);
+    return createFirestoreSignalingRoomWithId(roomId, offerCode);
+  }
 }
 
 export async function getFirestoreSignalingRoom(roomId: string, signal?: AbortSignal): Promise<SignalingRoom> {
@@ -188,7 +254,32 @@ export async function getFirestoreSignalingRoom(roomId: string, signal?: AbortSi
   if (room.expiresAtMs > 0 && room.expiresAtMs <= Date.now()) {
     throw new Error('Invito multiplayer scaduto.');
   }
+  rememberRecoveryAnchor(room.offerCode, normalized);
   return room;
+}
+
+export async function waitForFirestoreSignalingRoom(
+  roomId: string,
+  signal?: AbortSignal,
+  timeoutMs = ROOM_TTL_MS,
+): Promise<SignalingRoom> {
+  const normalized = validateRoomId(roomId);
+  const startedAt = Date.now();
+
+  while (!signal?.aborted) {
+    try {
+      return await getFirestoreSignalingRoom(normalized, signal);
+    } catch (error) {
+      if (!(error instanceof FirestoreSignalingHttpError) || error.status !== 404) throw error;
+    }
+
+    const elapsed = Date.now() - startedAt;
+    if (elapsed >= timeoutMs) throw new Error('Recovery multiplayer non disponibile.');
+    const delay = elapsed < 5000 ? POLL_FAST_MS : POLL_NORMAL_MS;
+    await wait(Math.min(delay, Math.max(1, timeoutMs - elapsed)), signal);
+  }
+
+  throw new DOMException('Operazione annullata.', 'AbortError');
 }
 
 export async function publishFirestoreSignalingAnswer(roomId: string, answerCode: string): Promise<void> {
@@ -238,6 +329,7 @@ export async function deleteFirestoreSignalingRoom(roomId: string): Promise<void
   try {
     await firestoreFetch(documentUrl(roomId), { method: 'DELETE' });
   } catch (error) {
+    if (error instanceof FirestoreSignalingHttpError && error.status === 404) return;
     console.warn('[G.O.N.E.] Cleanup stanza Firestore fallito:', error);
   }
 }
