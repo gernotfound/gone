@@ -35,13 +35,74 @@ function attachDiagnostics(page, label, errors) {
   });
 }
 
+function summarizeSignalCandidates(value) {
+  try {
+    let code = String(value || '').trim();
+    if (code.includes('#direct=')) {
+      const url = new URL(code);
+      code = new URLSearchParams(url.hash.replace(/^#/, '')).get('direct') || '';
+    }
+    const normalized = code.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4);
+    const payload = JSON.parse(Buffer.from(padded, 'base64').toString('utf8'));
+    const candidates = String(payload?.sdp || '')
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith('a=candidate:'));
+    const summary = {
+      total: candidates.length,
+      host: 0,
+      srflx: 0,
+      relay: 0,
+      ipv4: 0,
+      ipv6: 0,
+      mdns: 0,
+    };
+    for (const line of candidates) {
+      const parts = line.slice(2).split(/\s+/);
+      const typeIndex = parts.indexOf('typ');
+      const type = typeIndex >= 0 ? parts[typeIndex + 1] : '';
+      if (type === 'host') summary.host += 1;
+      else if (type === 'srflx') summary.srflx += 1;
+      else if (type === 'relay') summary.relay += 1;
+      const address = parts[4] || '';
+      if (address.endsWith('.local')) summary.mdns += 1;
+      else if (address.includes(':')) summary.ipv6 += 1;
+      else if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(address)) summary.ipv4 += 1;
+    }
+    return summary;
+  } catch (error) {
+    return { parseError: error?.message || String(error) };
+  }
+}
+
 async function guestConnectionDiagnostics(guest) {
-  return guest.evaluate(() => {
+  return guest.evaluate(async () => {
     const client = window.goneGame?.getP2PClient?.();
+    const channel = client?.channel;
+    const pc = channel?.pc;
+    let candidatePairs = [];
+    if (pc?.getStats) {
+      const stats = await pc.getStats();
+      candidatePairs = Array.from(stats.values())
+        .filter((entry) => entry.type === 'candidate-pair')
+        .map((entry) => ({
+          state: entry.state,
+          nominated: Boolean(entry.nominated),
+          selected: Boolean(entry.selected),
+          bytesSent: entry.bytesSent ?? 0,
+          bytesReceived: entry.bytesReceived ?? 0,
+          localCandidateId: entry.localCandidateId ?? null,
+          remoteCandidateId: entry.remoteCandidateId ?? null,
+        }));
+    }
     return {
       clientStatus: client?.status ?? 'missing',
-      channelReadyState: client?.channel?.readyState ?? 'missing',
+      channelReadyState: channel?.readyState ?? 'missing',
       playerSlot: client?.playerSlot ?? null,
+      pcConnectionState: pc?.connectionState ?? 'missing',
+      iceConnectionState: pc?.iceConnectionState ?? 'missing',
+      iceGatheringState: pc?.iceGatheringState ?? 'missing',
+      candidatePairs,
       session: window.goneSession?.snapshot?.() ?? null,
     };
   }).catch((error) => ({ diagnosticsError: error?.message || String(error) }));
@@ -59,6 +120,7 @@ async function readFreshInvite(host, previousInvite = null) {
 async function connectGuest(host, guest, guestIndex, previousInvite) {
   const label = `guest-${guestIndex + 1}`;
   const invite = await readFreshInvite(host, previousInvite);
+  const offerCandidates = summarizeSignalCandidates(invite);
   await guest.goto(invite, { waitUntil: 'domcontentloaded', timeout: TIMEOUT });
   await guest.locator('#multiplayer-lobby').waitFor({ state: 'visible', timeout: TIMEOUT });
   await guest.locator('#player-username').fill(`ScaleGuest${guestIndex + 1}`);
@@ -68,6 +130,8 @@ async function connectGuest(host, guest, guestIndex, previousInvite) {
     const value = await guest.locator('#invite-link-input').inputValue().catch(() => '');
     return answerLabel?.includes('RISPOSTA') && value.length > 100 ? value : null;
   }, `${label} WebRTC answer`, 15_000);
+  const answerCandidates = summarizeSignalCandidates(answer);
+  console.log(`[scale] ${label} ICE ${JSON.stringify({ offer: offerCandidates, answer: answerCandidates })}`);
 
   await host.locator('#direct-host-answer-input').fill(answer);
   await host.locator('#btn-direct-apply-answer').click();
@@ -80,7 +144,7 @@ async function connectGuest(host, guest, guestIndex, previousInvite) {
     );
   } catch (error) {
     const diagnostics = await guestConnectionDiagnostics(guest);
-    throw new Error(`${error?.message || error} Transport diagnostics: ${JSON.stringify(diagnostics)}`);
+    throw new Error(`${error?.message || error} ICE signals: ${JSON.stringify({ offer: offerCandidates, answer: answerCandidates })} Transport diagnostics: ${JSON.stringify(diagnostics)}`);
   }
 
   await waitFor(
