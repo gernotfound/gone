@@ -6,7 +6,7 @@ G.O.N.E. uses Firestore only as an ephemeral WebRTC signaling mailbox. Gameplay 
 
 - Vercel serves the PWA.
 - The browser host remains authoritative for the match.
-- `stun:stun.cloudflare.com:3478` is used only for ICE/STUN candidate discovery.
+- `stun:stun.cloudflare.com:3478` and `stun:stun.l.google.com:19302` are redundant public ICE/STUN discovery endpoints; neither relays gameplay traffic.
 - Firestore stores one short-lived offer/answer document per pending guest connection.
 - After SDP exchange, the guest connects directly to the browser host over WebRTC.
 - No TURN server is configured.
@@ -107,7 +107,7 @@ These rules deliberately allow unauthenticated access only to a single unguessab
 
 ## Operational limits
 
-Without TURN, some restrictive NAT/firewall combinations can still fail even with STUN. Firestore improves discovery, removes the manual answer exchange and can renegotiate a dead direct transport; it is not a relay and cannot make an impossible peer-to-peer route reachable.
+Without TURN, some restrictive NAT/firewall combinations can still fail even with redundant STUN discovery. Firestore improves discovery, removes the manual answer exchange and can renegotiate a dead direct transport; it is not a relay and cannot make an impossible peer-to-peer route reachable.
 
 The host polls only while an initial invite or a terminal-recovery offer is pending, using 500 ms polling for the first 5 seconds, 1 second up to 30 seconds, then 2 seconds until the two-minute room expiry. No Firestore reads/writes occur during healthy gameplay.
 
