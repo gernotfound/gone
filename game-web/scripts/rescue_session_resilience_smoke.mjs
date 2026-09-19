@@ -44,6 +44,18 @@ async function readInvite(host, previous = null) {
   }, 'fresh host invitation', 15_000);
 }
 
+async function guestConnectionDiagnostics(guest) {
+  return guest.evaluate(() => {
+    const client = window.goneGame?.getP2PClient?.();
+    return {
+      clientStatus: client?.status ?? 'missing',
+      channelReadyState: client?.channel?.readyState ?? 'missing',
+      playerSlot: client?.playerSlot ?? null,
+      session: window.goneSession?.snapshot?.() ?? null,
+    };
+  }).catch((error) => ({ diagnosticsError: error?.message || String(error) }));
+}
+
 async function connectGuest(host, guest, previousInvite = null) {
   const invite = await readInvite(host, previousInvite);
   await guest.goto(invite, { waitUntil: 'domcontentloaded', timeout: TIMEOUT });
@@ -57,11 +69,16 @@ async function connectGuest(host, guest, previousInvite = null) {
 
   await host.locator('#direct-host-answer-input').fill(answer);
   await host.locator('#btn-direct-apply-answer').click();
-  await waitFor(
-    async () => guest.evaluate(() => window.goneGame?.getP2PClient?.()?.status === 'connected'),
-    'guest connected',
-    15_000,
-  );
+  try {
+    await waitFor(
+      async () => guest.evaluate(() => window.goneGame?.getP2PClient?.()?.status === 'connected'),
+      'guest connected',
+      TIMEOUT,
+    );
+  } catch (error) {
+    const diagnostics = await guestConnectionDiagnostics(guest);
+    throw new Error(`${error?.message || error} Transport diagnostics: ${JSON.stringify(diagnostics)}`);
+  }
   return invite;
 }
 
