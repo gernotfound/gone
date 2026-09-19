@@ -31,6 +31,11 @@ function attachDiagnostics(page, label, errors) {
   });
 }
 
+function isExpectedIntentionalHostLossError(message) {
+  if (!message.startsWith('[host]') && !message.startsWith('[guest-b]')) return false;
+  return /WebRTC control DataChannel (?:chiuso|in errore)|DataChannel error: Error: WebRTC control DataChannel (?:chiuso|in errore)/i.test(message);
+}
+
 async function playerCount(page) {
   return page.locator('#lobby-player-list > li').count();
 }
@@ -147,6 +152,11 @@ async function main() {
     invariant(guestBState.slot === 1, `Released slot should be reusable, got ${guestBState.slot}`);
     invariant(guestBState.id !== guestAState.id, 'Replacement guest must have a fresh identity');
 
+    // The test intentionally kills the server transport below. Capture the
+    // diagnostics boundary first so only the expected terminal WebRTC errors
+    // emitted by that action are tolerated; any earlier or unrelated browser
+    // exception remains a hard failure.
+    const errorsBeforeIntentionalHostLoss = errors.length;
     console.log('[resilience] Closing host and verifying client observes server loss');
     await host.close();
     await waitFor(
@@ -155,14 +165,18 @@ async function main() {
       PEER_LOSS_TIMEOUT,
     );
 
-    if (errors.length > 0) {
-      throw new Error(`Browser exceptions detected:\n${errors.join('\n')}`);
+    const unexpectedErrors = errors.filter((message, index) =>
+      index < errorsBeforeIntentionalHostLoss || !isExpectedIntentionalHostLossError(message)
+    );
+    if (unexpectedErrors.length > 0) {
+      throw new Error(`Browser exceptions detected:\n${unexpectedErrors.join('\n')}`);
     }
 
     console.log('[resilience] PASS', JSON.stringify({
       firstGuestSlot: guestAState.slot,
       replacementGuestSlot: guestBState.slot,
       hostLossDetected: true,
+      expectedTerminalErrors: errors.length - unexpectedErrors.length - errorsBeforeIntentionalHostLoss,
     }));
   } finally {
     await Promise.allSettled([
