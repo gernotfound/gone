@@ -121,6 +121,94 @@ export async function run(suite) {
     }
   });
 
+  suite.test('optional realtime WebRTC failure preserves control and falls back safely', async () => {
+    const originalWindow = globalThis.window;
+    const windowListeners = new Map();
+    let nextTimerId = 1;
+
+    const fakeWindow = {
+      setTimeout() { return nextTimerId++; },
+      clearTimeout() {},
+      setInterval() { return nextTimerId++; },
+      clearInterval() {},
+      addEventListener(type, fn) {
+        const items = windowListeners.get(type) ?? [];
+        items.push(fn);
+        windowListeners.set(type, items);
+      },
+      removeEventListener(type, fn) {
+        windowListeners.set(type, (windowListeners.get(type) ?? []).filter((item) => item !== fn));
+      },
+    };
+    globalThis.window = fakeWindow;
+
+    class EventHub {
+      constructor() { this.listeners = new Map(); }
+      addEventListener(type, fn) {
+        const items = this.listeners.get(type) ?? [];
+        items.push(fn);
+        this.listeners.set(type, items);
+      }
+      emit(type, event = {}) {
+        for (const fn of this.listeners.get(type) ?? []) fn(event);
+      }
+    }
+
+    class FakeChannel extends EventHub {
+      constructor() {
+        super();
+        this.readyState = 'open';
+        this.binaryType = 'arraybuffer';
+        this.bufferedAmount = 0;
+        this.sent = [];
+      }
+      send(data) { this.sent.push(data); }
+      close() {
+        if (this.readyState === 'closed') return;
+        this.readyState = 'closed';
+        this.emit('close');
+      }
+    }
+
+    class FakePeerConnection extends EventHub {
+      constructor() {
+        super();
+        this.connectionState = 'connected';
+        this.iceConnectionState = 'connected';
+      }
+      close() { this.connectionState = 'closed'; }
+    }
+
+    try {
+      const { NativeRtcDataChannel } = await import('../../game-web/src/net/directWebRtc.ts');
+      const control = new FakeChannel();
+      const realtime = new FakeChannel();
+      const pc = new FakePeerConnection();
+      const channel = new NativeRtcDataChannel(control, pc, realtime);
+      let closeCount = 0;
+      let errorCount = 0;
+      channel.onclose = () => { closeCount += 1; };
+      channel.onerror = () => { errorCount += 1; };
+
+      realtime.close();
+      assert.equal(channel.readyState, 'open', 'realtime close must not kill the reliable control session');
+      assert.equal(control.readyState, 'open', 'control must remain open after realtime degradation');
+      assert.equal(closeCount, 0, 'optional realtime loss must not emit logical session close');
+      assert.equal(errorCount, 0, 'optional realtime loss must not emit a terminal transport error');
+
+      const clientState = Uint8Array.of(0x01, 0x01, 0x02, 0x03).buffer;
+      channel.send(clientState);
+      assert.equal(control.sent.length, 1, 'realtime state must fall back to control when realtime is unavailable');
+      assert.equal(realtime.sent.length, 0, 'closed realtime channel must never receive fallback sends');
+
+      control.close();
+      assert.equal(channel.readyState, 'closed', 'control close must still terminate the logical session');
+      assert.equal(closeCount, 1, 'control close must notify logical session close exactly once');
+    } finally {
+      globalThis.window = originalWindow;
+    }
+  });
+
   suite.test('mobile resume source clears inputs and resyncs through the shared lifecycle broker', async () => {
     const fs = await import('node:fs/promises');
     const resume = await fs.readFile(new URL('../../game-web/src/mobile/mobileSessionResume.ts', import.meta.url), 'utf8');

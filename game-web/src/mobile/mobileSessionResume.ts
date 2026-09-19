@@ -12,11 +12,14 @@ type ResumeState = {
   visibility: DocumentVisibilityState;
 };
 
+type RtcRecoveryState = 'recovering' | 'recovered' | 'failed';
+
 let repairs = 0;
 let resumes = 0;
 let reconnectRequests = 0;
 let lastReason = 'startup';
 let timer: number | null = null;
+let recoveryStatusTimer: number | null = null;
 
 function enabled(): boolean {
   return isSmartphoneDevice() || useOnScreenControls();
@@ -70,6 +73,14 @@ function hideStatus(): void {
   if (!chip) return;
   chip.style.opacity = '0';
   chip.style.transform = 'translate(-50%,-10px)';
+}
+
+function scheduleStatusHide(delay = 1400): void {
+  if (recoveryStatusTimer !== null) window.clearTimeout(recoveryStatusTimer);
+  recoveryStatusTimer = window.setTimeout(() => {
+    recoveryStatusTimer = null;
+    hideStatus();
+  }, delay);
 }
 
 function suspendTransientState(reason: string): void {
@@ -139,6 +150,30 @@ function scheduleResume(reason: string, delay = 220): void {
   }, delay);
 }
 
+function handleRtcRecoveryState(event: Event): void {
+  if (!enabled()) return;
+  const detail = (event as CustomEvent<{ state?: RtcRecoveryState }>).detail;
+  const state = detail?.state;
+  if (state === 'recovering') {
+    if (recoveryStatusTimer !== null) {
+      window.clearTimeout(recoveryStatusTimer);
+      recoveryStatusTimer = null;
+    }
+    showStatus('RETE INSTABILE · RICONNESSIONE AUTOMATICA');
+    return;
+  }
+  if (state === 'recovered') {
+    showStatus('CONNESSIONE RIPRISTINATA');
+    scheduleResume('rtc-recovered', 80);
+    scheduleStatusHide();
+    return;
+  }
+  if (state === 'failed') {
+    showStatus('RICONNESSIONE FALLITA · RECUPERO SESSIONE');
+    scheduleResume('rtc-recovery-failed', 80);
+  }
+}
+
 function snapshot(): ResumeState {
   return {
     repairs,
@@ -169,6 +204,7 @@ export function startMobileSessionResume(): void {
 
   window.addEventListener('gone-session-changed', () => scheduleResume('session-change', 80));
   window.addEventListener('gone-input-mode-changed', () => scheduleResume('input-mode', 80));
+  window.addEventListener('gone-rtc-recovery-state', handleRtcRecoveryState);
 
   scheduleResume('startup', 500);
   (window as any).goneMobileResume = { snapshot, resume: () => resumeSession('manual') };

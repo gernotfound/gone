@@ -876,13 +876,38 @@ export class P2PHost {
   }
 
   public broadcastBinary(buffer: ArrayBuffer, excludePlayerId?: string): void {
+    const stalePeers: string[] = [];
+
     for (const [id, peer] of this.peers) {
       if (excludePlayerId && id === excludePlayerId) continue;
+
+      const state = peer.channel?.readyState;
+      if (state && state !== 'open') {
+        if (state === 'closing' || state === 'closed') stalePeers.push(id);
+        continue;
+      }
+
       try {
         peer.channel.send(buffer);
-      } catch (err) {
-        console.error(`[P2PHost] Failed binary broadcast to ${id}:`, err);
+      } catch (error) {
+        const currentState = peer.channel?.readyState;
+        const message = error instanceof Error ? error.message : String(error);
+        const expectedClosedChannel =
+          currentState === 'closing' ||
+          currentState === 'closed' ||
+          /datachannel.*non aperto|datachannel.*not open|closing|closed/i.test(message);
+
+        if (expectedClosedChannel) {
+          if (currentState === 'closing' || currentState === 'closed') stalePeers.push(id);
+          continue;
+        }
+
+        console.error(`[P2PHost] Failed binary broadcast to ${id}:`, error);
       }
+    }
+
+    for (const id of stalePeers) {
+      this.handlePeerDisconnect(id);
     }
   }
 

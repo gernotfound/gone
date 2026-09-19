@@ -125,6 +125,7 @@ export type NetMessage =
 // --- DataChannel Transport Abstraction ---
 export interface IDataChannel {
   binaryType?: 'blob' | 'arraybuffer';
+  readonly bufferedAmount?: number;
   send(data: string | ArrayBuffer | ArrayBufferView): void;
   close?(): void;
   readyState?: string;

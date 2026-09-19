@@ -15,7 +15,6 @@ import { startMapSpawnMarkers } from '../gameplay/mapSpawnMarkers.ts';
 import { startHostRemoteSync } from '../net/hostRemoteSync.ts';
 import { startLobbyPresenceSync } from '../net/lobbyPresenceSync.ts';
 import { startPvpTimingTuning } from '../net/pvpTuning.ts';
-import { startNetworkStabilityFix } from '../net/networkStabilityFix.ts';
 import { startAdaptiveSnapshotRate } from '../net/adaptiveSnapshotRate.ts';
 import { startCombatEventBridge } from '../net/combatEventBridge.ts';
 import { startDeathmatchAuthority } from '../net/deathmatchAuthority.ts';
@@ -37,7 +36,6 @@ import { runtimeKernel, type RuntimeModuleDefinition } from './runtimeKernel.ts'
 const BOOTSTRAP_DEPENDENCY = ['bootstrap'] as const;
 
 const CLIENT_RUNTIME_MODULES: readonly RuntimeModuleDefinition[] = [
-  { name: 'networkStabilityFix', phase: 'foundation', start: startNetworkStabilityFix },
   { name: 'combatEventBridge', phase: 'foundation', start: startCombatEventBridge },
   { name: 'deathmatchAuthority', phase: 'foundation', start: startDeathmatchAuthority },
 

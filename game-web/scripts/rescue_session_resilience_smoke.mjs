@@ -31,6 +31,21 @@ function attachDiagnostics(page, label, errors) {
   });
 }
 
+function isExpectedIntentionalTransportLossError(message) {
+  if (!message.startsWith('[host]') && !message.startsWith('[guest-a]') && !message.startsWith('[guest-b]')) return false;
+  return /WebRTC control DataChannel (?:chiuso|in errore)|DataChannel error: Error: WebRTC control DataChannel (?:chiuso|in errore)/i.test(message);
+}
+
+function consumeExpectedTransportErrors(errors, startIndex, phase) {
+  const phaseErrors = errors.slice(startIndex);
+  const unexpected = phaseErrors.filter((message) => !isExpectedIntentionalTransportLossError(message));
+  if (unexpected.length > 0) {
+    throw new Error(`Browser exceptions detected during ${phase}:\n${unexpected.join('\n')}`);
+  }
+  errors.splice(startIndex, phaseErrors.length);
+  return phaseErrors.length;
+}
+
 async function playerCount(page) {
   return page.locator('#lobby-player-list > li').count();
 }
@@ -42,6 +57,18 @@ async function readInvite(host, previous = null) {
     if (previous && value === previous) return null;
     return value;
   }, 'fresh host invitation', 15_000);
+}
+
+async function guestConnectionDiagnostics(guest) {
+  return guest.evaluate(() => {
+    const client = window.goneGame?.getP2PClient?.();
+    return {
+      clientStatus: client?.status ?? 'missing',
+      channelReadyState: client?.channel?.readyState ?? 'missing',
+      playerSlot: client?.playerSlot ?? null,
+      session: window.goneSession?.snapshot?.() ?? null,
+    };
+  }).catch((error) => ({ diagnosticsError: error?.message || String(error) }));
 }
 
 async function connectGuest(host, guest, previousInvite = null) {
@@ -57,11 +84,16 @@ async function connectGuest(host, guest, previousInvite = null) {
 
   await host.locator('#direct-host-answer-input').fill(answer);
   await host.locator('#btn-direct-apply-answer').click();
-  await waitFor(
-    async () => guest.evaluate(() => window.goneGame?.getP2PClient?.()?.status === 'connected'),
-    'guest connected',
-    15_000,
-  );
+  try {
+    await waitFor(
+      async () => guest.evaluate(() => window.goneGame?.getP2PClient?.()?.status === 'connected'),
+      'guest connected',
+      TIMEOUT,
+    );
+  } catch (error) {
+    const diagnostics = await guestConnectionDiagnostics(guest);
+    throw new Error(`${error?.message || error} Transport diagnostics: ${JSON.stringify(diagnostics)}`);
+  }
   return invite;
 }
 
@@ -100,6 +132,10 @@ async function main() {
     }));
     invariant(guestAState.slot === 1, `First guest should own slot 1: ${JSON.stringify(guestAState)}`);
 
+    // Closing an independent browser context deliberately tears down SCTP/ICE.
+    // Capture only this bounded window so expected low-level close/error events
+    // cannot mask an unrelated browser exception elsewhere in the scenario.
+    const errorsBeforeGuestClose = errors.length;
     console.log('[resilience] Abruptly closing first guest and checking authoritative cleanup');
     await guestA.close();
     await waitFor(async () => host.evaluate(() => {
@@ -111,6 +147,7 @@ async function main() {
       'lobby cleanup after guest close',
       10_000,
     );
+    const expectedGuestCloseErrors = consumeExpectedTransportErrors(errors, errorsBeforeGuestClose, 'intentional guest teardown');
 
     console.log('[resilience] Connecting replacement guest without recreating the room');
     await connectGuest(host, guestB, firstInvite);
@@ -130,6 +167,7 @@ async function main() {
     invariant(guestBState.slot === 1, `Released slot should be reusable, got ${guestBState.slot}`);
     invariant(guestBState.id !== guestAState.id, 'Replacement guest must have a fresh identity');
 
+    const errorsBeforeIntentionalHostLoss = errors.length;
     console.log('[resilience] Closing host and verifying client observes server loss');
     await host.close();
     await waitFor(
@@ -137,6 +175,7 @@ async function main() {
       'guest to detect host/server shutdown',
       PEER_LOSS_TIMEOUT,
     );
+    const expectedHostCloseErrors = consumeExpectedTransportErrors(errors, errorsBeforeIntentionalHostLoss, 'intentional host teardown');
 
     if (errors.length > 0) {
       throw new Error(`Browser exceptions detected:\n${errors.join('\n')}`);
@@ -146,6 +185,7 @@ async function main() {
       firstGuestSlot: guestAState.slot,
       replacementGuestSlot: guestBState.slot,
       hostLossDetected: true,
+      expectedTerminalErrors: expectedGuestCloseErrors + expectedHostCloseErrors,
     }));
   } finally {
     await Promise.allSettled([

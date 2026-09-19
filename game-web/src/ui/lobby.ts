@@ -14,6 +14,7 @@ export function setLocalRobotPreview(preview: THREE.Group | null): void {
 
 export type LobbySetupOptions = {
   prepareDirectInvite?: boolean;
+  roomId?: string;
 };
 
 let onGameStartCb: (() => void) | null = null;
@@ -26,6 +27,7 @@ function playerName(): string {
 
 function removeDirectControls(): void {
   document.getElementById('direct-host-controls')?.remove();
+  document.getElementById('firestore-host-help')?.remove();
   document.getElementById('direct-guest-help')?.remove();
 }
 
@@ -66,10 +68,11 @@ async function copyInviteValue(feedbackButton: HTMLButtonElement = DOM.btnCopyLi
 async function shareCurrentInvite(): Promise<void> {
   const snapshot = multiplayerSessionController.snapshot();
   if (!nativeShareSupported() || !snapshot.inviteValue) return;
-  if (snapshot.inviteKind !== 'host-link' && snapshot.inviteKind !== 'guest-answer') return;
+  const isHostInvite = snapshot.inviteKind === 'host-link' || snapshot.inviteKind === 'host-room';
+  if (!isHostInvite && snapshot.inviteKind !== 'guest-answer') return;
 
   try {
-    if (snapshot.inviteKind === 'host-link') {
+    if (isHostInvite) {
       await navigator.share({
         title: 'G.O.N.E. PvP',
         text: 'Unisciti alla mia partita G.O.N.E.',
@@ -101,13 +104,13 @@ function ensureNativeShareButton(): HTMLButtonElement {
 
 function syncNativeShareButton(snapshot: MultiplayerSessionSnapshot): void {
   const button = ensureNativeShareButton();
+  const hostInvite = snapshot.inviteKind === 'host-link' || snapshot.inviteKind === 'host-room';
   const shareable = nativeShareSupported()
     && Boolean(snapshot.inviteValue)
-    && (snapshot.inviteKind === 'host-link' || snapshot.inviteKind === 'guest-answer');
+    && (hostInvite || snapshot.inviteKind === 'guest-answer');
   button.classList.toggle('hidden', !shareable);
   if (!shareable) return;
 
-  const hostInvite = snapshot.inviteKind === 'host-link';
   button.textContent = hostInvite ? 'CONDIVIDI INVITO' : 'INVIA RISPOSTA';
   button.setAttribute('aria-label', hostInvite
     ? 'Condividi invito multiplayer con le app del dispositivo'
@@ -172,8 +175,20 @@ function installHostDirectControls(): void {
   });
 }
 
+function installAutomaticSignalingHelp(): void {
+  if (document.getElementById('firestore-host-help')) return;
+  const panel = document.createElement('div');
+  panel.id = 'firestore-host-help';
+  panel.className = 'mt-3 flex flex-col gap-2 rounded-xl border border-emerald-500/30 bg-emerald-950/20 p-3';
+  panel.innerHTML = `
+    <p class="text-xs leading-relaxed text-slate-300">Apri questo link sull’altro dispositivo. Firestore scambia automaticamente offerta e risposta; dopo il collegamento il gameplay passa direttamente via WebRTC.</p>
+    <div id="firestore-host-status" class="text-xs font-bold text-emerald-300">ATTESA GIOCATORE...</div>`;
+  DOM.inviteLinkContainer.appendChild(panel);
+}
+
 function showGuestAnswer(answerCode: string): void {
   document.getElementById('direct-host-controls')?.remove();
+  document.getElementById('firestore-host-help')?.remove();
   DOM.inviteLinkContainer.classList.remove('hidden');
   setInviteLabel('2. COPIA QUESTA RISPOSTA E INVIALA ALL’HOST');
   DOM.inviteLinkInput.value = answerCode;
@@ -233,6 +248,17 @@ function renderColorPicker(snapshot: MultiplayerSessionSnapshot): void {
   }
 }
 
+function renderHostNotice(snapshot: MultiplayerSessionSnapshot, elementId: string): void {
+  const status = document.getElementById(elementId);
+  if (!status || !snapshot.notice) return;
+  status.textContent = snapshot.notice.text;
+  status.className = snapshot.notice.kind === 'error'
+    ? 'text-xs font-bold text-red-300'
+    : snapshot.notice.kind === 'success'
+      ? 'text-xs font-bold text-emerald-300'
+      : 'text-xs font-bold text-cyan-300';
+}
+
 function renderSession(snapshot: MultiplayerSessionSnapshot): void {
   renderPlayers(snapshot.players);
   renderColorPicker(snapshot);
@@ -240,32 +266,32 @@ function renderSession(snapshot: MultiplayerSessionSnapshot): void {
 
   if (snapshot.role === 'host') {
     hostPlayButton();
-    if (snapshot.inviteKind !== 'host-link') {
-      document.getElementById('direct-host-controls')?.remove();
+    const isAutomatic = snapshot.inviteKind === 'host-room';
+    const isManual = snapshot.inviteKind === 'host-link';
+    if (!isAutomatic && !isManual) {
+      removeDirectControls();
       return;
     }
 
     removeDirectControls();
     DOM.inviteLinkContainer.classList.remove('hidden');
-    setInviteLabel('1. INVIA QUESTO LINK A UN AMICO');
+    setInviteLabel(isAutomatic ? 'INVIA QUESTO LINK · CONNESSIONE AUTOMATICA' : '1. INVIA QUESTO LINK A UN AMICO');
     DOM.btnCopyLink.textContent = 'COPIA LINK';
     DOM.inviteLinkInput.value = snapshot.inviteValue || 'GENERAZIONE INVITO DIRETTO...';
-    installHostDirectControls();
 
-    const status = document.getElementById('direct-host-status');
-    if (status && snapshot.notice) {
-      status.textContent = snapshot.notice.text;
-      status.className = snapshot.notice.kind === 'error'
-        ? 'text-xs font-bold text-red-300'
-        : snapshot.notice.kind === 'success'
-          ? 'text-xs font-bold text-emerald-300'
-          : 'text-xs font-bold text-cyan-300';
+    if (isAutomatic) {
+      installAutomaticSignalingHelp();
+      renderHostNotice(snapshot, 'firestore-host-status');
+    } else {
+      installHostDirectControls();
+      renderHostNotice(snapshot, 'direct-host-status');
     }
     return;
   }
 
   if (snapshot.role === 'client') {
     document.getElementById('direct-host-controls')?.remove();
+    document.getElementById('firestore-host-help')?.remove();
     if (snapshot.inviteKind === 'guest-answer' && snapshot.inviteValue) {
       showGuestAnswer(snapshot.inviteValue);
     } else if (snapshot.inviteKind === 'none') {
@@ -313,6 +339,17 @@ export function setupLobby(
         console.error('[G.O.N.E.] Invito diretto fallito', error);
       });
     }
+  } else if (options.roomId) {
+    void multiplayerSessionController.startFirestoreGuest(options.roomId, {
+      playerName: name,
+      onGameStart: () => {
+        DOM.multiplayerLobby.classList.remove('flex');
+        DOM.multiplayerLobby.classList.add('hidden');
+        onGameStartCb?.();
+      },
+    }).catch((error) => {
+      console.error('[G.O.N.E.] Signaling Firestore fallito', error);
+    });
   } else if (directOfferCode) {
     void multiplayerSessionController.startDirectGuest(directOfferCode, {
       playerName: name,

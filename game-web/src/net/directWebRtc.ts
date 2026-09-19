@@ -1,16 +1,36 @@
 import type { IDataChannel } from './protocol.ts';
+import {
+    createFirestoreRecoverySignalingRoom,
+    deleteFirestoreSignalingRoom,
+    deriveFirestoreRecoveryRoomId,
+    getFirestoreRecoveryAnchorForOffer,
+    getFirestoreSignalingRoom,
+    publishFirestoreSignalingAnswer,
+    waitForFirestoreSignalingAnswer,
+    waitForFirestoreSignalingRoom,
+} from './firestoreSignaling.ts';
 
-const SIGNAL_VERSION = 1;
-const ICE_GATHER_TIMEOUT_MS = 4500;
-const DATA_CHANNEL_ID = 0;
+const SIGNAL_VERSION = 2;
+const ICE_GATHER_TIMEOUT_MS = 7000;
+const ICE_GATHER_HARD_TIMEOUT_MS = 15_000;
+const ICE_CANDIDATE_ATTEMPTS = 2;
+const ICE_RETRY_DELAY_MS = 250;
+const CONTROL_CHANNEL_ID = 0;
+const REALTIME_CHANNEL_ID = 1;
 const DISCONNECTED_GRACE_MS = 6000;
 const HEARTBEAT_INTERVAL_MS = 3000;
 const HEARTBEAT_TIMEOUT_MS = 15000;
 const HEARTBEAT_PING = '__gone_ping__';
 const HEARTBEAT_PONG = '__gone_pong__';
 const REALTIME_BACKPRESSURE_BYTES = 128 * 1024;
+const RECOVERY_OPEN_TIMEOUT_MS = 20_000;
 const CLIENT_STATE_OPCODE = 0x01;
 const WORLD_SNAPSHOT_OPCODE = 0x02;
+export const PUBLIC_STUN_URL = 'stun:stun.cloudflare.com:3478';
+export const PUBLIC_STUN_URLS = [
+    PUBLIC_STUN_URL,
+    'stun:stun.l.google.com:19302',
+] as const;
 
 interface SignalPayload {
     v: number;
@@ -44,6 +64,46 @@ export interface DirectGuestAnswer {
     channel: IDataChannel;
     diagnostics: DirectConnectionDiagnostics;
     close(): void;
+}
+
+type RecoveryRole = 'host' | 'guest';
+type NativeTransport = {
+    pc: RTCPeerConnection;
+    controlChannel: RTCDataChannel;
+    realtimeChannel: RTCDataChannel;
+};
+type RecoveryTransport = NativeTransport & { generation: number };
+type RecoveryHandler = (signal: AbortSignal) => Promise<RecoveryTransport | null>;
+
+class ZeroIceCandidatesError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'ZeroIceCandidatesError';
+    }
+}
+
+function isZeroIceCandidatesError(error: unknown): error is ZeroIceCandidatesError {
+    return error instanceof Error && error.name === 'ZeroIceCandidatesError';
+}
+
+async function waitForIceRetry(attempt: number, signal?: AbortSignal): Promise<void> {
+    throwIfAborted(signal);
+    await new Promise<void>((resolve, reject) => {
+        let timer: number | null = null;
+        const cleanup = () => {
+            if (timer !== null) window.clearTimeout(timer);
+            signal?.removeEventListener('abort', onAbort);
+        };
+        const onAbort = () => {
+            cleanup();
+            reject(abortError());
+        };
+        timer = window.setTimeout(() => {
+            cleanup();
+            resolve();
+        }, ICE_RETRY_DELAY_MS * attempt);
+        signal?.addEventListener('abort', onAbort, { once: true });
+    });
 }
 
 function randomId(): string {
@@ -103,23 +163,81 @@ function decodeSignal(code: string, expectedType: SignalPayload['type']): Signal
     return payload as SignalPayload;
 }
 
-async function waitForIceGatheringComplete(pc: RTCPeerConnection): Promise<void> {
-    if (pc.iceGatheringState === 'complete') return;
+function abortError(): DOMException {
+    return new DOMException('Operazione annullata.', 'AbortError');
+}
 
-    await new Promise<void>((resolve) => {
+function throwIfAborted(signal?: AbortSignal): void {
+    if (signal?.aborted) throw abortError();
+}
+
+function hasIceCandidate(pc: RTCPeerConnection): boolean {
+    return /(^|\r?\n)a=candidate:/m.test(pc.localDescription?.sdp ?? '');
+}
+
+async function waitForIceGatheringComplete(pc: RTCPeerConnection, signal?: AbortSignal): Promise<void> {
+    throwIfAborted(signal);
+    if (pc.iceGatheringState === 'complete') {
+        if (hasIceCandidate(pc)) return;
+        throw new ZeroIceCandidatesError('Nessun candidato ICE disponibile per la connessione WebRTC.');
+    }
+
+    await new Promise<void>((resolve, reject) => {
         let done = false;
+        let softTimeoutElapsed = false;
+        let candidateSeen = hasIceCandidate(pc);
+
+        const cleanup = () => {
+            window.clearTimeout(softTimer);
+            window.clearTimeout(hardTimer);
+            pc.removeEventListener('icecandidate', onCandidate);
+            pc.removeEventListener('icegatheringstatechange', onState);
+            signal?.removeEventListener('abort', onAbort);
+        };
         const finish = () => {
             if (done) return;
             done = true;
-            clearTimeout(timer);
-            pc.removeEventListener('icegatheringstatechange', onState);
+            cleanup();
             resolve();
         };
-        const onState = () => {
-            if (pc.iceGatheringState === 'complete') finish();
+        const fail = (error: Error | DOMException) => {
+            if (done) return;
+            done = true;
+            cleanup();
+            reject(error);
         };
-        const timer = window.setTimeout(finish, ICE_GATHER_TIMEOUT_MS);
+        const refreshCandidateState = () => {
+            candidateSeen = candidateSeen || hasIceCandidate(pc);
+        };
+        const finishIfReady = () => {
+            refreshCandidateState();
+            if (pc.iceGatheringState === 'complete') {
+                if (candidateSeen) finish();
+                else fail(new ZeroIceCandidatesError('Nessun candidato ICE disponibile per la connessione WebRTC.'));
+                return;
+            }
+            if (softTimeoutElapsed && candidateSeen) finish();
+        };
+        const onCandidate = (event: RTCPeerConnectionIceEvent) => {
+            if (event.candidate) candidateSeen = true;
+            finishIfReady();
+        };
+        const onState = () => finishIfReady();
+        const onAbort = () => fail(abortError());
+        const softTimer = window.setTimeout(() => {
+            softTimeoutElapsed = true;
+            finishIfReady();
+        }, ICE_GATHER_TIMEOUT_MS);
+        const hardTimer = window.setTimeout(() => {
+            refreshCandidateState();
+            if (candidateSeen) finish();
+            else fail(new ZeroIceCandidatesError('Timeout ICE: nessun candidato di rete disponibile.'));
+        }, ICE_GATHER_HARD_TIMEOUT_MS);
+
+        pc.addEventListener('icecandidate', onCandidate);
         pc.addEventListener('icegatheringstatechange', onState);
+        signal?.addEventListener('abort', onAbort, { once: true });
+        finishIfReady();
     });
 }
 
@@ -170,12 +288,12 @@ function inspectSdp(sdp: string): DirectConnectionDiagnostics {
 }
 
 function createPeerConnection(): RTCPeerConnection {
-    // Intentionally no STUN/TURN: no third-party multiplayer/signaling/relay
-    // infrastructure is contacted. The room creator remains the game server.
+    // Redundant public STUN discovery avoids a single discovery endpoint without relaying gameplay.
+    // No TURN server is configured: game traffic remains browser-to-browser.
     return new RTCPeerConnection({
-        iceServers: [],
+        iceServers: [{ urls: [...PUBLIC_STUN_URLS] }],
         bundlePolicy: 'max-bundle',
-        iceCandidatePoolSize: 0,
+        iceCandidatePoolSize: 1,
     });
 }
 
@@ -187,15 +305,66 @@ function getOpcode(data: ArrayBuffer | ArrayBufferView): number | null {
     return new Uint8Array(data.buffer, data.byteOffset, 1)[0];
 }
 
-function createNegotiatedChannel(pc: RTCPeerConnection): NativeRtcDataChannel {
-    const rawChannel = pc.createDataChannel('gone-game', {
+function createNegotiatedTransport(pc: RTCPeerConnection): NativeTransport {
+    const controlChannel = pc.createDataChannel('gone-control', {
         ordered: true,
         negotiated: true,
-        id: DATA_CHANNEL_ID,
+        id: CONTROL_CHANNEL_ID,
     });
-    return new NativeRtcDataChannel(rawChannel, pc);
+    const realtimeChannel = pc.createDataChannel('gone-realtime', {
+        ordered: false,
+        maxRetransmits: 0,
+        negotiated: true,
+        id: REALTIME_CHANNEL_ID,
+    });
+    return { pc, controlChannel, realtimeChannel };
 }
 
+function createNegotiatedChannel(pc: RTCPeerConnection): NativeRtcDataChannel {
+    const transport = createNegotiatedTransport(pc);
+    return new NativeRtcDataChannel(transport.controlChannel, pc, transport.realtimeChannel);
+}
+
+function closeNativeTransport(transport: NativeTransport): void {
+    for (const channel of [transport.controlChannel, transport.realtimeChannel]) {
+        try {
+            if (channel.readyState !== 'closed') channel.close();
+        } catch {
+            // Best-effort cleanup only.
+        }
+    }
+    try {
+        if (transport.pc.connectionState !== 'closed') transport.pc.close();
+    } catch {
+        // Best-effort cleanup only.
+    }
+}
+
+function dispatchRecoveryState(
+    state: 'recovering' | 'recovered' | 'failed',
+    role: RecoveryRole,
+    generation: number,
+): void {
+    window.dispatchEvent(new CustomEvent('gone-rtc-recovery-state', {
+        detail: { state, role, generation },
+    }));
+}
+
+/**
+ * Presents replaceable native RTC transports as the existing single IDataChannel
+ * boundary. Control/combat packets stay reliable+ordered; disposable movement
+ * and world snapshots use an unordered, zero-retransmit channel so packet loss
+ * cannot head-of-line block newer realtime state.
+ *
+ * When Firestore signaling created the original session, a terminal ICE/SCTP
+ * failure can replace the underlying PeerConnection without closing this logical
+ * IDataChannel. P2PHost/P2PClient therefore keep authoritative slot, HP, roster
+ * and gameplay bindings while transport traffic is temporarily dropped.
+ *
+ * Session/lobby readiness still depends on the reliable control stream. If the
+ * optional realtime stream is unavailable, disposable state falls back to the
+ * control stream instead of killing the session.
+ */
 export class NativeRtcDataChannel implements IDataChannel {
     public binaryType: 'arraybuffer' = 'arraybuffer';
     public onmessage?: ((ev: { data: any }) => void) | null;
@@ -203,50 +372,118 @@ export class NativeRtcDataChannel implements IDataChannel {
     public onclose?: (() => void) | null;
     public onerror?: ((err: any) => void) | null;
 
-    private readonly channel: RTCDataChannel;
-    private readonly pc: RTCPeerConnection;
+    private controlChannel: RTCDataChannel;
+    private realtimeChannel: RTCDataChannel;
+    private channels: readonly RTCDataChannel[];
+    private pc: RTCPeerConnection;
+    private transportEpoch = 0;
     private disconnectTimer: number | null = null;
     private heartbeatTimer: number | null = null;
+    private recoveryOpenTimer: number | null = null;
+    private recoveryAbort: AbortController | null = null;
+    private recoveryHandler: RecoveryHandler | null = null;
+    private recoveryRole: RecoveryRole | null = null;
+    private recoveryGeneration = 1;
+    private recovering = false;
     private lastInboundAt = performance.now();
+    private openNotified = false;
     private closeNotified = false;
+    private terminating = false;
     private readonly pageHideHandler: () => void;
 
-    constructor(channel: RTCDataChannel, pc: RTCPeerConnection) {
-        this.channel = channel;
+    constructor(controlChannel: RTCDataChannel, pc: RTCPeerConnection, realtimeChannel?: RTCDataChannel) {
+        this.controlChannel = controlChannel;
+        this.realtimeChannel = realtimeChannel ?? controlChannel;
+        this.channels = this.realtimeChannel === this.controlChannel
+            ? [this.controlChannel]
+            : [this.controlChannel, this.realtimeChannel];
         this.pc = pc;
-        this.channel.binaryType = 'arraybuffer';
         this.pageHideHandler = () => this.close();
-
-        this.channel.addEventListener('open', () => {
-            this.lastInboundAt = performance.now();
-            this.startHeartbeat();
-            this.onopen?.();
-        });
-        this.channel.addEventListener('close', () => this.notifyClose());
-        // Browsers may emit RTCErrorEvent immediately before a normal remote
-        // close. Treat that transport event as disconnect semantics; hard ICE
-        // failures and heartbeat expiry still surface through onerror below.
-        this.channel.addEventListener('error', () => this.terminate());
-        this.channel.addEventListener('message', (event) => this.handleRawMessage(event.data));
-
-        this.pc.addEventListener('connectionstatechange', () => this.handlePeerConnectionState());
-        this.pc.addEventListener('iceconnectionstatechange', () => this.handlePeerConnectionState());
+        this.installTransport(controlChannel, pc, realtimeChannel ?? controlChannel, false);
         window.addEventListener('pagehide', this.pageHideHandler);
+    }
 
-        if (this.channel.readyState === 'open') {
-            this.startHeartbeat();
+    public setRecoveryHandler(role: RecoveryRole, handler: RecoveryHandler): void {
+        this.recoveryRole = role;
+        this.recoveryHandler = handler;
+    }
+
+    private installTransport(
+        controlChannel: RTCDataChannel,
+        pc: RTCPeerConnection,
+        realtimeChannel: RTCDataChannel,
+        recovery: boolean,
+    ): void {
+        const epoch = ++this.transportEpoch;
+        this.controlChannel = controlChannel;
+        this.realtimeChannel = realtimeChannel;
+        this.channels = realtimeChannel === controlChannel
+            ? [controlChannel]
+            : [controlChannel, realtimeChannel];
+        this.pc = pc;
+
+        for (const channel of this.channels) {
+            channel.binaryType = 'arraybuffer';
+            channel.addEventListener('open', () => {
+                if (epoch !== this.transportEpoch) return;
+                if (recovery && channel === this.controlChannel) this.completeRecovery();
+                else this.maybeNotifyOpen();
+            });
+            channel.addEventListener('message', (event) => {
+                if (epoch !== this.transportEpoch) return;
+                this.handleRawMessage(event.data);
+            });
         }
+
+        controlChannel.addEventListener('close', () => {
+            if (epoch !== this.transportEpoch || this.closeNotified || this.terminating) return;
+            this.handleTransportFailure(new Error('WebRTC control DataChannel chiuso.'));
+        });
+        controlChannel.addEventListener('error', () => {
+            if (epoch !== this.transportEpoch || this.closeNotified || this.terminating) return;
+            this.handleTransportFailure(new Error('WebRTC control DataChannel in errore.'));
+        });
+
+        pc.addEventListener('connectionstatechange', () => {
+            if (epoch !== this.transportEpoch) return;
+            this.handlePeerConnectionState(pc, epoch);
+        });
+        pc.addEventListener('iceconnectionstatechange', () => {
+            if (epoch !== this.transportEpoch) return;
+            this.handlePeerConnectionState(pc, epoch);
+        });
+
+        if (recovery) {
+            this.clearRecoveryOpenTimer();
+            this.recoveryOpenTimer = window.setTimeout(() => {
+                this.recoveryOpenTimer = null;
+                if (epoch !== this.transportEpoch || !this.recovering) return;
+                this.failRecovery(new Error('Recovery WebRTC completata nel signaling ma DataChannel non riaperto.'));
+            }, RECOVERY_OPEN_TIMEOUT_MS);
+            if (controlChannel.readyState === 'open') this.completeRecovery();
+        } else {
+            this.maybeNotifyOpen();
+        }
+    }
+
+    private maybeNotifyOpen(): void {
+        if (this.openNotified || this.closeNotified || this.recovering) return;
+        if (this.controlChannel.readyState !== 'open') return;
+        this.openNotified = true;
+        this.lastInboundAt = performance.now();
+        this.startHeartbeat();
+        this.onopen?.();
     }
 
     private handleRawMessage(data: unknown): void {
         this.lastInboundAt = performance.now();
 
         if (data === HEARTBEAT_PING) {
-            if (this.channel.readyState === 'open') {
+            if (this.controlChannel.readyState === 'open') {
                 try {
-                    this.channel.send(HEARTBEAT_PONG);
+                    this.controlChannel.send(HEARTBEAT_PONG);
                 } catch (error) {
-                    this.terminate(error instanceof Error ? error : new Error(String(error)));
+                    this.handleTransportFailure(error instanceof Error ? error : new Error(String(error)));
                 }
             }
             return;
@@ -257,20 +494,20 @@ export class NativeRtcDataChannel implements IDataChannel {
     }
 
     private startHeartbeat(): void {
-        if (this.heartbeatTimer !== null) return;
+        if (this.heartbeatTimer !== null || this.recovering || this.closeNotified) return;
         this.heartbeatTimer = window.setInterval(() => {
-            if (this.channel.readyState !== 'open') return;
+            if (this.controlChannel.readyState !== 'open') return;
 
             const silenceMs = performance.now() - this.lastInboundAt;
             if (silenceMs >= HEARTBEAT_TIMEOUT_MS) {
-                this.terminate(new Error('Peer non raggiungibile: heartbeat WebRTC scaduto.'));
+                this.handleTransportFailure(new Error('Peer non raggiungibile: heartbeat WebRTC scaduto.'));
                 return;
             }
 
             try {
-                this.channel.send(HEARTBEAT_PING);
+                this.controlChannel.send(HEARTBEAT_PING);
             } catch (error) {
-                this.terminate(error instanceof Error ? error : new Error(String(error)));
+                this.handleTransportFailure(error instanceof Error ? error : new Error(String(error)));
             }
         }, HEARTBEAT_INTERVAL_MS);
     }
@@ -289,35 +526,151 @@ export class NativeRtcDataChannel implements IDataChannel {
         }
     }
 
+    private clearRecoveryOpenTimer(): void {
+        if (this.recoveryOpenTimer !== null) {
+            window.clearTimeout(this.recoveryOpenTimer);
+            this.recoveryOpenTimer = null;
+        }
+    }
+
     private notifyClose(): void {
         if (this.closeNotified) return;
         this.closeNotified = true;
         this.clearDisconnectTimer();
         this.clearHeartbeat();
+        this.clearRecoveryOpenTimer();
         window.removeEventListener('pagehide', this.pageHideHandler);
         this.onclose?.();
     }
 
+    private retireCurrentTransport(): void {
+        const transport: NativeTransport = {
+            pc: this.pc,
+            controlChannel: this.controlChannel,
+            realtimeChannel: this.realtimeChannel,
+        };
+        ++this.transportEpoch;
+        closeNativeTransport(transport);
+    }
+
     private terminate(error?: Error): void {
-        if (this.closeNotified) return;
+        if (this.closeNotified || this.terminating) return;
+        this.terminating = true;
+        this.recoveryAbort?.abort();
+        this.recoveryAbort = null;
+        this.recovering = false;
+        this.clearDisconnectTimer();
+        this.clearHeartbeat();
+        this.clearRecoveryOpenTimer();
         if (error) this.onerror?.(error);
-        try {
-            if (this.channel.readyState !== 'closed') this.channel.close();
-        } catch {
-            // Continue with deterministic local teardown even if the browser
-            // refuses to close an already-failed SCTP channel.
-        }
-        try {
-            if (this.pc.connectionState !== 'closed') this.pc.close();
-        } catch {
-            // no-op
-        }
+        this.retireCurrentTransport();
+        this.terminating = false;
         this.notifyClose();
     }
 
-    private handlePeerConnectionState(): void {
-        const state = this.pc.connectionState;
-        const iceState = this.pc.iceConnectionState;
+    private handleTransportFailure(error: Error): void {
+        if (this.closeNotified || this.terminating) return;
+        if (this.recovering) {
+            this.failRecovery(error);
+            return;
+        }
+        if (!this.recoveryHandler || !this.recoveryRole) {
+            this.terminate(error);
+            return;
+        }
+        void this.beginRecovery(error);
+    }
+
+    private async beginRecovery(originalError: Error): Promise<void> {
+        if (this.recovering || this.closeNotified || !this.recoveryHandler || !this.recoveryRole) return;
+        this.recovering = true;
+        this.clearDisconnectTimer();
+        this.clearHeartbeat();
+        this.clearRecoveryOpenTimer();
+        const abort = new AbortController();
+        this.recoveryAbort = abort;
+        const role = this.recoveryRole;
+        const nextGeneration = this.recoveryGeneration + 1;
+
+        // Retire the broken native transport without notifying P2PHost/P2PClient.
+        // The logical channel remains alive and drops outbound traffic while the
+        // one-shot Firestore mailbox negotiates a replacement PeerConnection.
+        this.retireCurrentTransport();
+
+        try {
+            let replacement: RecoveryTransport | null = null;
+            for (let attempt = 1; attempt <= ICE_CANDIDATE_ATTEMPTS; attempt += 1) {
+                try {
+                    replacement = await this.recoveryHandler(abort.signal);
+                    break;
+                } catch (error) {
+                    if (
+                        !isZeroIceCandidatesError(error)
+                        || attempt >= ICE_CANDIDATE_ATTEMPTS
+                        || abort.signal.aborted
+                        || this.closeNotified
+                    ) {
+                        throw error;
+                    }
+                    await waitForIceRetry(attempt, abort.signal);
+                }
+            }
+            if (abort.signal.aborted || this.closeNotified) {
+                if (replacement) closeNativeTransport(replacement);
+                return;
+            }
+            if (!replacement) {
+                this.recovering = false;
+                this.recoveryAbort = null;
+                this.terminate(originalError);
+                return;
+            }
+
+            this.recoveryGeneration = replacement.generation;
+            dispatchRecoveryState('recovering', role, replacement.generation || nextGeneration);
+            this.installTransport(
+                replacement.controlChannel,
+                replacement.pc,
+                replacement.realtimeChannel,
+                true,
+            );
+        } catch (error) {
+            if (abort.signal.aborted || this.closeNotified) return;
+            const recoveryError = error instanceof Error ? error : new Error(String(error));
+            this.recovering = false;
+            this.recoveryAbort = null;
+            dispatchRecoveryState('failed', role, nextGeneration);
+            this.terminate(new Error(`${originalError.message} Recovery automatica fallita: ${recoveryError.message}`));
+        }
+    }
+
+    private completeRecovery(): void {
+        if (!this.recovering || this.closeNotified || this.controlChannel.readyState !== 'open') return;
+        this.recovering = false;
+        this.recoveryAbort = null;
+        this.clearRecoveryOpenTimer();
+        this.lastInboundAt = performance.now();
+        if (!this.openNotified) this.maybeNotifyOpen();
+        else this.startHeartbeat();
+        if (this.recoveryRole) dispatchRecoveryState('recovered', this.recoveryRole, this.recoveryGeneration);
+    }
+
+    private failRecovery(error: Error): void {
+        if (!this.recovering || this.closeNotified) return;
+        const role = this.recoveryRole;
+        const generation = this.recoveryGeneration;
+        this.recoveryAbort?.abort();
+        this.recoveryAbort = null;
+        this.recovering = false;
+        this.clearRecoveryOpenTimer();
+        if (role) dispatchRecoveryState('failed', role, generation);
+        this.terminate(error);
+    }
+
+    private handlePeerConnectionState(pc: RTCPeerConnection, epoch: number): void {
+        if (epoch !== this.transportEpoch || this.closeNotified) return;
+        const state = pc.connectionState;
+        const iceState = pc.iceConnectionState;
 
         if (state === 'connected' || iceState === 'connected' || iceState === 'completed') {
             this.clearDisconnectTimer();
@@ -326,7 +679,7 @@ export class NativeRtcDataChannel implements IDataChannel {
 
         if (state === 'failed' || iceState === 'failed') {
             this.clearDisconnectTimer();
-            this.terminate(new Error('Connessione WebRTC diretta fallita: rete/NAT non raggiungibile.'));
+            this.handleTransportFailure(new Error('Connessione WebRTC diretta fallita: rete/NAT non raggiungibile.'));
             return;
         }
 
@@ -334,48 +687,79 @@ export class NativeRtcDataChannel implements IDataChannel {
             if (this.disconnectTimer === null) {
                 this.disconnectTimer = window.setTimeout(() => {
                     this.disconnectTimer = null;
-                    if (this.pc.connectionState === 'disconnected' || this.pc.iceConnectionState === 'disconnected') {
-                        this.terminate(new Error('Connessione WebRTC diretta interrotta.'));
+                    if (epoch !== this.transportEpoch) return;
+                    if (pc.connectionState === 'disconnected' || pc.iceConnectionState === 'disconnected') {
+                        this.handleTransportFailure(new Error('Connessione WebRTC diretta interrotta.'));
                     }
                 }, DISCONNECTED_GRACE_MS);
             }
         }
     }
 
+    private isRealtimePayload(data: string | ArrayBuffer | ArrayBufferView): boolean {
+        if (typeof data === 'string') return false;
+        const opcode = getOpcode(data);
+        return opcode === CLIENT_STATE_OPCODE || opcode === WORLD_SNAPSHOT_OPCODE;
+    }
+
+    private channelFor(data: string | ArrayBuffer | ArrayBufferView): RTCDataChannel {
+        if (
+            this.isRealtimePayload(data)
+            && this.realtimeChannel !== this.controlChannel
+            && this.realtimeChannel.readyState === 'open'
+        ) {
+            return this.realtimeChannel;
+        }
+        return this.controlChannel;
+    }
+
     get readyState(): string {
-        return this.channel.readyState;
+        if (this.closeNotified) return 'closed';
+        if (this.recovering) return this.openNotified ? 'open' : 'connecting';
+        if (this.controlChannel.readyState === 'closed') return 'closed';
+        if (this.controlChannel.readyState === 'closing') return 'closing';
+        if (this.controlChannel.readyState === 'open') return 'open';
+        return 'connecting';
+    }
+
+    get bufferedAmount(): number {
+        if (this.recovering) return 0;
+        return this.channels.reduce((sum, channel) => sum + channel.bufferedAmount, 0);
     }
 
     send(data: string | ArrayBuffer | ArrayBufferView): void {
-        if (this.channel.readyState !== 'open') {
+        // A recoverable logical session intentionally drops traffic while the
+        // replacement RTC transport is negotiated. This prevents higher layers
+        // from tearing down authoritative match state because SCTP is transiently absent.
+        if (this.recovering) return;
+        if (this.readyState !== 'open') {
             throw new Error('WebRTC DataChannel non aperto.');
         }
 
-        // State and snapshots are disposable realtime packets. If a connection
-        // stalls, dropping old movement data is preferable to building a large
-        // reliable-channel queue that would freeze gameplay after recovery.
-        if (typeof data !== 'string') {
-            const opcode = getOpcode(data);
-            if (
-                (opcode === CLIENT_STATE_OPCODE || opcode === WORLD_SNAPSHOT_OPCODE) &&
-                this.channel.bufferedAmount > REALTIME_BACKPRESSURE_BYTES
-            ) {
-                return;
-            }
+        const realtimePayload = this.isRealtimePayload(data);
+        const target = this.channelFor(data);
+        const usesRealtimeChannel = target === this.realtimeChannel && this.realtimeChannel !== this.controlChannel;
+
+        if (usesRealtimeChannel && target.bufferedAmount > REALTIME_BACKPRESSURE_BYTES) {
+            return;
+        }
+        if (target.readyState !== 'open') {
+            if (realtimePayload) return;
+            throw new Error('WebRTC control DataChannel non aperto.');
         }
 
         if (typeof data === 'string') {
-            this.channel.send(data);
+            target.send(data);
             return;
         }
         if (data instanceof ArrayBuffer) {
-            this.channel.send(data);
+            target.send(data);
             return;
         }
 
         const copied = new Uint8Array(data.byteLength);
         copied.set(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
-        this.channel.send(copied);
+        target.send(copied);
     }
 
     close(): void {
@@ -383,29 +767,100 @@ export class NativeRtcDataChannel implements IDataChannel {
     }
 }
 
-export async function createDirectHostOffer(): Promise<DirectHostOffer> {
+export async function createDirectHostOffer(retryAttempt = 1): Promise<DirectHostOffer> {
     const pc = createPeerConnection();
     const connectionId = randomId();
     const channel = createNegotiatedChannel(pc);
+    let localSdp = '';
+    let offerCode = '';
 
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    await waitForIceGatheringComplete(pc);
+    try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        await waitForIceGatheringComplete(pc);
 
-    if (!pc.localDescription?.sdp) {
-        pc.close();
-        throw new Error('Impossibile creare l\'invito WebRTC.');
+        if (!pc.localDescription?.sdp) {
+            throw new Error('Impossibile creare l\'invito WebRTC.');
+        }
+
+        localSdp = pc.localDescription.sdp;
+        offerCode = encodeSignal({
+            v: SIGNAL_VERSION,
+            type: 'offer',
+            connectionId,
+            sdp: localSdp,
+        });
+    } catch (error) {
+        try { channel.close(); } catch { /* no-op */ }
+        if (pc.connectionState !== 'closed') {
+            try { pc.close(); } catch { /* no-op */ }
+        }
+        if (isZeroIceCandidatesError(error) && retryAttempt < ICE_CANDIDATE_ATTEMPTS) {
+            await waitForIceRetry(retryAttempt);
+            return createDirectHostOffer(retryAttempt + 1);
+        }
+        throw error;
     }
 
-    const localSdp = pc.localDescription.sdp;
-    const offerCode = encodeSignal({
-        v: SIGNAL_VERSION,
-        type: 'offer',
-        connectionId,
-        sdp: localSdp,
-    });
-
     let answerApplied = false;
+    let recoveryPeerId: string | null = null;
+    let recoveryGeneration = 1;
+
+    channel.setRecoveryHandler('host', async (signal) => {
+        const anchorRoomId = getFirestoreRecoveryAnchorForOffer(offerCode);
+        if (!anchorRoomId || !recoveryPeerId) return null;
+        throwIfAborted(signal);
+
+        const generation = recoveryGeneration + 1;
+        const recoveryPc = createPeerConnection();
+        const transport = createNegotiatedTransport(recoveryPc);
+        let recoveryRoomId: string | null = null;
+
+        try {
+            const recoveryConnectionId = randomId();
+            const recoveryOffer = await recoveryPc.createOffer();
+            throwIfAborted(signal);
+            await recoveryPc.setLocalDescription(recoveryOffer);
+            await waitForIceGatheringComplete(recoveryPc, signal);
+            throwIfAborted(signal);
+            if (!recoveryPc.localDescription?.sdp) {
+                throw new Error('Impossibile creare l\'offerta di recovery WebRTC.');
+            }
+
+            const recoveryOfferCode = encodeSignal({
+                v: SIGNAL_VERSION,
+                type: 'offer',
+                connectionId: recoveryConnectionId,
+                sdp: recoveryPc.localDescription.sdp,
+            });
+            recoveryRoomId = await deriveFirestoreRecoveryRoomId(anchorRoomId, generation);
+            throwIfAborted(signal);
+            const room = await createFirestoreRecoverySignalingRoom(
+                anchorRoomId,
+                generation,
+                recoveryOfferCode,
+                signal,
+            );
+            recoveryRoomId = room.roomId;
+            const answerCode = await waitForFirestoreSignalingAnswer(room.roomId, signal);
+            throwIfAborted(signal);
+            const answer = decodeSignal(answerCode, 'answer');
+            if (answer.connectionId !== recoveryConnectionId) {
+                throw new Error('La risposta recovery appartiene a un altro trasporto.');
+            }
+            if (answer.peerId !== recoveryPeerId) {
+                throw new Error('Identità guest non valida durante la recovery.');
+            }
+            await recoveryPc.setRemoteDescription({ type: 'answer', sdp: answer.sdp });
+            recoveryGeneration = generation;
+            void deleteFirestoreSignalingRoom(room.roomId);
+            return { ...transport, generation };
+        } catch (error) {
+            closeNativeTransport(transport);
+            if (recoveryRoomId) void deleteFirestoreSignalingRoom(recoveryRoomId);
+            throw error;
+        }
+    });
 
     return {
         connectionId,
@@ -419,8 +874,9 @@ export async function createDirectHostOffer(): Promise<DirectHostOffer> {
                 throw new Error('La risposta appartiene a un altro invito.');
             }
             const peerId = answer.peerId!;
+            recoveryPeerId = peerId;
             // Bind the authoritative host channel to the actual guest identity
-            // before setRemoteDescription can open the negotiated DataChannel.
+            // before setRemoteDescription can open the negotiated DataChannels.
             onPeerIdentified?.(peerId);
             await pc.setRemoteDescription({ type: 'answer', sdp: answer.sdp });
             answerApplied = true;
@@ -434,14 +890,19 @@ export async function createDirectHostOffer(): Promise<DirectHostOffer> {
     };
 }
 
-export async function createDirectGuestAnswer(offerCode: string, peerId: string): Promise<DirectGuestAnswer> {
+export async function createDirectGuestAnswer(
+    offerCode: string,
+    peerId: string,
+    retryAttempt = 1,
+): Promise<DirectGuestAnswer> {
     if (!peerId || peerId.length < 3) throw new Error('Identità giocatore non valida.');
     const offer = decodeSignal(offerCode, 'offer');
     const pc = createPeerConnection();
+    let channel: NativeRtcDataChannel | null = null;
 
     try {
         await pc.setRemoteDescription({ type: 'offer', sdp: offer.sdp });
-        const channel = createNegotiatedChannel(pc);
+        channel = createNegotiatedChannel(pc);
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         await waitForIceGatheringComplete(pc);
@@ -458,6 +919,58 @@ export async function createDirectGuestAnswer(offerCode: string, peerId: string)
             peerId,
             sdp: localSdp,
         });
+        let recoveryGeneration = 1;
+
+        channel.setRecoveryHandler('guest', async (signal) => {
+            const anchorRoomId = getFirestoreRecoveryAnchorForOffer(offerCode);
+            if (!anchorRoomId) return null;
+            throwIfAborted(signal);
+
+            const generation = recoveryGeneration + 1;
+            const recoveryRoomId = await deriveFirestoreRecoveryRoomId(anchorRoomId, generation);
+            const room = await waitForFirestoreSignalingRoom(recoveryRoomId, signal);
+            throwIfAborted(signal);
+            const recoveryOffer = decodeSignal(room.offerCode, 'offer');
+            const recoveryPc = createPeerConnection();
+            let transport: NativeTransport | null = null;
+
+            try {
+                await recoveryPc.setRemoteDescription({ type: 'offer', sdp: recoveryOffer.sdp });
+                transport = createNegotiatedTransport(recoveryPc);
+                const recoveryAnswer = await recoveryPc.createAnswer();
+                throwIfAborted(signal);
+                await recoveryPc.setLocalDescription(recoveryAnswer);
+                await waitForIceGatheringComplete(recoveryPc, signal);
+                throwIfAborted(signal);
+                if (!recoveryPc.localDescription?.sdp) {
+                    throw new Error('Impossibile creare la risposta recovery WebRTC.');
+                }
+
+                const recoveryAnswerCode = encodeSignal({
+                    v: SIGNAL_VERSION,
+                    type: 'answer',
+                    connectionId: recoveryOffer.connectionId,
+                    peerId,
+                    sdp: recoveryPc.localDescription.sdp,
+                });
+
+                try {
+                    await publishFirestoreSignalingAnswer(room.roomId, recoveryAnswerCode, signal);
+                } catch (publishError) {
+                    const confirmedRoom = await getFirestoreSignalingRoom(room.roomId, signal).catch(() => null);
+                    if (confirmedRoom?.answerCode !== recoveryAnswerCode) throw publishError;
+                }
+
+                recoveryGeneration = generation;
+                return { ...transport, generation };
+            } catch (error) {
+                if (transport) closeNativeTransport(transport);
+                else {
+                    try { recoveryPc.close(); } catch { /* no-op */ }
+                }
+                throw error;
+            }
+        });
 
         return {
             connectionId: offer.connectionId,
@@ -465,13 +978,21 @@ export async function createDirectGuestAnswer(offerCode: string, peerId: string)
             channel,
             diagnostics: inspectSdp(localSdp),
             close() {
-                try { channel.close?.(); } finally {
+                try { channel?.close(); } finally {
                     if (pc.connectionState !== 'closed') pc.close();
                 }
             },
         };
     } catch (error) {
-        pc.close();
+        if (channel) {
+            try { channel.close(); } catch { /* no-op */ }
+        } else {
+            try { pc.close(); } catch { /* no-op */ }
+        }
+        if (isZeroIceCandidatesError(error) && retryAttempt < ICE_CANDIDATE_ATTEMPTS) {
+            await waitForIceRetry(retryAttempt);
+            return createDirectGuestAnswer(offerCode, peerId, retryAttempt + 1);
+        }
         throw error;
     }
 }
