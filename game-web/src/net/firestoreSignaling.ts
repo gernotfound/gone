@@ -4,6 +4,7 @@ const MAX_SIGNAL_LENGTH = 96_000;
 const POLL_FAST_MS = 500;
 const POLL_NORMAL_MS = 1000;
 const POLL_SLOW_MS = 2000;
+const TRANSIENT_WRITE_RETRY_MS = 30_000;
 const RECOVERY_ROOM_DOMAIN = 'gone-recovery-v1';
 const RECOVERY_ANCHOR_LIMIT = 32;
 
@@ -127,6 +128,22 @@ function roomFromDocument(roomId: string, document: FirestoreDocument): Signalin
   };
 }
 
+function isTransientFirestoreError(error: unknown): boolean {
+  if (error instanceof TypeError) return true;
+  if (!(error instanceof FirestoreSignalingHttpError)) return false;
+  return error.status === 408 || error.status === 429 || error.status >= 500;
+}
+
+function isMissingRecoveryMailbox(error: unknown): boolean {
+  return error instanceof FirestoreSignalingHttpError && (error.status === 403 || error.status === 404);
+}
+
+function retryDelay(elapsedMs: number): number {
+  if (elapsedMs < 5000) return 350;
+  if (elapsedMs < 15_000) return 750;
+  return 1500;
+}
+
 async function firestoreFetch(url: string, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers);
   headers.set('Content-Type', 'application/json');
@@ -175,7 +192,11 @@ function wait(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-async function createFirestoreSignalingRoomWithId(roomId: string, offerCode: string): Promise<SignalingRoom> {
+async function createFirestoreSignalingRoomWithId(
+  roomId: string,
+  offerCode: string,
+  signal?: AbortSignal,
+): Promise<SignalingRoom> {
   const normalizedRoomId = validateRoomId(roomId);
   const offer = validateSignal(offerCode, 'Offerta');
   const now = Date.now();
@@ -194,6 +215,7 @@ async function createFirestoreSignalingRoomWithId(roomId: string, offerCode: str
   const response = await firestoreFetch(collectionUrl(normalizedRoomId), {
     method: 'POST',
     body: JSON.stringify(body),
+    signal,
   });
   const document = await response.json() as FirestoreDocument;
   const room = roomFromDocument(normalizedRoomId, document);
@@ -234,18 +256,44 @@ export async function createFirestoreRecoverySignalingRoom(
   anchorRoomId: string,
   generation: number,
   offerCode: string,
+  signal?: AbortSignal,
 ): Promise<SignalingRoom> {
   const roomId = await deriveFirestoreRecoveryRoomId(anchorRoomId, generation);
-  try {
-    return await createFirestoreSignalingRoomWithId(roomId, offerCode);
-  } catch (error) {
-    if (!(error instanceof FirestoreSignalingHttpError) || error.status !== 409) throw error;
-    // A crashed previous attempt can leave the deterministic mailbox behind.
-    // The room id is an unguessable derivative of the original 128-bit secret;
-    // delete and recreate it rather than falling back to a second namespace.
-    await deleteFirestoreSignalingRoom(roomId);
-    return createFirestoreSignalingRoomWithId(roomId, offerCode);
+  const offer = validateSignal(offerCode, 'Offerta');
+  const startedAt = Date.now();
+
+  while (!signal?.aborted) {
+    try {
+      return await createFirestoreSignalingRoomWithId(roomId, offer, signal);
+    } catch (error) {
+      if (error instanceof FirestoreSignalingHttpError && error.status === 409) {
+        const existing = await getFirestoreSignalingRoom(roomId, signal).catch(() => null);
+        if (existing?.offerCode === offer && (existing.status === 'waiting' || existing.status === 'answered')) {
+          rememberRecoveryAnchor(offer, roomId);
+          return existing;
+        }
+        await deleteFirestoreSignalingRoom(roomId);
+        continue;
+      }
+
+      if (!isTransientFirestoreError(error)) throw error;
+
+      // POST can succeed server-side even when its response is lost. Check the
+      // exact deterministic document before retrying so we never delete a valid
+      // mailbox that the guest may already be answering.
+      const existing = await getFirestoreSignalingRoom(roomId, signal).catch(() => null);
+      if (existing?.offerCode === offer && (existing.status === 'waiting' || existing.status === 'answered')) {
+        rememberRecoveryAnchor(offer, roomId);
+        return existing;
+      }
+
+      const elapsed = Date.now() - startedAt;
+      if (elapsed >= TRANSIENT_WRITE_RETRY_MS) throw error;
+      await wait(Math.min(retryDelay(elapsed), TRANSIENT_WRITE_RETRY_MS - elapsed), signal);
+    }
   }
+
+  throw new DOMException('Operazione annullata.', 'AbortError');
 }
 
 export async function getFirestoreSignalingRoom(roomId: string, signal?: AbortSignal): Promise<SignalingRoom> {
@@ -273,19 +321,26 @@ export async function waitForFirestoreSignalingRoom(
     try {
       return await getFirestoreSignalingRoom(normalized, signal);
     } catch (error) {
-      if (!(error instanceof FirestoreSignalingHttpError) || error.status !== 404) throw error;
+      // Depending on rules evaluation, an exact GET for a not-yet-created
+      // document can surface as either 404 or 403. Both are safe to retry only
+      // in this deterministic recovery-mailbox waiter; collection listing stays forbidden.
+      if (!isMissingRecoveryMailbox(error) && !isTransientFirestoreError(error)) throw error;
     }
 
     const elapsed = Date.now() - startedAt;
     if (elapsed >= timeoutMs) throw new Error('Recovery multiplayer non disponibile.');
-    const delay = elapsed < 5000 ? POLL_FAST_MS : POLL_NORMAL_MS;
+    const delay = elapsed < 5000 ? POLL_FAST_MS : elapsed < 30_000 ? POLL_NORMAL_MS : POLL_SLOW_MS;
     await wait(Math.min(delay, Math.max(1, timeoutMs - elapsed)), signal);
   }
 
   throw new DOMException('Operazione annullata.', 'AbortError');
 }
 
-export async function publishFirestoreSignalingAnswer(roomId: string, answerCode: string): Promise<void> {
+export async function publishFirestoreSignalingAnswer(
+  roomId: string,
+  answerCode: string,
+  signal?: AbortSignal,
+): Promise<void> {
   const normalized = validateRoomId(roomId);
   const answer = validateSignal(answerCode, 'Risposta');
   const params = new URLSearchParams();
@@ -293,27 +348,56 @@ export async function publishFirestoreSignalingAnswer(roomId: string, answerCode
   params.append('updateMask.fieldPaths', 'status');
   params.append('updateMask.fieldPaths', 'updatedAtMs');
 
-  const body: FirestoreDocument = {
-    fields: {
-      answer: stringField(answer),
-      status: stringField('answered'),
-      updatedAtMs: integerField(Date.now()),
-    },
-  };
+  const startedAt = Date.now();
+  while (!signal?.aborted) {
+    const body: FirestoreDocument = {
+      fields: {
+        answer: stringField(answer),
+        status: stringField('answered'),
+        updatedAtMs: integerField(Date.now()),
+      },
+    };
 
-  await firestoreFetch(`${documentUrl(normalized)}?${params.toString()}`, {
-    method: 'PATCH',
-    body: JSON.stringify(body),
-  });
+    try {
+      await firestoreFetch(`${documentUrl(normalized)}?${params.toString()}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+        signal,
+      });
+      return;
+    } catch (error) {
+      // PATCH is logically one-shot. If the response was lost after Firestore
+      // committed it, confirm the stored answer instead of issuing a conflicting
+      // second transition from answered -> answered.
+      const existing = await getFirestoreSignalingRoom(normalized, signal).catch(() => null);
+      if (existing?.answerCode === answer && existing.status === 'answered') return;
+
+      if (!isTransientFirestoreError(error)) throw error;
+      const elapsed = Date.now() - startedAt;
+      if (elapsed >= TRANSIENT_WRITE_RETRY_MS) throw error;
+      await wait(Math.min(retryDelay(elapsed), TRANSIENT_WRITE_RETRY_MS - elapsed), signal);
+    }
+  }
+
+  throw new DOMException('Operazione annullata.', 'AbortError');
 }
 
-export async function waitForFirestoreSignalingAnswer(roomId: string, signal?: AbortSignal): Promise<string> {
+export async function waitForFirestoreSignalingAnswer(
+  roomId: string,
+  signal?: AbortSignal,
+  tolerateMissing = false,
+): Promise<string> {
   const normalized = validateRoomId(roomId);
   const startedAt = Date.now();
 
   while (!signal?.aborted) {
-    const room = await getFirestoreSignalingRoom(normalized, signal);
-    if (room.answerCode) return validateSignal(room.answerCode, 'Risposta');
+    try {
+      const room = await getFirestoreSignalingRoom(normalized, signal);
+      if (room.answerCode) return validateSignal(room.answerCode, 'Risposta');
+    } catch (error) {
+      const missingDuringRecovery = tolerateMissing && isMissingRecoveryMailbox(error);
+      if (!missingDuringRecovery && !isTransientFirestoreError(error)) throw error;
+    }
 
     const elapsed = Date.now() - startedAt;
     if (elapsed >= ROOM_TTL_MS) throw new Error('Invito multiplayer scaduto.');
