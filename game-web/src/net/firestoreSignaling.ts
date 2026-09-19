@@ -25,9 +25,12 @@ export type SignalingRoom = {
 };
 
 class FirestoreSignalingHttpError extends Error {
-  constructor(public readonly status: number, message: string) {
+  public readonly status: number;
+
+  constructor(status: number, message: string) {
     super(message);
     this.name = 'FirestoreSignalingHttpError';
+    this.status = status;
   }
 }
 
