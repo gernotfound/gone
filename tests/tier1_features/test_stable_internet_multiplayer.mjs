@@ -12,6 +12,8 @@ export async function run(suite) {
   const protocol = source('game-web', 'src', 'net', 'protocol.ts');
   const signaling = source('game-web', 'src', 'net', 'firestoreSignaling.ts');
   const controller = source('game-web', 'src', 'net', 'multiplayerSessionController.ts');
+  const p2pHost = source('game-web', 'src', 'net', 'p2pHost.ts');
+  const runtime = source('game-web', 'src', 'runtime', 'startClientRuntime.ts');
   const menu = source('game-web', 'src', 'ui', 'menu.ts');
   const lobby = source('game-web', 'src', 'ui', 'lobby.ts');
   const vercel = source('game-web', 'vercel.json');
@@ -40,6 +42,15 @@ export async function run(suite) {
     assert(direct.includes('get bufferedAmount(): number'), 'native RTC adapter must expose the browser queue');
     assert(direct.includes('this.channels.reduce((sum, channel) => sum + channel.bufferedAmount, 0)'), 'bufferedAmount must aggregate the native RTC queues');
     assert(direct.includes('target.bufferedAmount > REALTIME_BACKPRESSURE_BYTES'), 'only congested realtime traffic should be disposable under backpressure');
+  });
+
+  suite.test('P2PHost owns stable broadcast lifecycle without runtime prototype patches', () => {
+    const obsoletePatch = path.join(PROJECT_ROOT, 'game-web', 'src', 'net', 'networkStabilityFix.ts');
+    assert(p2pHost.includes('const stalePeers: string[] = []'), 'canonical host broadcast must track stale peer cleanup itself');
+    assert(p2pHost.includes("if (state && state !== 'open')"), 'canonical host broadcast must skip native channels that are not open');
+    assert(p2pHost.includes('this.handlePeerDisconnect(id);'), 'canonical host broadcast must clean terminal peer channels after iteration');
+    assert(!runtime.includes('networkStabilityFix'), 'runtime composition must not mutate P2PHost broadcast behavior after startup');
+    assert(!fs.existsSync(obsoletePatch), 'prototype monkey-patch module must remain removed');
   });
 
   suite.test('Firestore is signaling-only and expires pending rooms', () => {
