@@ -59,6 +59,28 @@ export async function run(suite) {
     assert(controller.includes('buildDirectInviteUrl(offer.offerCode)'), 'manual SDP path must remain usable if Firestore fails');
   });
 
+  suite.test('Terminal Firestore sessions derive one-shot recovery mailboxes without gameplay relay', () => {
+    assert(signaling.includes("RECOVERY_ROOM_DOMAIN = 'gone-recovery-v1'"), 'recovery mailbox ids must be domain-separated from random invite ids');
+    assert(signaling.includes("crypto.subtle.digest('SHA-256'"), 'recovery mailbox ids must derive deterministically from the original room secret');
+    assert(signaling.includes('createFirestoreRecoverySignalingRoom'), 'host must be able to publish a one-shot recovery offer');
+    assert(signaling.includes('waitForFirestoreSignalingRoom'), 'guest must be able to wait for the matching recovery generation without collection listing');
+    assert(signaling.includes('error.status !== 404'), 'guest recovery polling must tolerate a not-yet-created deterministic mailbox');
+    assert(signaling.includes('error.status !== 409'), 'stale one-shot recovery mailboxes must be replaced deterministically');
+    assert(!signaling.includes('setInterval('), 'Firestore recovery signaling must not install a continuous gameplay poller');
+  });
+
+  suite.test('Logical RTC channel preserves authoritative session state across transport replacement', () => {
+    assert(direct.includes("type RecoveryRole = 'host' | 'guest'"), 'transport recovery must be symmetric for host and guest');
+    assert(direct.includes('private transportEpoch = 0'), 'stale native transport callbacks must be generation-fenced');
+    assert(direct.includes('this.retireCurrentTransport();'), 'a failed native transport must be retired without closing the logical session first');
+    assert(direct.includes('if (this.recovering) return;'), 'outbound gameplay must be dropped rather than tearing down the logical session during recovery');
+    assert(direct.includes("new CustomEvent('gone-rtc-recovery-state'"), 'recovery state must be observable by presentation/diagnostics');
+    assert(direct.includes('answer.peerId !== recoveryPeerId'), 'host recovery must reject an answer from a different guest identity');
+    assert(direct.includes('createFirestoreRecoverySignalingRoom('), 'host recovery must publish the replacement offer through the one-shot mailbox');
+    assert(direct.includes('waitForFirestoreSignalingRoom(recoveryRoomId'), 'guest recovery must use the matching deterministic generation');
+    assert(direct.includes('publishFirestoreSignalingAnswer(room.roomId, recoveryAnswerCode)'), 'guest must publish the replacement answer automatically');
+  });
+
   suite.test('Room links enter the existing lobby/session owner', () => {
     assert(menu.includes('readFirestoreRoomFromLocation()'), 'menu must recognize Firestore room links');
     assert(menu.includes('openJoinLobby({ roomId }'), 'room links must enter the normal lobby');
