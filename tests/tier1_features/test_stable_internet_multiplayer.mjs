@@ -36,6 +36,16 @@ export async function run(suite) {
     assert(direct.includes("pc.addEventListener('icecandidate', onCandidate)"), 'late candidates must be observed after the soft deadline');
   });
 
+  suite.test('Zero-candidate recovery retry is bounded, fresh and abort-aware', () => {
+    assert(direct.includes('for (let attempt = 1; attempt <= ICE_CANDIDATE_ATTEMPTS; attempt += 1)'), 'logical RTC recovery must bound zero-candidate retries to the same finite attempt budget');
+    assert(direct.includes('replacement = await this.recoveryHandler(abort.signal);'), 'each retry must re-invoke the recovery handler, which creates a fresh PeerConnection transport');
+    assert(direct.includes('!isZeroIceCandidatesError(error)'), 'recovery must not retry protocol, identity or signaling failures generically');
+    assert(direct.includes('attempt >= ICE_CANDIDATE_ATTEMPTS'), 'recovery must stop after the configured candidate attempt budget');
+    assert(direct.includes('await waitForIceRetry(attempt, abort.signal);'), 'recovery retry backoff must share the session AbortSignal');
+    assert(direct.includes('async function waitForIceRetry(attempt: number, signal?: AbortSignal): Promise<void>'), 'ICE retry helper must support abort-aware recovery backoff');
+    assert(direct.includes("signal?.addEventListener('abort', onAbort, { once: true });"), 'aborting a recovery must interrupt the ICE retry delay instead of waiting for another attempt');
+  });
+
   suite.test('Realtime state uses an unordered zero-retransmit channel', () => {
     assert(direct.includes("createDataChannel('gone-control'"), 'critical traffic must have a dedicated control channel');
     assert(direct.includes("createDataChannel('gone-realtime'"), 'movement/snapshot traffic must have a dedicated realtime channel');
