@@ -34,6 +34,18 @@ async function lobbyPlayerCount(page) {
   return page.locator('#lobby-player-list > li').count();
 }
 
+async function guestConnectionDiagnostics(guest) {
+  return guest.evaluate(() => {
+    const client = window.goneGame?.getP2PClient?.();
+    return {
+      status: client?.status ?? 'missing',
+      slot: client?.playerSlot ?? null,
+      channelReadyState: client?.channel?.readyState ?? 'missing',
+      session: window.goneSession?.snapshot?.() ?? null,
+    };
+  }).catch((error) => ({ diagnosticsError: error?.message || String(error) }));
+}
+
 async function readFreshInvite(host, previousInvite = null) {
   return waitFor(async () => {
     const value = await host.locator('#invite-link-input').inputValue();
@@ -59,11 +71,16 @@ async function connectGuest(host, guest, label, previousInvite = null) {
   await host.locator('#direct-host-answer-input').fill(answer);
   await host.locator('#btn-direct-apply-answer').click();
 
-  await waitFor(
-    async () => guest.evaluate(() => window.goneGame?.getP2PClient?.()?.status === 'connected'),
-    `${label} to reach connected state`,
-    15_000,
-  );
+  try {
+    await waitFor(
+      async () => guest.evaluate(() => window.goneGame?.getP2PClient?.()?.status === 'connected'),
+      `${label} to reach connected state`,
+      TIMEOUT,
+    );
+  } catch (error) {
+    const diagnostics = await guestConnectionDiagnostics(guest);
+    throw new Error(`${error?.message || error} Transport diagnostics: ${JSON.stringify(diagnostics)}`);
+  }
 
   return invite;
 }
@@ -91,7 +108,7 @@ async function main() {
     await waitFor(
       async () => (await lobbyPlayerCount(host)) === 2 && (await lobbyPlayerCount(guestA)) === 2,
       'two-player direct lobby',
-      15_000,
+      TIMEOUT,
     );
 
     await connectGuest(host, guestB, 'Guest B', firstInvite);
@@ -101,7 +118,7 @@ async function main() {
         (await lobbyPlayerCount(guestA)) === 3 &&
         (await lobbyPlayerCount(guestB)) === 3,
       'three-player direct lobby on every page',
-      15_000,
+      TIMEOUT,
     );
 
     const hostNetwork = await host.evaluate(() => ({
