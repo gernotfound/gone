@@ -67,6 +67,12 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
+      - name: Emit Tailwind 4 package candidate
+        shell: bash
+        run: |
+          echo "TW4_PACKAGE_JSON_B64=$(base64 -w0 rescue-tailwind4/package.json)"
+          echo "TW4_PACKAGE_LOCK_B64=$(base64 -w0 rescue-tailwind4/package-lock.json)"
+
       - name: Install local host dependencies
         run: npm install --prefix gone-host --ignore-scripts
 
