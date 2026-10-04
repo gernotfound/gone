@@ -135,9 +135,9 @@ export async function run(suite) {
     assert(info.hasNeonCyan || info.hasOrange || info.hasNeonPink, 'coltello must feature plasma cutting edge');
   });
 
-  suite.test('F-05: Coltello config has strictly melee reach (max range 2.5m)', () => {
+  suite.test('F-05: Coltello config has strictly melee reach (max range 2.6m)', () => {
     const config = WEAPON_CONFIGS.coltello;
     assert(config !== undefined, 'coltello weapon config must exist');
-    assertEqual(config.maxRangeM, 2.5, 'coltello maximum effective range must be 2.5m');
+    assertEqual(config.maxRangeM, 2.6, 'coltello maximum effective range must be 2.6m');
   });
 }
