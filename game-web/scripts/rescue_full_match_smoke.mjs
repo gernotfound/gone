@@ -194,6 +194,39 @@ async function main() {
 
     invariant(planarDistance(localMoved, replicated) < 6, `Host and guest movement diverged excessively: local=${JSON.stringify(localMoved)} host=${JSON.stringify(replicated)}`);
 
+    console.log('[full-match] Verifying arbitrary client teleport is rejected and reconciled');
+    const teleportBaseline = await host.evaluate((id) => {
+      const session = window.goneGame.getP2PHost();
+      const record = session.playerRecords.get(id);
+      if (!record) throw new Error('Guest record missing before teleport test');
+      return {
+        position: { ...record.position },
+        rejectedTeleport: session.__gonePvpHardeningState.rejectedTeleport,
+      };
+    }, guestId);
+
+    await guest.evaluate(() => {
+      window.goneGame.player.position.x += 100;
+      window.goneGame.getP2PClient().sendCurrentState();
+    });
+
+    await waitFor(async () => host.evaluate(([id, baseline]) => {
+      const session = window.goneGame.getP2PHost();
+      const record = session.playerRecords.get(id);
+      if (!record) return false;
+      const authoritativeDrift = Math.hypot(
+        record.position.x - baseline.position.x,
+        record.position.z - baseline.position.z,
+      );
+      return session.__gonePvpHardeningState.rejectedTeleport > baseline.rejectedTeleport
+        && authoritativeDrift < 10;
+    }, [guestId, teleportBaseline]), 'host teleport rejection', 8_000);
+
+    await waitFor(async () => guest.evaluate((authoritative) => {
+      const player = window.goneGame.player.position;
+      return Math.hypot(player.x - authoritative.x, player.z - authoritative.z) < 10;
+    }, teleportBaseline.position), 'client reconciliation after rejected teleport', 8_000);
+
     console.log('[full-match] Verifying directional incoming-damage presentation from canonical combat slots');
     const directionalFeedback = await guest.evaluate(() => {
       const client = window.goneGame.getP2PClient();

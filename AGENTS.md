@@ -93,6 +93,11 @@ It must **not** import DOM or `engine.ts`.
 
 - `net/directWebRtc.ts`: manual offer/answer, `iceServers: []`, star host↔guests.
 - Browser host is authoritative.
+- Guest movement is client-predicted but host-validated. `net/movementAuthority.ts` owns the movement envelope; `p2pHost.ts` owns accepted transform state.
+- Movement limits come from Rust physics (30 m/s max horizontal, 25 m/s jump, 54 m/s terminal fall), use host receipt time, bounded jitter/cumulative credit and a separate per-packet teleport ceiling.
+- Rejected movement must not advance position, sequence/timestamp authority, health-pickup proximity or lag-compensation history.
+- Spawn/respawn are explicit host-authorized transitions that reset movement validation; clients reconcile from authoritative self snapshots rather than inventing a second multiplayer respawn coordinate.
+- `gameplay/networkBindings.ts` may snap the local predicted player only for first authority seed, host respawn or large authority divergence; normal prediction remains local.
 - Binary core opcodes: 0x01 CLIENT_STATE, 0x02 WORLD_SNAPSHOT, 0x03 FIRE_HITSCAN, 0x04 HIT_CONFIRMED.
 - `NativeRtcDataChannel`: ~3 s heartbeat, ~15 s timeout, ~6 s grace for transient `disconnected`.
 - `adaptiveSnapshotRate.ts`: host cadence adaptation; normal target ~30 Hz.

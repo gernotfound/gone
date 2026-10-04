@@ -124,29 +124,36 @@ async function main() {
 
     const guestAId = await guestA.evaluate(() => window.goneGame.getP2PClient().playerId);
 
-    console.log('[selfhost] Verifying binary state traffic reaches the authoritative host');
-    await guestA.evaluate(() => {
+    console.log('[selfhost] Verifying host-seeded binary state traffic reaches authority');
+    const shooterState = await host.evaluate((id) => {
+      const record = window.goneGame.getP2PHost().playerRecords.get(id);
+      if (!record) throw new Error('Relay guest record missing');
+      return { x: record.position.x, y: record.position.y, z: record.position.z };
+    }, guestAId);
+
+    await guestA.evaluate((position) => {
       const client = window.goneGame.getP2PClient();
       client.setStateProvider(() => ({
-        position: { x: 0, y: 17.5, z: 0 },
+        position,
         yaw: 0,
         pitch: 0,
         activeWeapon: 0,
         flags: 1,
       }));
       client.sendCurrentState();
-    });
+    }, shooterState);
 
     await waitFor(async () => host.evaluate((id) => {
-      const record = window.goneGame.getP2PHost().playerRecords.get(id);
-      return record && Math.abs(record.position.x) < 0.01 && Math.abs(record.position.z) < 0.01 && record.lastClientSeq > 0;
+      const session = window.goneGame.getP2PHost();
+      const record = session.playerRecords.get(id);
+      return record && record.lastClientTimestamp > 0 && session.__gonePvpHardeningState.acceptedClientStates > 0;
     }, guestAId), 'authoritative relay state update');
 
     console.log('[selfhost] Verifying authoritative guest-to-host combat through the relay');
-    await host.evaluate(() => {
+    await host.evaluate((shooter) => {
       const session = window.goneGame.getP2PHost();
       session.updateHostPlayerState({
-        position: { x: 0, y: 17.5, z: 10 },
+        position: { x: shooter.x, y: shooter.y, z: shooter.z + 10 },
         yaw: Math.PI,
         pitch: 0,
         activeWeapon: 0,
@@ -154,14 +161,18 @@ async function main() {
       const hostRecord = session.playerRecords.get(session.hostPlayer.id);
       if (!hostRecord) throw new Error('Host combat record missing');
       hostRecord.shieldExpiresAt = 0;
-    });
+    }, shooterState);
 
     const beforeHp = await host.evaluate(() => window.goneGame.getP2PHost().playerRecords.get('host')?.hp);
     invariant(beforeHp === 100, `Host HP should start at 100, got ${beforeHp}`);
 
-    await guestA.evaluate(() => {
-      window.goneGame.getP2PClient().fireHitscan(0, [3, 17.3, 0], [0, 0, 1]);
-    });
+    await guestA.evaluate((shooter) => {
+      window.goneGame.getP2PClient().fireHitscan(
+        0,
+        [shooter.x + 3, shooter.y - 0.2, shooter.z],
+        [0, 0, 1],
+      );
+    }, shooterState);
 
     const hitHp = await waitFor(async () => host.evaluate(() => {
       const hp = window.goneGame.getP2PHost().playerRecords.get('host')?.hp;
@@ -169,9 +180,14 @@ async function main() {
     }), 'authoritative relay hitscan damage', 5_000);
     invariant(hitHp > 0 && hitHp < 100, `Expected non-fatal relay damage, got ${hitHp}`);
 
-    await guestA.evaluate(() => {
-      window.goneGame.getP2PClient().fireHitscan(0, [3, 17.3, 0], [0, 0, -1]);
-    });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await guestA.evaluate((shooter) => {
+      window.goneGame.getP2PClient().fireHitscan(
+        0,
+        [shooter.x + 3, shooter.y - 0.2, shooter.z],
+        [0, 0, -1],
+      );
+    }, shooterState);
     await new Promise((resolve) => setTimeout(resolve, 300));
     const afterMissHp = await host.evaluate(() => window.goneGame.getP2PHost().playerRecords.get('host')?.hp);
     invariant(afterMissHp === hitHp, `Relay miss changed authoritative HP from ${hitHp} to ${afterMissHp}`);
