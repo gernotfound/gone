@@ -10,7 +10,7 @@ This document mirrors the active browser contract in `game-web/src/weapons/weapo
 | 1 | SR-99 Railphantom | 1.00 rps | 70 | 550 m | 180→450 m | 50 | ×2.0 | 5 / 25 |
 | 2 | SG-12 Havoc | 1.25 rps | 64 | 42 m | 8→30 m | 20 | ×1.25 | 6 / 30 |
 | 3 | SMG-7 Neon Hornet | 10.00 rps | 12 | 90 m | 15→65 m | 7 | ×1.5 | 36 / 180 |
-| 4 | CB-01 Shadowfang | 1.25 rps | 50 | 2.6 m | melee cutoff | 0 | ×1.0 | none |
+| 4 | CB-01 Shadowfang | 1.25 rps | 999 | 2.6 m | melee cutoff | 999 | ×1.0 | none |
 
 Damage is linear between falloff start/end and **zero past hard range for every weapon**.
 
@@ -30,7 +30,7 @@ At the 20 m benchmark (2 m for knife):
 | Sniper | 70.0 | 2 | 1.00 s |
 | Shotgun | 40.0 | 3 | 1.60 s |
 | SMG | 11.5 | 9 | 0.80 s |
-| Knife @ 2 m | 50.0 | 2 | 0.80 s |
+| Knife @ 2 m | 999.0 | 1 | 0.00 s |
 
 The shotgun is deliberately slower at the 20 m benchmark because it is now a close-range weapon with a stronger range identity rather than a universal two-shot option.
 
@@ -50,7 +50,7 @@ Scoped sniper ADS uses near-perfect live accuracy. The knife is melee and does n
 
 ## Authority and validation
 
-Browser matches use the room creator as authoritative host. The host validates lag-compensated hits with the visible robot hitbox (two cheap AABBs: torso/propulsor + head/visor). `net/pvpHardening.ts` additionally rejects malformed directions, impossible guest weapon mismatches, duplicate guest sequences and obvious over-cadence guest fire before authoritative damage resolution.
+Browser matches use the room creator as authoritative host. The host validates lag-compensated hits with the visible robot hitbox (two cheap AABBs: torso/propulsor + head/visor). `net/p2pHost.ts` owns the authoritative validation boundary: it rejects malformed directions, impossible guest weapon mismatches, stale/duplicate guest sequences, non-finite client state and obvious over-cadence guest fire before authoritative damage resolution. Fire cadence is measured on the host receipt clock; the client timestamp is used only for bounded lag rewind.
 
 The Rust `intersect_ray_cylinder` function remains as a compatibility API for historical WASM callers/tests; it is **not** the intended live browser mannequin hitbox.
 
