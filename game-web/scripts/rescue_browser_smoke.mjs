@@ -124,35 +124,55 @@ async function main() {
     const guestAId = guestStates[0].playerId;
     const guestBId = guestStates[1].playerId;
 
-    // Networking is deliberately tested before starting Three.js. Client state
-    // ticks and authoritative snapshots are independent from GPU/render startup;
-    // keeping them separate prevents headless software-WebGL starvation from
-    // being misdiagnosed as a WebRTC failure.
-    console.log('[smoke] Verifying both guests feed authoritative state to host');
-    const before = await host.evaluate(([aId, bId]) => {
+    // Before Three.js starts, seed one binary CLIENT_STATE from the exact
+    // host-owned spawn for each guest. Arbitrary coordinate writes are no longer
+    // a valid movement smoke because the authority layer must reject them.
+    console.log('[smoke] Verifying host-seeded guest state reaches authority');
+    const authoritativeSpawns = await host.evaluate(([aId, bId]) => {
       const session = window.goneGame.getP2PHost();
       const a = session.playerRecords.get(aId);
       const b = session.playerRecords.get(bId);
       if (!a || !b) throw new Error('Authoritative guest records missing');
       return {
-        a: { x: a.position.x, seq: a.lastClientSeq },
-        b: { z: b.position.z, seq: b.lastClientSeq },
+        a: { ...a.position, timestamp: a.lastClientTimestamp },
+        b: { ...b.position, timestamp: b.lastClientTimestamp },
       };
     }, [guestAId, guestBId]);
 
-    await guestA.evaluate(() => { window.goneGame.player.position.x += 7; });
-    await guestB.evaluate(() => { window.goneGame.player.position.z -= 8; });
+    await Promise.all([
+      guestA.evaluate((position) => {
+        const client = window.goneGame.getP2PClient();
+        client.setStateProvider(() => ({
+          position,
+          yaw: 0,
+          pitch: 0,
+          activeWeapon: 0,
+          flags: 1,
+        }));
+        client.sendCurrentState();
+      }, authoritativeSpawns.a),
+      guestB.evaluate((position) => {
+        const client = window.goneGame.getP2PClient();
+        client.setStateProvider(() => ({
+          position,
+          yaw: 0,
+          pitch: 0,
+          activeWeapon: 0,
+          flags: 1,
+        }));
+        client.sendCurrentState();
+      }, authoritativeSpawns.b),
+    ]);
 
     await waitFor(async () => host.evaluate(([aId, bId, initial]) => {
       const session = window.goneGame.getP2PHost();
       const a = session.playerRecords.get(aId);
       const b = session.playerRecords.get(bId);
       return !!a && !!b &&
-        Math.abs(a.position.x - initial.a.x) > 3 &&
-        Math.abs(b.position.z - initial.b.z) > 3 &&
-        a.lastClientSeq !== initial.a.seq &&
-        b.lastClientSeq !== initial.b.seq;
-    }, [guestAId, guestBId, before]), 'both guest state streams on host', 12_000);
+        a.lastClientTimestamp > initial.a.timestamp &&
+        b.lastClientTimestamp > initial.b.timestamp &&
+        session.__gonePvpHardeningState.acceptedClientStates >= 2;
+    }, [guestAId, guestBId, authoritativeSpawns]), 'both host-seeded guest states on authority', 12_000);
 
     console.log('[smoke] Verifying authoritative health on Guest A');
     await host.evaluate((id) => {
