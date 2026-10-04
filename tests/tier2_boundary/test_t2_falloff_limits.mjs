@@ -1,103 +1,75 @@
 // tests/tier2_boundary/test_t2_falloff_limits.mjs
-// Tier 2 Boundary & Corner Cases: Extreme Distances, Falloff Limits & Knife Range (F-10)
+// Tier 2 Boundary & Corner Cases: current falloff inflections and hard ranges.
 
 import {
   assertEqual,
   assertGreaterThan,
   assertGreaterThanOrEqual,
   assertLessThan,
-  assertThrows,
 } from '../helpers/assertions.mjs';
 import { WEAPON_CONFIGS, calculateDamage } from '../helpers/weapon_model.mjs';
 
 export async function run(suite) {
-  // Point Blank & Negative Distance
-  suite.test('T2-Falloff: Point blank (0.0m) returns exact base damage for all weapons', () => {
-    const weapons = ['assalto', 'cecchino', 'pompa', 'mitraglietta', 'coltello'];
-    for (const key of weapons) {
-      const dmg = calculateDamage(key, 0.0);
-      assertEqual(dmg, WEAPON_CONFIGS[key].baseDamage, `0m damage must equal baseDamage for ${key}`);
+  suite.test('T2-Falloff: Point blank returns exact base damage for all weapons', () => {
+    for (const key of Object.keys(WEAPON_CONFIGS)) {
+      assertEqual(calculateDamage(key, 0.0), WEAPON_CONFIGS[key].baseDamage);
     }
   });
 
-  suite.test('T2-Falloff: Negative distance is treated as point blank base damage', () => {
-    assertEqual(calculateDamage('assalto', -10.0), 18.0);
-    assertEqual(calculateDamage('cecchino', -5.0), 70.0);
-    assertEqual(calculateDamage('coltello', -1.0), 50.0);
+  suite.test('T2-Falloff: Invalid negative distance is rejected instead of treated as point blank', () => {
+    assertEqual(calculateDamage('assalto', -0.001), 0.0);
+    assertEqual(calculateDamage('cecchino', -5.0), 0.0);
+    assertEqual(calculateDamage('coltello', -1.0), 0.0);
   });
 
-  // Assalto Falloff Inflexion Points
-  suite.test('T2-Falloff: Assalto at exactly 10.0m (falloffStartM) deals full 18.0 HP', () => {
-    assertEqual(calculateDamage('assalto', 10.0), 18.0);
+  suite.test('T2-Falloff: Assalto transitions at 35m/140m and stops at 180m', () => {
+    assertEqual(calculateDamage('assalto', 35.0), 18.0);
+    const afterStart = calculateDamage('assalto', 35.001);
+    assertLessThan(afterStart, 18.0);
+    assertGreaterThan(afterStart, 17.99);
+    assertEqual(calculateDamage('assalto', 140.0), 10.0);
+    assertGreaterThan(calculateDamage('assalto', 139.999), 10.0);
+    assertEqual(calculateDamage('assalto', 180.0), 10.0);
+    assertEqual(calculateDamage('assalto', 180.001), 0.0);
   });
 
-  suite.test('T2-Falloff: Assalto at 10.001m deals strictly less than 18.0 HP', () => {
-    const dmg = calculateDamage('assalto', 10.001);
-    assertLessThan(dmg, 18.0);
-    assertGreaterThan(dmg, 17.99);
+  suite.test('T2-Falloff: Cecchino transitions at 180m/450m and stops at 550m', () => {
+    assertEqual(calculateDamage('cecchino', 180.0), 70.0);
+    assertEqual(calculateDamage('cecchino', 450.0), 50.0);
+    assertEqual(calculateDamage('cecchino', 550.0), 50.0);
+    assertEqual(calculateDamage('cecchino', 550.001), 0.0);
   });
 
-  suite.test('T2-Falloff: Assalto at exactly 70.0m (falloffEndM) deals minimum 12.0 HP', () => {
-    assertEqual(calculateDamage('assalto', 70.0), 12.0);
-  });
-
-  suite.test('T2-Falloff: Assalto at 69.999m deals strictly greater than 12.0 HP', () => {
-    const dmg = calculateDamage('assalto', 69.999);
-    assertGreaterThan(dmg, 12.0);
-  });
-
-  // Cecchino Falloff Inflexion Points
-  suite.test('T2-Falloff: Cecchino at exactly 100.0m deals full 70.0 HP', () => {
-    assertEqual(calculateDamage('cecchino', 100.0), 70.0);
-  });
-
-  suite.test('T2-Falloff: Cecchino at exactly 300.0m deals minimum 55.0 HP', () => {
-    assertEqual(calculateDamage('cecchino', 300.0), 55.0);
-  });
-
-  // Extreme Distance Clamping
-  suite.test('T2-Falloff: Extreme distance (500m) maintains minDamage clamp for all firearms', () => {
-    assertEqual(calculateDamage('assalto', 500.0), WEAPON_CONFIGS.assalto.minDamage);
-    assertEqual(calculateDamage('cecchino', 500.0), WEAPON_CONFIGS.cecchino.minDamage);
-    assertEqual(calculateDamage('pompa', 500.0), WEAPON_CONFIGS.pompa.minDamage);
-    assertEqual(calculateDamage('mitraglietta', 500.0), WEAPON_CONFIGS.mitraglietta.minDamage);
-  });
-
-  suite.test('T2-Falloff: Ultra-extreme distance (10,000m) never drops below minDamage or produces NaN', () => {
-    const firearms = ['assalto', 'cecchino', 'pompa', 'mitraglietta'];
-    for (const key of firearms) {
-      const dmg = calculateDamage(key, 10000.0);
-      assertEqual(dmg, WEAPON_CONFIGS[key].minDamage);
-      assertEqual(Number.isNaN(dmg), false);
+  suite.test('T2-Falloff: Every ranged weapon is zero strictly beyond its configured hard range', () => {
+    for (const key of ['assalto', 'cecchino', 'pompa', 'mitraglietta']) {
+      const cfg = WEAPON_CONFIGS[key];
+      assertEqual(calculateDamage(key, cfg.maxRangeM), cfg.minDamage, key);
+      assertEqual(calculateDamage(key, cfg.maxRangeM + 0.001), 0.0, key);
+      assertEqual(calculateDamage(key, 10_000), 0.0, key);
     }
   });
 
-  // Knife Melee Boundary Invariants
-  suite.test('T2-Falloff: Coltello deals 50.0 HP at exactly 2.500m', () => {
-    assertEqual(calculateDamage('coltello', 2.5), 50.0);
+  suite.test('T2-Falloff: Coltello boundary is exactly 2.6m', () => {
+    assertEqual(calculateDamage('coltello', 2.6), 999.0);
+    assertEqual(calculateDamage('coltello', 2.601), 0.0);
   });
 
-  suite.test('T2-Falloff: Coltello drops strictly to 0.0 HP at 2.501m (infinitesimal step past reach)', () => {
-    assertEqual(calculateDamage('coltello', 2.501), 0.0);
-  });
-
-  suite.test('T2-Falloff: Coltello remains strictly 0.0 HP at all long ranges (10m, 50m, 500m)', () => {
-    assertEqual(calculateDamage('coltello', 10.0), 0.0);
-    assertEqual(calculateDamage('coltello', 50.0), 0.0);
-    assertEqual(calculateDamage('coltello', 500.0), 0.0);
-  });
-
-  // Monotonicity Invariant
-  suite.test('T2-Falloff: Damage curve is monotonically non-increasing from 0m to 500m', () => {
-    const sampleDistances = [0, 5, 10, 20, 25, 30, 45, 65, 80, 100, 150, 200, 300, 500];
-    const firearms = ['assalto', 'cecchino', 'pompa', 'mitraglietta'];
-    for (const f of firearms) {
-      for (let i = 0; i < sampleDistances.length - 1; i++) {
+  suite.test('T2-Falloff: Damage curves are monotonically non-increasing through and past hard range', () => {
+    for (const key of ['assalto', 'cecchino', 'pompa', 'mitraglietta']) {
+      const cfg = WEAPON_CONFIGS[key];
+      const sampleDistances = [
+        0,
+        cfg.falloffStartM,
+        (cfg.falloffStartM + cfg.falloffEndM) / 2,
+        cfg.falloffEndM,
+        cfg.maxRangeM,
+        cfg.maxRangeM + 0.001,
+        cfg.maxRangeM * 2,
+      ];
+      for (let i = 0; i < sampleDistances.length - 1; i += 1) {
         const d1 = sampleDistances[i];
         const d2 = sampleDistances[i + 1];
-        const dmg1 = calculateDamage(f, d1);
-        const dmg2 = calculateDamage(f, d2);
-        assertGreaterThanOrEqual(dmg1, dmg2, `Damage at ${d1}m (${dmg1}) must be >= damage at ${d2}m (${dmg2}) for ${f}`);
+        assertGreaterThanOrEqual(calculateDamage(key, d1), calculateDamage(key, d2), key);
       }
     }
   });
