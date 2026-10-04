@@ -267,8 +267,10 @@ interface PeerConnectionRecord {
 export type RespawnPositionResolver = (slot: number) => { x: number; y: number; z: number };
 
 export interface CombatValidationStats {
+  /** Host receipt time of the last accepted guest shot. Never client-controlled. */
   lastClientShotTime: Map<string, number>;
   lastShotSeq: Map<string, number>;
+  lastClientStateSeq: Map<string, number>;
   accepted: number;
   rejected: number;
   rejectedCadence: number;
@@ -280,6 +282,7 @@ function createCombatValidationStats(): CombatValidationStats {
   return {
     lastClientShotTime: new Map(),
     lastShotSeq: new Map(),
+    lastClientStateSeq: new Map(),
     accepted: 0,
     rejected: 0,
     rejectedCadence: 0,
@@ -435,15 +438,32 @@ export class P2PHost {
     const record = this.playerRecords.get(peerId);
     if (!record || !record.isAlive) return;
 
-    const seqDiff = (state.seq - record.lastClientSeq) & 0xffff;
-    if (seqDiff > 32768 && record.lastClientSeq !== 0) return;
+    const stateSeq = Number(state.seq) & 0xffff;
+    const previousStateSeq = this.__gonePvpHardeningState.lastClientStateSeq.get(peerId);
+    if (previousStateSeq !== undefined) {
+      const seqDiff = (stateSeq - previousStateSeq) & 0xffff;
+      // Ordered DataChannels must only advance. Reject duplicates and values
+      // from the stale half of the modulo-16-bit sequence space.
+      if (seqDiff === 0 || seqDiff > 0x8000) return;
+    }
 
-    record.position = { x: state.x, y: state.y, z: state.z };
-    record.yaw = state.yaw;
-    record.pitch = state.pitch;
-    record.activeWeapon = state.activeWeapon;
-    record.lastClientSeq = state.seq;
-    record.lastClientTimestamp = state.timestamp;
+    const timestamp = Number(state.timestamp);
+    const x = Number(state.x);
+    const y = Number(state.y);
+    const z = Number(state.z);
+    const yaw = Number(state.yaw);
+    const pitch = Number(state.pitch);
+    const activeWeapon = Number(state.activeWeapon);
+    if (![timestamp, x, y, z, yaw, pitch].every(Number.isFinite)) return;
+    if (!Number.isInteger(activeWeapon) || activeWeapon < 0 || activeWeapon >= WEAPON_KEYS.length) return;
+
+    record.position = { x, y, z };
+    record.yaw = yaw;
+    record.pitch = pitch;
+    record.activeWeapon = activeWeapon;
+    record.lastClientSeq = stateSeq;
+    record.lastClientTimestamp = timestamp;
+    this.__gonePvpHardeningState.lastClientStateSeq.set(peerId, stateSeq);
 
     const now = performance.now();
     if ((state.flags & CLIENT_STATE_EXT_FLAGS.HEALTH_PICKUP_REQUEST) !== 0 && record.hp < 100) {
@@ -523,13 +543,14 @@ export class P2PHost {
 
       const state = this.__gonePvpHardeningState;
       const cfg = getWeaponRuntimeById(weaponType);
-      const clientTime = Number(shot.clientTimestamp);
-      const effectiveTime = Number.isFinite(clientTime) ? clientTime : performance.now();
+      // Fire cadence is an authority decision and must use the host clock.
+      // clientTimestamp is intentionally retained only for bounded lag rewind.
+      const hostReceiptTime = performance.now();
       const previousTime = state.lastClientShotTime.get(shooterId);
       if (previousTime !== undefined) {
-        const elapsed = effectiveTime - previousTime;
+        const elapsed = hostReceiptTime - previousTime;
         const minimumCadenceMs = (1000 / Math.max(0.1, cfg.fireRateRps)) * 0.68;
-        if (elapsed < 0 || elapsed < minimumCadenceMs) {
+        if (elapsed < minimumCadenceMs) {
           this.rejectShot('cadence');
           return false;
         }
@@ -537,12 +558,15 @@ export class P2PHost {
 
       const seq = Number(shot.shotSeq) & 0xff;
       const previousSeq = state.lastShotSeq.get(shooterId);
-      if (previousSeq !== undefined && seq === previousSeq) {
-        this.rejectShot('cadence');
-        return false;
+      if (previousSeq !== undefined) {
+        const seqDiff = (seq - previousSeq) & 0xff;
+        if (seqDiff === 0 || seqDiff > 0x80) {
+          this.rejectShot('cadence');
+          return false;
+        }
       }
       state.lastShotSeq.set(shooterId, seq);
-      state.lastClientShotTime.set(shooterId, effectiveTime);
+      state.lastClientShotTime.set(shooterId, hostReceiptTime);
     }
 
     // The client sends the camera/crosshair origin. Horizontal coordinates are
@@ -988,6 +1012,7 @@ export class P2PHost {
     this.playerRecords.delete(peerId);
     this.__gonePvpHardeningState.lastClientShotTime.delete(peerId);
     this.__gonePvpHardeningState.lastShotSeq.delete(peerId);
+    this.__gonePvpHardeningState.lastClientStateSeq.delete(peerId);
 
     if (this.lagCompensator && peer.info.slot !== undefined) {
       this.lagCompensator.clear_player(peer.info.slot);
@@ -1027,5 +1052,6 @@ export class P2PHost {
     this.lastHealthPickupAt.clear();
     this.__gonePvpHardeningState.lastClientShotTime.clear();
     this.__gonePvpHardeningState.lastShotSeq.clear();
+    this.__gonePvpHardeningState.lastClientStateSeq.clear();
   }
 }
