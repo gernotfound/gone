@@ -1,5 +1,6 @@
 // tests/helpers/hitscan_model.mjs
-// Authoritative 3D ray-cylinder hitscan intersection mathematics for G.O.N.E.
+// Legacy cylinder compatibility model for deterministic geometry tests.
+// Live browser PvP uses the robot AABB hitbox in game-web/src/net/robotHitbox.ts.
 
 import { calculateDamage } from './weapon_model.mjs';
 
@@ -10,7 +11,7 @@ export const TARGET_CYLINDER = {
 };
 
 /**
- * Validates a 3D hitscan ray against a vertical cylinder representing a player hitbox.
+ * Validates a 3D hitscan ray against the historical vertical-cylinder compatibility hitbox.
  *
  * @param {string} weaponKey - Weapon key (e.g. 'assalto', 'cecchino')
  * @param {Array<number>} origin - [ox, oy, oz]
