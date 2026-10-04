@@ -49,30 +49,6 @@ jobs:
           if-no-files-found: warn
           retention-days: 3
 
-      - name: Generate Tailwind 4 package candidate
-        shell: bash
-        run: |
-          rm -rf /tmp/gone-tailwind4
-          mkdir -p /tmp/gone-tailwind4
-          cp game-web/package.json game-web/package-lock.json /tmp/gone-tailwind4/
-          npm install --prefix /tmp/gone-tailwind4 --save-dev tailwindcss@4.3.3 @tailwindcss/postcss@4.3.3
-          mkdir -p rescue-tailwind4
-          cp /tmp/gone-tailwind4/package.json /tmp/gone-tailwind4/package-lock.json rescue-tailwind4/
-
-      - name: Upload Tailwind 4 package candidate
-        uses: actions/upload-artifact@v4
-        with:
-          name: tailwind4-package-candidate
-          path: rescue-tailwind4/
-          if-no-files-found: error
-          retention-days: 3
-
-      - name: Emit Tailwind 4 package candidate
-        shell: bash
-        run: |
-          echo "TW4_PACKAGE_JSON_B64=$(base64 -w0 rescue-tailwind4/package.json)"
-          echo "TW4_PACKAGE_LOCK_B64=$(base64 -w0 rescue-tailwind4/package-lock.json)"
-
       - name: Install local host dependencies
         run: npm install --prefix gone-host --ignore-scripts
 
