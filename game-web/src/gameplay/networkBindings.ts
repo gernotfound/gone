@@ -6,9 +6,11 @@ import {
   STATE_FLAGS,
   type FireHitscanData,
   type HitConfirmedData,
+  type PlayerSnapshotEntry,
   type WorldSnapshotData,
 } from '../net/binaryProtocol.ts';
 import { CLIENT_STATE_EXT_FLAGS } from '../net/clientStateExtensions.ts';
+import { LOCAL_AUTHORITY_CORRECTION_DISTANCE_M } from '../net/movementAuthority.ts';
 import { setActiveP2PClient, setActiveP2PHost } from '../net/multiplayerSessionController.ts';
 import { inputState } from '../controls/playerInput.ts';
 import { healthHud } from '../ui/healthHud.ts';
@@ -20,6 +22,7 @@ import { getPlayerSpawnY } from './spawnPolicy.ts';
 
 type LocalPlayerNetworkState = {
   position: THREE.Vector3;
+  velocity?: THREE.Vector3;
   isGrounded: boolean;
   hp: number;
   maxHp: number;
@@ -39,8 +42,26 @@ export type GameplayNetworkContext = {
   localEyeHeight: number;
 };
 
+export function applyAuthoritativeLocalPosition(
+  player: LocalPlayerNetworkState,
+  state: Pick<PlayerSnapshotEntry, 'x' | 'y' | 'z'>,
+  force = false,
+): boolean {
+  if (![state.x, state.y, state.z].every(Number.isFinite)) return false;
+  const dx = state.x - player.position.x;
+  const dy = state.y - player.position.y;
+  const dz = state.z - player.position.z;
+  const correctionDistanceSq = LOCAL_AUTHORITY_CORRECTION_DISTANCE_M * LOCAL_AUTHORITY_CORRECTION_DISTANCE_M;
+  if (!force && dx * dx + dy * dy + dz * dz <= correctionDistanceSq) return false;
+
+  player.position.set(state.x, state.y, state.z);
+  player.velocity?.set(0, 0, 0);
+  return true;
+}
+
 export function bindClientGameplayNetworking(client: P2PClient, context: GameplayNetworkContext): void {
   const { player } = context;
+  let stateTickStarted = false;
   setActiveP2PClient(client);
 
   client.setStateProvider(() => ({
@@ -61,7 +82,6 @@ export function bindClientGameplayNetworking(client: P2PClient, context: Gamepla
         ? CLIENT_STATE_EXT_FLAGS.HEALTH_PICKUP_REQUEST
         : 0),
   }));
-  client.startStateTick(30);
 
   const previousSnapshot = client.config.onWorldSnapshot;
   client.config.onWorldSnapshot = (snapshot: WorldSnapshotData) => {
@@ -73,10 +93,18 @@ export function bindClientGameplayNetworking(client: P2PClient, context: Gamepla
       const isShielded = (state.flags & STATE_FLAGS.SHIELD_ACTIVE) !== 0;
 
       if (mySlot !== null && state.slot === mySlot) {
+        const respawnedByHost = isAlive && !player.isAlive;
         if (!isAlive && player.isAlive) {
           context.handleLocalPlayerDeath();
-        } else if (isAlive && !player.isAlive) {
+        } else if (respawnedByHost) {
           context.handleLocalPlayerRespawn();
+        }
+
+        if (isAlive) {
+          // Normal movement remains locally predicted. Host-owned respawns and
+          // large divergence after a rejected state converge to the authoritative
+          // coordinates instead of endlessly resending an invalid transform.
+          applyAuthoritativeLocalPosition(player, state, respawnedByHost || !stateTickStarted);
         }
 
         player.hp = state.hp;
@@ -96,6 +124,15 @@ export function bindClientGameplayNetworking(client: P2PClient, context: Gamepla
           if (shieldVfxController.hasShield(context.localShieldAnchor)) {
             shieldVfxController.detachShield(context.localShieldAnchor);
           }
+        }
+
+        if (!stateTickStarted) {
+          // Seed outbound movement from the first host snapshot for our slot.
+          // This prevents a pre-authority local spawn from being interpreted as
+          // an illegal teleport when CLIENT_STATE transmission begins.
+          stateTickStarted = true;
+          client.startStateTick(30);
+          client.sendCurrentState();
         }
         continue;
       }
