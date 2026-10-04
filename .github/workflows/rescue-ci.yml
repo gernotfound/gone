@@ -193,9 +193,11 @@ jobs:
         if: always()
         shell: bash
         run: |
+          echo "Web dependency audit outcome: ${{ steps.web_audit.outcome }}"
           echo "Legacy E2E outcome: ${{ steps.legacy_e2e.outcome }}"
           echo "Browser smoke outcome: ${{ steps.browser_smoke.outcome }}"
           echo "Rust outcome: ${{ steps.rust_core.outcome }}"
+          test "${{ steps.web_audit.outcome }}" = "success"
           test "${{ steps.legacy_e2e.outcome }}" = "success"
           test "${{ steps.browser_smoke.outcome }}" = "success"
           test "${{ steps.rust_core.outcome }}" = "success"
