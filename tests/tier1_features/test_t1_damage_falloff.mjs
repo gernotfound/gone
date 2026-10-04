@@ -1,75 +1,53 @@
 // tests/tier1_features/test_t1_damage_falloff.mjs
-// Tier 1 Feature Coverage: Piecewise Linear Damage Falloff Curves (F-10)
+// Tier 1 Feature Coverage: canonical piecewise damage falloff and hard ranges.
 
 import { assertEqual, assertCloseTo } from '../helpers/assertions.mjs';
-import { WEAPON_CONFIGS, calculateDamage } from '../helpers/weapon_model.mjs';
+import { calculateDamage } from '../helpers/weapon_model.mjs';
 
 export async function run(suite) {
-  // Assalto Falloff Curve (Start: 10m, End: 70m, Min: 12 HP)
-  suite.test('F-10: Assalto maintains full 18 HP damage before 10m', () => {
-    assertEqual(calculateDamage('assalto', 0.0), 18.0);
-    assertEqual(calculateDamage('assalto', 10.0), 18.0);
+  suite.test('F-10: Assalto uses 35m->140m falloff, 10 HP minimum, and 180m hard range', () => {
+    assertEqual(calculateDamage('assalto', 35.0), 18.0);
+    assertCloseTo(calculateDamage('assalto', 87.5), 14.0, 1e-6);
+    assertEqual(calculateDamage('assalto', 140.0), 10.0);
+    assertEqual(calculateDamage('assalto', 180.0), 10.0);
+    assertEqual(calculateDamage('assalto', 180.001), 0.0);
   });
 
-  suite.test('F-10: Assalto drops linearly between 10m and 70m (midpoint 40m = 15 HP)', () => {
-    const midDmg = calculateDamage('assalto', 40.0);
-    assertCloseTo(midDmg, 15.0, 1e-4, 'Expected 15 HP at 40m');
+  suite.test('F-10: Cecchino uses 180m->450m falloff, 50 HP minimum, and 550m hard range', () => {
+    assertEqual(calculateDamage('cecchino', 180.0), 70.0);
+    assertCloseTo(calculateDamage('cecchino', 315.0), 60.0, 1e-6);
+    assertEqual(calculateDamage('cecchino', 450.0), 50.0);
+    assertEqual(calculateDamage('cecchino', 550.0), 50.0);
+    assertEqual(calculateDamage('cecchino', 550.001), 0.0);
   });
 
-  suite.test('F-10: Assalto clamps to minimum 12 HP at and beyond 70m', () => {
-    assertEqual(calculateDamage('assalto', 70.0), 12.0);
-    assertEqual(calculateDamage('assalto', 100.0), 12.0);
+  suite.test('F-10: Pompa uses 8m->30m falloff, 20 HP minimum, and 42m hard range', () => {
+    assertEqual(calculateDamage('pompa', 8.0), 64.0);
+    assertEqual(calculateDamage('pompa', 20.0), 40.0);
+    assertEqual(calculateDamage('pompa', 30.0), 20.0);
+    assertEqual(calculateDamage('pompa', 42.0), 20.0);
+    assertEqual(calculateDamage('pompa', 42.001), 0.0);
   });
 
-  // Cecchino Falloff Curve (Start: 100m, End: 300m, Min: 55 HP)
-  suite.test('F-10: Cecchino maintains full 70 HP damage up to 100m', () => {
-    assertEqual(calculateDamage('cecchino', 50.0), 70.0);
-    assertEqual(calculateDamage('cecchino', 100.0), 70.0);
+  suite.test('F-10: Mitraglietta uses 15m->65m falloff, 7 HP minimum, and 90m hard range', () => {
+    assertEqual(calculateDamage('mitraglietta', 15.0), 12.0);
+    assertEqual(calculateDamage('mitraglietta', 20.0), 11.5);
+    assertEqual(calculateDamage('mitraglietta', 65.0), 7.0);
+    assertEqual(calculateDamage('mitraglietta', 90.0), 7.0);
+    assertEqual(calculateDamage('mitraglietta', 90.001), 0.0);
   });
 
-  suite.test('F-10: Cecchino drops linearly to 55 HP at 300m (midpoint 200m = 62.5 HP)', () => {
-    const midDmg = calculateDamage('cecchino', 200.0);
-    assertCloseTo(midDmg, 62.5, 1e-4, 'Expected 62.5 HP at 200m');
-    assertEqual(calculateDamage('cecchino', 300.0), 55.0);
-  });
-
-  // Pompa Falloff Curve (Start: 10m, End: 30m, Min: 41 HP)
-  suite.test('F-10: Pompa maintains full 64 HP blast up to 10m', () => {
-    assertEqual(calculateDamage('pompa', 5.0), 64.0);
-    assertEqual(calculateDamage('pompa', 10.0), 64.0);
-  });
-
-  suite.test('F-10: Pompa clamps to minimum 41 HP at and beyond 30m', () => {
-    assertEqual(calculateDamage('pompa', 30.0), 41.0);
-    assertEqual(calculateDamage('pompa', 40.0), 41.0);
-  });
-
-  // Mitraglietta Falloff Curve (Start: 10m, End: 40m, Min: 6 HP)
-  suite.test('F-10: Mitraglietta maintains full 12 HP damage up to 10m', () => {
-    assertEqual(calculateDamage('mitraglietta', 5.0), 12.0);
-    assertEqual(calculateDamage('mitraglietta', 10.0), 12.0);
-  });
-
-  suite.test('F-10: Mitraglietta clamps to minimum 6 HP beyond 40m', () => {
-    assertEqual(calculateDamage('mitraglietta', 40.0), 6.0);
-    assertEqual(calculateDamage('mitraglietta', 50.0), 6.0);
-  });
-
-  // Coltello Melee Falloff (0 beyond 2.5m)
-  suite.test('F-10: Coltello drops strictly to 0 HP damage beyond 2.5m', () => {
-    assertEqual(calculateDamage('coltello', 2.5), 50.0);
-    assertEqual(calculateDamage('coltello', 2.51), 0.0);
+  suite.test('F-10: Coltello is 999 damage through 2.6m and zero immediately beyond reach', () => {
+    assertEqual(calculateDamage('coltello', 2.6), 999.0);
+    assertEqual(calculateDamage('coltello', 2.601), 0.0);
     assertEqual(calculateDamage('coltello', 10.0), 0.0);
   });
 
-  // Headshot Multiplier Scaling with Falloff
-  suite.test('F-10: Headshot multipliers apply consistently at all falloff ranges', () => {
-    // Cecchino: 70 * 2.0 = 140 close; 55 * 2.0 = 110 at 300m
+  suite.test('F-10: Headshot multipliers apply to the current falloff damage', () => {
     assertEqual(calculateDamage('cecchino', 50.0, true), 140.0);
-    assertEqual(calculateDamage('cecchino', 300.0, true), 110.0);
-
-    // Assalto: 18 * 1.5 = 27 close; 12 * 1.5 = 18 at 70m
-    assertEqual(calculateDamage('assalto', 10.0, true), 27.0);
-    assertEqual(calculateDamage('assalto', 70.0, true), 18.0);
+    assertEqual(calculateDamage('cecchino', 450.0, true), 100.0);
+    assertEqual(calculateDamage('assalto', 35.0, true), 27.0);
+    assertEqual(calculateDamage('assalto', 140.0, true), 15.0);
+    assertEqual(calculateDamage('pompa', 5.0, true), 80.0);
   });
 }

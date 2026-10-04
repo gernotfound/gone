@@ -22,7 +22,7 @@ export async function run(suite) {
 
     // Shooter fires Assalto
     const spread = calculateSpreadAngle('assalto', 0, 'stand');
-    assertEqual(spread, 0.012);
+    assertEqual(spread, 0.0035);
 
     const hitResult = validateHitscanRay('assalto', [0, 1.0, 0], [0, 0, 1], targetPos);
     assertEqual(hitResult.hit, true);

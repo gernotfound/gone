@@ -32,6 +32,23 @@ jobs:
       - name: Install web dependencies
         run: npm ci --prefix game-web
 
+      - name: Audit web dependencies
+        id: web_audit
+        continue-on-error: true
+        shell: bash
+        run: |
+          npm audit --prefix game-web --json > rescue-web-audit.json || true
+          npm audit --prefix game-web --audit-level=high
+
+      - name: Upload web dependency audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rescue-web-audit
+          path: rescue-web-audit.json
+          if-no-files-found: warn
+          retention-days: 3
+
       - name: Install local host dependencies
         run: npm install --prefix gone-host --ignore-scripts
 
@@ -176,9 +193,12 @@ jobs:
         if: always()
         shell: bash
         run: |
+          echo "Web dependency audit outcome: ${{ steps.web_audit.outcome }}"
           echo "Legacy E2E outcome: ${{ steps.legacy_e2e.outcome }}"
           echo "Browser smoke outcome: ${{ steps.browser_smoke.outcome }}"
           echo "Rust outcome: ${{ steps.rust_core.outcome }}"
+          test "${{ steps.web_audit.outcome }}" = "success"
           test "${{ steps.legacy_e2e.outcome }}" = "success"
           test "${{ steps.browser_smoke.outcome }}" = "success"
           test "${{ steps.rust_core.outcome }}" = "success"
+

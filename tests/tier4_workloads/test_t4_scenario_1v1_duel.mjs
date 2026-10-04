@@ -104,8 +104,8 @@ export async function run(suite) {
     assertGreaterThan(winner.hp, 0.0, 'Winner must survive');
 
     // At 20m: Assalto deals 18 HP -> 6 shots * 0.160s = 0.800s TTK
-    // SMG deals 10 HP (falloff) -> 10 shots * 0.100s = 0.900s TTK
-    // Assalto wins the medium-range duel at ~0.80s!
+    // SMG deals about 11.55 HP at the cylinder front -> 9 hits, theoretical TTK 0.800s.
+    // With this discrete loop, Assalto resolves its sixth hit one tick before the SMG's ninth.
     assertEqual(winner.name, 'ViperGunner', 'Assalto wins duel at medium range due to superior falloff retention');
     assertEqual(winner.shotsFired, 6, 'Assalto required exactly 6 shots');
     assertCloseTo(simTime, 0.800, 0.05, 'Duel duration matches theoretical TTK of 0.800s within tick tolerance');

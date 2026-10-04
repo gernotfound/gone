@@ -45,15 +45,15 @@ export async function run(suite) {
 
     // 4. Movement Stances & Spread Dynamics
     const standSpread = calculateSpreadAngle(equippedWeapon, 0, 'stand');
-    assertEqual(standSpread, 0.012);
+    assertEqual(standSpread, 0.0035);
 
     // Player starts sprinting
     const sprintSpread = calculateSpreadAngle(equippedWeapon, 0, 'sprint');
-    assertCloseTo(sprintSpread, 0.024, 1e-4, 'Sprinting doubles base spread');
+    assertCloseTo(sprintSpread, 0.007, 1e-6, 'Sprinting doubles base spread');
 
     // Player stops and crouches to aim
     const crouchSpread = calculateSpreadAngle(equippedWeapon, 0, 'crouch');
-    assertCloseTo(crouchSpread, 0.009, 1e-4, 'Crouching reduces base spread by 0.75x');
+    assertCloseTo(crouchSpread, 0.002625, 1e-6, 'Crouching reduces base spread by 0.75x');
 
     // 5. Combat Engagement: Target at 20m
     const targetDummyPos = [0, 0, 20.0];

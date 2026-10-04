@@ -84,21 +84,21 @@ export async function run(suite) {
     const res = validateHitscanRay('cecchino', [0, 1.0, 0], [0, 0, 1], farTarget);
     assertEqual(res.hit, true);
     assertCloseTo(res.distance, 499.55, 0.1, 'Distance to cylinder front');
-    assertEqual(res.damage, 55.0, 'Min damage at 500m');
+    assertEqual(res.damage, 50.0, 'Current sniper min damage at 500m');
   });
 
   // Knife Ray Hitscan Reach Boundary
-  suite.test('T2-Hitscan: Coltello ray hitting target at 2.0m deals full 50.0 HP melee damage', () => {
+  suite.test('T2-Hitscan: Coltello ray hitting target at 2.0m deals full 999 HP melee damage', () => {
     const closeTarget = [0, 0, 2.0];
     const res = validateHitscanRay('coltello', [0, 1.0, 0], [0, 0, 1], closeTarget);
     assertEqual(res.hit, true);
-    assertEqual(res.damage, 50.0);
+    assertEqual(res.damage, 999.0);
   });
 
   suite.test('T2-Hitscan: Coltello ray intersecting cylinder geometry at 10.0m deals 0.0 damage (out of reach)', () => {
     const farTarget = [0, 0, 10.0];
     const res = validateHitscanRay('coltello', [0, 1.0, 0], [0, 0, 1], farTarget);
     assertEqual(res.hit, true, 'Geometry intersects ray');
-    assertEqual(res.damage, 0.0, 'Melee damage drops to 0 beyond 2.5m');
+    assertEqual(res.damage, 0.0, 'Melee damage drops to 0 beyond 2.6m');
   });
 }
