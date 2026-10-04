@@ -36,7 +36,18 @@ jobs:
         id: web_audit
         continue-on-error: true
         shell: bash
-        run: npm audit --prefix game-web --audit-level=high
+        run: |
+          npm audit --prefix game-web --json > rescue-web-audit.json || true
+          npm audit --prefix game-web --audit-level=high
+
+      - name: Upload web dependency audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rescue-web-audit
+          path: rescue-web-audit.json
+          if-no-files-found: warn
+          retention-days: 3
 
       - name: Install local host dependencies
         run: npm install --prefix gone-host --ignore-scripts
