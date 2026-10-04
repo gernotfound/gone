@@ -119,6 +119,16 @@ Touch sustained FIRE must route to `advancedWeaponController`; it must not leave
 
 The browser host remains authoritative for PvP. Visual rays/tracers never own damage.
 
+#### Movement authority
+
+Guest movement is **client-predicted but host-validated**. `P2PClient` still sends 30 Hz `CLIENT_STATE` transforms so local controls keep their current responsiveness, but only the transform accepted by `P2PHost` is authoritative for world snapshots, combat origins, health-pickup proximity and lag-compensation history.
+
+`net/movementAuthority.ts` derives its envelope from the canonical Rust physics contract: 12 m/s base speed, sprint ×2, movement-scale maximum 1.25 (30 m/s horizontal ceiling), 25 m/s jump impulse and 54 m/s terminal fall speed. Movement credit is replenished from the **host monotonic receipt clock**, never from the client timestamp. Two 30 Hz ticks of jitter credit absorb scheduling variance; cumulative credit is capped at the existing 1000 ms stale/rewind horizon. A separate single-packet ceiling covers eight missing ordered states plus jitter, so idle time or a long stall cannot be spent as one large teleport.
+
+The host rejects duplicate/backward sequence numbers, non-increasing client timestamps, NaN/Infinity, invalid pitch/weapon state, impossible horizontal speed, arbitrary teleports and plainly impossible vertical deltas without advancing the accepted transform or lag history. Host-owned spawn/respawn transitions replace the authoritative position and reset movement validation credit explicitly; there is no reusable client teleport exemption.
+
+`gameplay/networkBindings.ts` reconciles the local predicted player to host coordinates on the first authoritative self snapshot, on host-owned respawn, or after large divergence. Normal sub-threshold prediction remains untouched. CLIENT_STATE ticking starts only after the first self snapshot reaches gameplay, preventing a pre-authority local spawn from being interpreted as movement. Manual/debug local teleports remain presentation-only: multiplayer authority will reject them unless the host itself performed the transition.
+
 Direct WebRTC (`directWebRtc.ts`) uses `iceServers: []` by project policy. `NativeRtcDataChannel` owns heartbeat/transport resilience: ~3 s heartbeat, ~15 s expiry, ~6 s grace for transient `disconnected`, deterministic terminal teardown.
 
 `selfHostSession.ts` owns only local relay transport/status presentation. It **reuses `multiplayerSessionController`** for host registration and guest client/session callbacks; it must not create a parallel `P2PClient` lifecycle or roster implementation.
