@@ -33,28 +33,51 @@ export async function run(suite) {
     }
   });
 
-  suite.test('Movement credit cannot bank beyond the one-second network horizon', () => {
+  suite.test('Long stalls cannot convert accumulated credit into one large teleport', () => {
     const authority = createMovementAuthorityState(1000);
 
-    const boundary = validateClientMovement(
+    const withinSinglePacketCeiling = validateClientMovement(
       ORIGIN,
-      { x: 32, y: 17.5, z: 0 },
+      { x: 10, y: 17.5, z: 0 },
       authority,
       6000,
     );
-    assert(boundary.ok, 'One-second capped horizontal credit should allow the 32 m boundary');
+    assert(withinSinglePacketCeiling.ok, 'Eight missing 30 Hz states plus jitter should permit the 10 m edge');
 
     const bankedTeleport = validateClientMovement(
       ORIGIN,
-      { x: 100, y: 17.5, z: 0 },
+      { x: 10.01, y: 17.5, z: 0 },
       authority,
       6000,
     );
     assertEqual(bankedTeleport.ok, false);
     if (!bankedTeleport.ok) {
       assertEqual(bankedTeleport.reason, 'teleport');
-      assert(Math.abs(bankedTeleport.horizontalBudgetM - 32) < 1e-6, 'Long stalls must still cap horizontal credit at 32 m');
+      assert(Math.abs(bankedTeleport.horizontalBudgetM - 10) < 1e-6, 'Single-packet horizontal ceiling should remain 10 m');
     }
+  });
+
+  suite.test('One-second cumulative credit caps queued burst displacement', () => {
+    let authority = createMovementAuthorityState(1000);
+    let previous = ORIGIN;
+
+    for (let index = 1; index <= 3; index += 1) {
+      const next = { x: index * 9, y: 17.5, z: 0 };
+      const accepted = validateClientMovement(previous, next, authority, 6000);
+      assert(accepted.ok, `Queued 9 m burst ${index} should fit cumulative credit`);
+      if (!accepted.ok) return;
+      authority = accepted.next;
+      previous = next;
+    }
+
+    const exhausted = validateClientMovement(
+      previous,
+      { x: 36, y: 17.5, z: 0 },
+      authority,
+      6000,
+    );
+    assertEqual(exhausted.ok, false, 'Fourth 9 m burst at the same host time must exceed one-second cumulative credit');
+    if (!exhausted.ok) assertEqual(exhausted.reason, 'horizontal-speed');
   });
 
   suite.test('Accepted packets consume burst credit instead of resetting a full per-packet allowance', () => {
