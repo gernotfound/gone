@@ -11,7 +11,7 @@
   - Other peers are Clients, connected via WebRTC Data Channels.
 - **Network Data Flow**:
   - Clients send binary CLIENT_STATE (30Hz) and FIRE_HITSCAN (event-driven) to Host over WebRTC DataChannel using ArrayBuffer.
-  - Host runs tick loop, stores target positions in Rust LagCompensationEngine, validates hitscan shots using shooter client timestamp, updates authoritative player records (HP, shield, death timers), and broadcasts binary WORLD_SNAPSHOT and HIT_CONFIRMED.
+  - Host runs the authoritative combat tick, stores target positions for lag compensation, measures fire cadence on its own receipt clock, uses the client timestamp only for bounded rewind, updates authoritative player records (HP, shield, death timers), and broadcasts binary WORLD_SNAPSHOT and HIT_CONFIRMED.
   - Clients receive snapshots, feed into interpolation buffer, and smoothly interpolate remote player positions and rotations.
 - **Combat & Lifecycle Flow**:
   - Base HP: 100.
@@ -62,16 +62,16 @@
 
 ### Binary Protocol Contract (game-web/src/net/binaryProtocol.ts)
 - PacketType:
-  - 0x01: CLIENT_STATE (32 bytes) -> [type: u8, slot: u8, seq: u16, timestamp: f32, x: f32, y: f32, z: f32, yaw: f32, pitch: f32, flags: u8]
-  - 0x02: WORLD_SNAPSHOT (8 + 28*N bytes) -> [type: u8, count: u8, seq: u16, hostTimestamp: f32] + N * [slot: u8, x: f32, y: f32, z: f32, yaw: f32, hp: u8, flags: u8]
+  - 0x01: CLIENT_STATE (32 bytes) -> [type: u8, slot: u8, seq: u16, timestamp: f32, x: f32, y: f32, z: f32, yaw: f32, pitch: f32, flags: u8, activeWeapon: u8, reserved: u16]
+  - 0x02: WORLD_SNAPSHOT (8 + 28*N bytes) -> [type: u8, count: u8, seq: u16, hostTimestamp: f32] + N * [slot: u8, hp: u8, flags: u8, activeWeapon: u8, x: f32, y: f32, z: f32, yaw: f32, pitch: f32, timerRemainingMs: f32]
   - 0x03: FIRE_HITSCAN (32 bytes) -> [type: u8, shooterSlot: u8, weaponType: u8, shotSeq: u8, clientTimestamp: f32, originX: f32, originY: f32, originZ: f32, dirX: f32, dirY: f32, dirZ: f32]
-  - 0x04: HIT_CONFIRMED (16 bytes) -> [type: u8, victimSlot: u8, shooterSlot: u8, flags: u8, damage: u8, newHp: u8, hitX: f32, hitY: f32, hitZ: f32]
+  - 0x04: HIT_CONFIRMED (16 bytes canonical encoder) -> [type: u8, victimSlot: u8, shooterSlot: u8, flags: u8, damage: u8, newHp: u8, padding: u16, hitXdm: i16, hitYdm: i16, hitZdm: i16, reserved: u16]. Coordinates use 0.1m fixed-point; decoder compatibility also accepts the legacy 20-byte float layout.
 
 ### Rust Lag Compensation Contract (game-core/src/lag_compensation.rs)
 - WasmLagCompensator:
   - new(max_history_ms: f64) -> WasmLagCompensator
   - record_player_position(player_id: u32, timestamp_ms: f64, x: f64, y: f64, z: f64, radius: f64, height: f64)
-  - validate_rewind_hitscan(shooter_id: u32, victim_id: u32, shot_time_ms: f64, max_unlag_ms: f64, origin_x: f64, origin_y: f64, origin_z: f64, dir_x: f64, dir_y: f64, dir_z: f64, max_range: f64) -> String (JSON HitscanResult)
+  - validate_rewind_hitscan(shooter_id: u32, victim_id: u32, weapon_type: u32, shot_time_ms: f64, max_unlag_ms: f64, origin_x: f64, origin_y: f64, origin_z: f64, dir_x: f64, dir_y: f64, dir_z: f64, max_range: f64) -> String (JSON HitscanResult)
   - clear_player(player_id: u32)
 
 ### Combat & Health State Contract (game-web/src/net/p2pHost.ts)
@@ -84,6 +84,11 @@
   - shieldExpiresAt: number
   - position: { x: number, y: number, z: number }
   - yaw: number
+  - pitch: number
+  - activeWeapon: number
+  - stateFlags: number
+  - lastClientSeq: number
+  - lastClientTimestamp: number
 
 ## Combat & TTK Balance
 - Assalto (Assault Rifle): 18 base damage, 1.5x headshot, 6.25 rps, 180m hard range.
