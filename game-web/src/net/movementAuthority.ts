@@ -13,8 +13,11 @@
  * - player height 2.0 m + float height 0.5 m
  *
  * Credit is replenished using the host monotonic clock, never the client
- * timestamp. A one-second credit cap matches the existing 1000 ms stale/rewind
- * horizon and prevents an idle client from banking unbounded teleport distance.
+ * timestamp. A one-second cumulative cap matches the existing 1000 ms
+ * stale/rewind horizon. A separate per-packet ceiling covers eight missing
+ * 30 Hz states plus jitter; because WebRTC DataChannels are reliable/ordered,
+ * longer network stalls deliver queued intermediate states instead of granting
+ * one giant displacement. This prevents idle time from becoming teleport credit.
  */
 
 export type AuthorityPosition = { x: number; y: number; z: number };
@@ -28,7 +31,8 @@ export const MOVEMENT_AUTHORITY = {
   terminalFallSpeedMps: 54,
   clientStateHz: 30,
   maxNetworkCreditMs: 1000,
-  teleportDistanceM: 10,
+  maxSinglePacketGapTicks: 8,
+  maxSimulationDeltaMs: 100,
   terrainSnapSlackM: 2.0 + 0.5,
 } as const;
 
@@ -49,8 +53,24 @@ const UPWARD_PACKET_SLACK_M =
 const DOWNWARD_PACKET_SLACK_M =
   MOVEMENT_AUTHORITY.terrainSnapSlackM
   + MAX_DOWNWARD_SPEED_MPS * (PACKET_JITTER_TICKS / MOVEMENT_AUTHORITY.clientStateHz);
+const SINGLE_PACKET_WINDOW_S =
+  MOVEMENT_AUTHORITY.maxSinglePacketGapTicks / MOVEMENT_AUTHORITY.clientStateHz;
+const HORIZONTAL_SINGLE_PACKET_LIMIT_M =
+  HORIZONTAL_PACKET_SLACK_M + MOVEMENT_AUTHORITY.maxHorizontalSpeedMps * SINGLE_PACKET_WINDOW_S;
+const UPWARD_SINGLE_PACKET_LIMIT_M =
+  UPWARD_PACKET_SLACK_M + MAX_UPWARD_SPEED_MPS * SINGLE_PACKET_WINDOW_S;
+const DOWNWARD_SINGLE_PACKET_LIMIT_M =
+  DOWNWARD_PACKET_SLACK_M + MAX_DOWNWARD_SPEED_MPS * SINGLE_PACKET_WINDOW_S;
 
-export const LOCAL_AUTHORITY_CORRECTION_DISTANCE_M = MOVEMENT_AUTHORITY.teleportDistanceM;
+/**
+ * Prediction correction is intentionally lower than the hard teleport ceiling:
+ * two network-jitter ticks plus one maximum 100 ms simulation step (engine.ts
+ * clamps frame delta to 0.1 s). Normal prediction can lead authority by this
+ * much without continuous snapping; larger drift converges to the host.
+ */
+export const LOCAL_AUTHORITY_CORRECTION_DISTANCE_M =
+  HORIZONTAL_PACKET_SLACK_M
+  + MOVEMENT_AUTHORITY.maxHorizontalSpeedMps * (MOVEMENT_AUTHORITY.maxSimulationDeltaMs / 1000);
 
 export type MovementAuthorityState = {
   lastAcceptedHostTime: number;
@@ -123,37 +143,42 @@ export function validateClientMovement(
   const dz = next.z - previous.z;
   const horizontalDistanceM = Math.hypot(dx, dz);
   const verticalDeltaM = next.y - previous.y;
+  const effectiveHorizontalBudgetM = Math.min(horizontalBudgetM, HORIZONTAL_SINGLE_PACKET_LIMIT_M);
+  const effectiveUpwardBudgetM = Math.min(upwardBudgetM, UPWARD_SINGLE_PACKET_LIMIT_M);
+  const effectiveDownwardBudgetM = Math.min(downwardBudgetM, DOWNWARD_SINGLE_PACKET_LIMIT_M);
 
-  if (horizontalDistanceM > horizontalBudgetM + 1e-6) {
+  if (horizontalDistanceM > effectiveHorizontalBudgetM + 1e-6) {
     return {
       ok: false,
-      reason: horizontalDistanceM >= MOVEMENT_AUTHORITY.teleportDistanceM ? 'teleport' : 'horizontal-speed',
+      reason: horizontalDistanceM > HORIZONTAL_SINGLE_PACKET_LIMIT_M + 1e-6
+        ? 'teleport'
+        : 'horizontal-speed',
       horizontalDistanceM,
       verticalDeltaM,
-      horizontalBudgetM,
-      verticalBudgetM: verticalDeltaM >= 0 ? upwardBudgetM : downwardBudgetM,
+      horizontalBudgetM: effectiveHorizontalBudgetM,
+      verticalBudgetM: verticalDeltaM >= 0 ? effectiveUpwardBudgetM : effectiveDownwardBudgetM,
     };
   }
 
-  if (verticalDeltaM > upwardBudgetM + 1e-6) {
+  if (verticalDeltaM > effectiveUpwardBudgetM + 1e-6) {
     return {
       ok: false,
       reason: 'vertical-up',
       horizontalDistanceM,
       verticalDeltaM,
-      horizontalBudgetM,
-      verticalBudgetM: upwardBudgetM,
+      horizontalBudgetM: effectiveHorizontalBudgetM,
+      verticalBudgetM: effectiveUpwardBudgetM,
     };
   }
 
-  if (-verticalDeltaM > downwardBudgetM + 1e-6) {
+  if (-verticalDeltaM > effectiveDownwardBudgetM + 1e-6) {
     return {
       ok: false,
       reason: 'vertical-down',
       horizontalDistanceM,
       verticalDeltaM,
-      horizontalBudgetM,
-      verticalBudgetM: downwardBudgetM,
+      horizontalBudgetM: effectiveHorizontalBudgetM,
+      verticalBudgetM: effectiveDownwardBudgetM,
     };
   }
 
