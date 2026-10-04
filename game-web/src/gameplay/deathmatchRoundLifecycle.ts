@@ -25,8 +25,9 @@ function resetAmmoInventory(): void {
 
 function resetLocalPlayerForRound(): void {
   const game = api();
+  // Reset local lifecycle immediately; the host-selected world snapshot owns
+  // the physical respawn coordinate and will reconcile the player position.
   game?.handleLocalPlayerRespawn?.();
-  (window as any).goneSpawnPolicy?.respawnNow?.();
   resetAmmoInventory();
   if (game?.keys) game.keys.fire = false;
   localRoundResets += 1;
@@ -66,8 +67,8 @@ function wrapLocalFire(): void {
 /**
  * Keeps the visible round countdown and the actual combat lifecycle aligned.
  * Once a winner is declared local fire is blocked immediately. When the host
- * advances the round, the local player is fully respawned, moved to its slot
- * spawn and receives a fresh weapon inventory.
+ * advances the round, the local lifecycle resets and the following authoritative
+ * world snapshot supplies the exact host-selected position and fresh weapon inventory.
  */
 export function startDeathmatchRoundLifecycle(): void {
   if ((window as any).__goneDeathmatchRoundLifecycleStarted) return;
