@@ -32,6 +32,14 @@ import { CLIENT_STATE_EXT_FLAGS, HEALTH_PICKUP_AUTHORITY } from './clientStateEx
 import type { WasmLagCompensator } from '../../pkg/game_core.js';
 import { calculateWeaponDamageAtDistance, getWeaponRuntimeById, WEAPON_KEYS } from '../weapons/weaponConfig.ts';
 import { intersectRobotHitbox } from './robotHitbox.ts';
+import {
+  createMovementAuthorityState,
+  isValidPitch,
+  normalizeYaw,
+  validateClientMovement,
+  type MovementAuthorityState,
+  type MovementRejectionReason,
+} from './movementAuthority.ts';
 
 export interface IWasmLagCompensator {
   record_player_position(
@@ -276,6 +284,14 @@ export interface CombatValidationStats {
   rejectedCadence: number;
   rejectedWeapon: number;
   rejectedDirection: number;
+  acceptedClientStates: number;
+  rejectedClientStates: number;
+  rejectedMalformedState: number;
+  rejectedStaleTimestamp: number;
+  rejectedMovement: number;
+  rejectedTeleport: number;
+  rejectedHorizontalSpeed: number;
+  rejectedVerticalMovement: number;
 }
 
 function createCombatValidationStats(): CombatValidationStats {
@@ -288,6 +304,14 @@ function createCombatValidationStats(): CombatValidationStats {
     rejectedCadence: 0,
     rejectedWeapon: 0,
     rejectedDirection: 0,
+    acceptedClientStates: 0,
+    rejectedClientStates: 0,
+    rejectedMalformedState: 0,
+    rejectedStaleTimestamp: 0,
+    rejectedMovement: 0,
+    rejectedTeleport: 0,
+    rejectedHorizontalSpeed: 0,
+    rejectedVerticalMovement: 0,
   };
 }
 
@@ -309,6 +333,7 @@ export class P2PHost {
   private respawnPositionResolver: RespawnPositionResolver | null = null;
   private authoritativeRespawnCount = 0;
   private readonly lastHealthPickupAt = new Map<string, number>();
+  private readonly movementAuthority = new Map<string, MovementAuthorityState>();
   public readonly __gonePvpHardeningState: CombatValidationStats = createCombatValidationStats();
 
   constructor(options: P2PHostOptions) {
@@ -359,6 +384,24 @@ export class P2PHost {
     return this.authoritativeRespawnCount;
   }
 
+  private resetMovementAuthority(playerId: string, now: number): void {
+    if (playerId === this.hostPlayer.id) return;
+    this.movementAuthority.set(playerId, createMovementAuthorityState(now));
+  }
+
+  private rejectClientState(reason?: MovementRejectionReason): void {
+    const stats = this.__gonePvpHardeningState;
+    stats.rejectedClientStates += 1;
+    if (!reason) {
+      stats.rejectedMalformedState += 1;
+      return;
+    }
+    stats.rejectedMovement += 1;
+    if (reason === 'teleport') stats.rejectedTeleport += 1;
+    else if (reason === 'horizontal-speed') stats.rejectedHorizontalSpeed += 1;
+    else stats.rejectedVerticalMovement += 1;
+  }
+
   private resolveRespawnPosition(slot: number): { x: number; y: number; z: number } {
     const resolved = this.respawnPositionResolver?.(slot);
     if (resolved && [resolved.x, resolved.y, resolved.z].every(Number.isFinite)) {
@@ -382,6 +425,7 @@ export class P2PHost {
       this.playerIdToSlot.delete(playerId);
     }
     this.lastHealthPickupAt.delete(playerId);
+    this.movementAuthority.delete(playerId);
     return slot;
   }
 
@@ -444,7 +488,10 @@ export class P2PHost {
       const seqDiff = (stateSeq - previousStateSeq) & 0xffff;
       // Ordered DataChannels must only advance. Reject duplicates and values
       // from the stale half of the modulo-16-bit sequence space.
-      if (seqDiff === 0 || seqDiff > 0x8000) return;
+      if (seqDiff === 0 || seqDiff > 0x8000) {
+        this.rejectClientState();
+        return;
+      }
     }
 
     const timestamp = Number(state.timestamp);
@@ -454,22 +501,46 @@ export class P2PHost {
     const yaw = Number(state.yaw);
     const pitch = Number(state.pitch);
     const activeWeapon = Number(state.activeWeapon);
-    if (![timestamp, x, y, z, yaw, pitch].every(Number.isFinite)) return;
-    if (!Number.isInteger(activeWeapon) || activeWeapon < 0 || activeWeapon >= WEAPON_KEYS.length) return;
+    if (![timestamp, x, y, z, yaw, pitch].every(Number.isFinite)) {
+      this.rejectClientState();
+      return;
+    }
+    if (!Number.isInteger(activeWeapon) || activeWeapon < 0 || activeWeapon >= WEAPON_KEYS.length) {
+      this.rejectClientState();
+      return;
+    }
+    if (!isValidPitch(pitch)) {
+      this.rejectClientState();
+      return;
+    }
+    if (previousStateSeq !== undefined && timestamp <= record.lastClientTimestamp) {
+      this.__gonePvpHardeningState.rejectedClientStates += 1;
+      this.__gonePvpHardeningState.rejectedStaleTimestamp += 1;
+      return;
+    }
+
+    const now = performance.now();
+    const authority = this.movementAuthority.get(peerId) ?? createMovementAuthorityState(now);
+    const movement = validateClientMovement(record.position, { x, y, z }, authority, now);
+    if (!movement.ok) {
+      this.rejectClientState(movement.reason);
+      return;
+    }
 
     record.position = { x, y, z };
-    record.yaw = yaw;
+    record.yaw = normalizeYaw(yaw);
     record.pitch = pitch;
     record.activeWeapon = activeWeapon;
     record.lastClientSeq = stateSeq;
     record.lastClientTimestamp = timestamp;
+    this.movementAuthority.set(peerId, movement.next);
     this.__gonePvpHardeningState.lastClientStateSeq.set(peerId, stateSeq);
+    this.__gonePvpHardeningState.acceptedClientStates += 1;
 
-    const now = performance.now();
     if ((state.flags & CLIENT_STATE_EXT_FLAGS.HEALTH_PICKUP_REQUEST) !== 0 && record.hp < 100) {
       const craterDistance = Math.hypot(
-        state.x - HEALTH_PICKUP_AUTHORITY.centerX,
-        state.z - HEALTH_PICKUP_AUTHORITY.centerZ,
+        record.position.x - HEALTH_PICKUP_AUTHORITY.centerX,
+        record.position.z - HEALTH_PICKUP_AUTHORITY.centerZ,
       );
       const previousPickupAt = this.lastHealthPickupAt.get(peerId) ?? -Infinity;
       if (
@@ -482,7 +553,15 @@ export class P2PHost {
     }
 
     if (this.lagCompensator) {
-      this.lagCompensator.record_player_position(record.slot, now, state.x, state.y, state.z, 0.45, 2.0);
+      this.lagCompensator.record_player_position(
+        record.slot,
+        now,
+        record.position.x,
+        record.position.y,
+        record.position.z,
+        0.45,
+        2.0,
+      );
     }
   }
 
@@ -809,6 +888,7 @@ export class P2PHost {
     record.shieldExpiresAt = now + 10000;
     record.stateFlags = STATE_FLAGS.ALIVE | STATE_FLAGS.SHIELD_ACTIVE;
     this.lagCompensator?.clear_player(record.slot);
+    this.resetMovementAuthority(record.id, now);
     this.authoritativeRespawnCount += 1;
     this.options.onPlayerRespawned?.(record.id);
     return true;
@@ -870,6 +950,7 @@ export class P2PHost {
         record.position = this.resolveRespawnPosition(record.slot);
         record.shieldExpiresAt = now + 10000;
         this.lagCompensator?.clear_player(record.slot);
+        this.resetMovementAuthority(record.id, now);
         this.authoritativeRespawnCount += 1;
         this.options.onPlayerRespawned?.(record.id);
       }
@@ -954,6 +1035,7 @@ export class P2PHost {
     this.peers.set(playerId, { channel, info: newPlayerInfo });
 
     const now = performance.now();
+    const initialPosition = this.resolveRespawnPosition(assignedSlot);
     this.playerRecords.set(playerId, {
       id: playerId,
       slot: assignedSlot,
@@ -963,7 +1045,7 @@ export class P2PHost {
       isAlive: true,
       deathTime: 0,
       shieldExpiresAt: now + 10000,
-      position: { x: 0, y: 17.5, z: 0 },
+      position: initialPosition,
       yaw: 0,
       pitch: 0,
       activeWeapon: 0,
@@ -971,6 +1053,7 @@ export class P2PHost {
       lastClientSeq: 0,
       lastClientTimestamp: 0,
     });
+    this.resetMovementAuthority(playerId, now);
 
     const sessionPlayers = this.getAllSessionPlayers();
     channel.send(encodeLobbyJoinAccepted(playerId, assignedColor, assignedSlot, sessionPlayers));
@@ -1013,6 +1096,7 @@ export class P2PHost {
     this.__gonePvpHardeningState.lastClientShotTime.delete(peerId);
     this.__gonePvpHardeningState.lastShotSeq.delete(peerId);
     this.__gonePvpHardeningState.lastClientStateSeq.delete(peerId);
+    this.movementAuthority.delete(peerId);
 
     if (this.lagCompensator && peer.info.slot !== undefined) {
       this.lagCompensator.clear_player(peer.info.slot);
@@ -1050,6 +1134,7 @@ export class P2PHost {
     this.slotToPlayerId.clear();
     this.playerIdToSlot.clear();
     this.lastHealthPickupAt.clear();
+    this.movementAuthority.clear();
     this.__gonePvpHardeningState.lastClientShotTime.clear();
     this.__gonePvpHardeningState.lastShotSeq.clear();
     this.__gonePvpHardeningState.lastClientStateSeq.clear();
