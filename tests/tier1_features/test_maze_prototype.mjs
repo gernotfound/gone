@@ -31,6 +31,7 @@ export async function run(suite) {
     const engine = source('game-web', 'src', 'gameplay', 'engine.ts');
     const host = source('game-web', 'src', 'net', 'p2pHost.ts');
     const supply = source('game-web', 'src', 'gameplay', 'craterSupplyPickups.ts');
+    const spiders = source('game-web', 'src', 'gameplay', 'bionicSpiderEnemies.ts');
     const runtime = source('game-web', 'src', 'runtime', 'startClientRuntime.ts');
 
     assert(visual.includes('THREE.InstancedMesh'), 'maze walls must render in a bounded instanced draw');
@@ -39,6 +40,8 @@ export async function run(suite) {
     assert(host.includes("this.rejectClientState('world-collision')"), 'host must reject guest movement through maze walls');
     assert(host.includes('nearestMazeRayHitDistance'), 'host hitscan must be occluded by maze walls');
     assert(supply.includes('isMazePositionBlocked'), 'supply placement must avoid inaccessible wall overlap');
+    assert(spiders.includes('resolveMazeMovement'), 'solo spider movement must respect maze walls');
+    assert(spiders.includes('isMazePositionBlocked'), 'solo spider spawning must avoid maze walls');
 
     const mazeStart = runtime.indexOf("name: 'mazePrototype'");
     const supplyStart = runtime.indexOf("name: 'centralSupplyPickups'");
