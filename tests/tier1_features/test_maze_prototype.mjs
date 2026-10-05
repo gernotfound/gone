@@ -1,18 +1,22 @@
 import fs from 'fs';
 import path from 'path';
 import {
+  MAZE_CENTRAL_BOUNDARY_HALF_EXTENT,
   MAZE_CENTRAL_CLEARING_RADIUS,
   MAZE_CENTRAL_GATE_WIDTH,
+  MAZE_CORRIDOR_CELL_SIZE,
   MAZE_DOUBLE_WALL_GAP,
+  MAZE_GRID_CELLS,
   MAZE_LANDMARK_CLEARINGS,
+  MAZE_LOGICAL_WALL_COUNT,
   MAZE_PLAYER_RADIUS,
   MAZE_TARGET_MAP_AREA_FRACTION,
+  MAZE_TOPOLOGY_STATS,
   MAZE_WALL_BOTTOM_Y,
   MAZE_WALL_THICKNESS,
   MAZE_WALL_TOP_Y,
   MAZE_WALLS,
   MAZE_WORLD_COVERAGE_HALF_EXTENT,
-  MAZE_WORLD_RING_RADII,
   isMazePositionBlocked,
 } from '../../game-web/src/world/mazeLayout.ts';
 import { SPAWN_POINTS } from '../../game-web/src/gameplay/spawnSelection.ts';
@@ -24,11 +28,21 @@ function source(...parts) {
 }
 
 export async function run(suite) {
-  suite.test('World maze occupies about half the map and leaves a large central clearing', () => {
-    assertGreaterThan(MAZE_WALLS.length, 250, 'world maze must contain a substantial double-wall network');
-    assert(MAZE_WALLS.length <= 800, 'world maze wall count must remain bounded for mobile rendering');
-    assertEqual(MAZE_WORLD_RING_RADII.length, 4, 'world maze must keep four broad double-wall control rings');
-    assertEqual(MAZE_WORLD_COVERAGE_HALF_EXTENT, 1660, 'outer maze footprint must stop at +/-1660m');
+  suite.test('World maze occupies about half the map and is a real branching maze', () => {
+    assertEqual(MAZE_GRID_CELLS, 18, 'maze must use the authored 18x18 coarse corridor grid');
+    assertEqual(MAZE_CORRIDOR_CELL_SIZE, 184, 'maze corridors must remain very wide');
+    assertEqual(MAZE_CENTRAL_BOUNDARY_HALF_EXTENT, 552, 'first maze wall must remain well away from spawn');
+    assertGreaterThan(MAZE_LOGICAL_WALL_COUNT, 180, 'maze must contain many logical walls, not only perimeter rings');
+    assertGreaterThan(MAZE_WALLS.length, MAZE_LOGICAL_WALL_COUNT, 'every logical wall must render as a doubled structure');
+    assert(MAZE_WALLS.length <= 900, 'instanced physical wall count must stay bounded for mobile rendering');
+    assertEqual(MAZE_TOPOLOGY_STATS.cellCount, 288, 'central clearing must be removed from the 18x18 maze graph');
+    assertGreaterThan(MAZE_TOPOLOGY_STATS.deadEnds, 15, 'maze must contain meaningful dead ends');
+    assertGreaterThan(MAZE_TOPOLOGY_STATS.junctions, 40, 'maze must contain many branches/junctions');
+    assertGreaterThan(MAZE_TOPOLOGY_STATS.loopPassages, 20, 'maze must include controlled loops and alternate routes');
+    assert(
+      MAZE_WORLD_COVERAGE_HALF_EXTENT >= 1650 && MAZE_WORLD_COVERAGE_HALF_EXTENT <= 1670,
+      'outer maze footprint must remain near +/-1660m',
+    );
     assert(
       MAZE_TARGET_MAP_AREA_FRACTION >= 0.48 && MAZE_TARGET_MAP_AREA_FRACTION <= 0.52,
       `maze footprint must stay near 50% of map area; got ${MAZE_TARGET_MAP_AREA_FRACTION}`,
@@ -36,7 +50,7 @@ export async function run(suite) {
     assert(MAZE_CENTRAL_CLEARING_RADIUS >= 420, 'spawn clearing must remain very large');
     assert(MAZE_CENTRAL_GATE_WIDTH >= 160, 'four central entrances must be wide');
     assert(MAZE_WALL_THICKNESS >= 14, 'maze walls must be visually and physically massive');
-    assert(MAZE_DOUBLE_WALL_GAP >= 40, 'double-wall spacing must remain broad');
+    assert(MAZE_DOUBLE_WALL_GAP >= 2, 'double walls must remain visibly split into paired slabs');
     assert(MAZE_WALL_BOTTOM_Y <= -600, 'walls must start safely below all terrain');
     assert(MAZE_WALL_TOP_Y >= 1200, 'walls must extend above all normal traversal');
 
