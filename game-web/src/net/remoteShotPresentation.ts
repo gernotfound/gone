@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { getChunkMeshes } from '../world/chunkManager.ts';
+import { getMazeRaycastTargets } from '../world/mazePrototype.ts';
 import { sceneManager } from '../rendering/scene.ts';
 import { vfxManager } from '../vfx/vfxManager.ts';
 import { soundSynth } from '../audio/index.ts';
@@ -79,7 +80,7 @@ function presentRemoteShot(shooterId: string, shot: FireHitscanData): void {
   raycaster.far = cfg.maxRange;
 
   const api = (window as any).goneGame;
-  const targets: THREE.Object3D[] = [...getChunkMeshes()];
+  const targets: THREE.Object3D[] = [...getChunkMeshes(), ...getMazeRaycastTargets()];
   for (const [playerId, remote] of api?.remotePlayers?.entries?.() ?? []) {
     if (playerId !== shooterId && remote?.group) targets.push(remote.group);
   }

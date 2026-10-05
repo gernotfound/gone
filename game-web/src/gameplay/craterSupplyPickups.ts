@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { sceneManager } from '../rendering/scene.ts';
 import { getTerrainHeightAt } from '../world/chunkManager.ts';
 import { SUPPLY_PICKUP_RADIUS } from '../world/worldTopology.ts';
+import { isMazePositionBlocked, MAZE_SUPPLY_CLEARANCE } from '../world/mazeLayout.ts';
 import { TRACER_STYLES } from '../vfx/tracerPool.ts';
 import { refillWeaponAmmo } from './advancedWeaponController.ts';
 import {
@@ -139,9 +140,19 @@ function randomCentralSupplyPoint(): { x: number; z: number } {
 }
 
 function placePickup(pickup: SupplyPickup): void {
-  let selected = randomCentralSupplyPoint();
-  for (let attempt = 0; attempt < 12; attempt += 1) {
+  let selected = {
+    x: WORLD_CENTER_X + CENTRAL_SUPPLY_MIN_RADIUS + 8,
+    z: WORLD_CENTER_Z,
+  };
+  for (let attempt = 0; attempt < 24; attempt += 1) {
     const candidate = randomCentralSupplyPoint();
+    if (isMazePositionBlocked(
+      candidate.x,
+      candidate.z,
+      SUPPLY_PICKUP_RADIUS + MAZE_SUPPLY_CLEARANCE,
+    )) {
+      continue;
+    }
     const crowded = pickups.some((other) => {
       if (other === pickup || !other.active) return false;
       return Math.hypot(candidate.x - other.group.position.x, candidate.z - other.group.position.z) < MIN_PICKUP_SEPARATION;

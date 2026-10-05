@@ -123,13 +123,13 @@ export async function run(suite) {
     system.init(scene, () => 0, () => {});
     system.update(0, new THREE.Vector3(0, 0, 500), true, true, false);
 
-    const ids = [];
-    for (let i = 0; i < BIONIC_SPIDER_MAX_ACTIVE; i += 1) {
-      ids.push(system.spawnAtCrater(i * 40, 0, `cap-${i}`));
-    }
+    // Keep this cap test independent from maze-wall rejection by choosing five
+    // known-clear positions along the central/east sector gates.
+    const clearSpawnX = [0, 40, 130, 260, 320];
+    const ids = clearSpawnX.map((x, i) => system.spawnAtCrater(x, 0, `cap-${i}`));
     assert(ids.every((id) => id !== null), 'First five unique crater spawns must succeed');
     assertEqual(system.getActiveCount(), 5, 'System must expose exactly five active spider entities at the cap');
-    assertEqual(system.spawnAtCrater(240, 0, 'cap-sixth'), null, 'Sixth spider spawn must be rejected');
+    assertEqual(system.spawnAtCrater(360, 0, 'cap-sixth'), null, 'Sixth spider spawn must be rejected');
     assertEqual(system.getActiveCount(), 5, 'Rejected sixth spawn must not change active count');
     system.dispose();
   });

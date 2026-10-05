@@ -117,7 +117,7 @@ Touch sustained FIRE must route to `advancedWeaponController`; it must not leave
 
 ### 6. Networking (`game-web/src/net/`)
 
-The browser host remains authoritative for PvP. Visual rays/tracers never own damage.
+The browser host remains authoritative for PvP. Visual rays/tracers never own damage. Canonical maze walls also participate in host-side hitscan occlusion; client raycasts only mirror that authority for presentation.
 
 #### Movement authority
 
@@ -125,7 +125,7 @@ Guest movement is **client-predicted but host-validated**. `P2PClient` still sen
 
 `net/movementAuthority.ts` derives its envelope from the canonical Rust physics contract: 12 m/s base speed, sprint ×2, movement-scale maximum 1.25 (30 m/s horizontal ceiling), 25 m/s jump impulse and 54 m/s terminal fall speed. Movement credit is replenished from the **host monotonic receipt clock**, never from the client timestamp. Two 30 Hz ticks of jitter credit absorb scheduling variance; cumulative credit is capped at the existing 1000 ms stale/rewind horizon. A separate single-packet ceiling covers eight missing ordered states plus jitter, so idle time or a long stall cannot be spent as one large teleport.
 
-The host rejects duplicate/backward sequence numbers, non-increasing client timestamps, NaN/Infinity, invalid pitch/weapon state, impossible horizontal speed, arbitrary teleports and plainly impossible vertical deltas without advancing the accepted transform or lag history. Host-owned spawn/respawn transitions replace the authoritative position and reset movement validation credit explicitly; there is no reusable client teleport exemption.
+The host rejects duplicate/backward sequence numbers, non-increasing client timestamps, NaN/Infinity, invalid pitch/weapon state, impossible horizontal speed, arbitrary teleports, plainly impossible vertical deltas and movement through canonical maze walls without advancing the accepted transform or lag history. Host-owned spawn/respawn transitions replace the authoritative position and reset movement validation credit explicitly; there is no reusable client teleport exemption.
 
 `gameplay/networkBindings.ts` reconciles the local predicted player to host coordinates on the first authoritative self snapshot, on host-owned respawn, or after large divergence. Normal sub-threshold prediction remains untouched. CLIENT_STATE ticking starts only after the first self snapshot reaches gameplay, preventing a pre-authority local spawn from being interpreted as movement. Manual/debug local teleports remain presentation-only: multiplayer authority will reject them unless the host itself performed the transition.
 
@@ -143,6 +143,10 @@ Direct WebRTC (`directWebRtc.ts`) uses `iceServers: []` by project policy. `Nati
 
 ### 8. World / rendering / models / VFX
 
+- `world/worldTopology.ts`: shared immutable world-center/crater/supply geometry constants.
+- `world/biomeRegistry.ts`: biome identity and terrain-palette semantics.
+- `world/mazeLayout.ts`: canonical deterministic maze wall geometry plus pure collision/ray queries used by both client prediction and host authority.
+- `world/mazePrototype.ts`: instanced Three.js presentation of the canonical maze layout; it does not own collision rules.
 - `world/`: chunk lifecycle and terrain sampling.
 - `rendering/`: scene/renderer resources.
 - `models/`: model construction/loading/socket attachment.

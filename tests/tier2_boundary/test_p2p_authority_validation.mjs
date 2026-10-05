@@ -1,6 +1,7 @@
 import { P2PHost } from '../../game-web/src/net/p2pHost.ts';
 import { PACKET_OPCODES } from '../../game-web/src/net/binaryProtocol.ts';
 import { assert, assertEqual } from '../helpers/assertions.mjs';
+import { MAZE_PLAYER_RADIUS, MAZE_WALLS } from '../../game-web/src/world/mazeLayout.ts';
 
 function createGuestRecord(overrides = {}) {
   return {
@@ -209,4 +210,66 @@ export async function run(suite) {
     }));
     assertEqual(guest.position.x, 1200.5, 'Respawn authorization must not become a reusable teleport exemption');
   });
+
+  suite.test('Host rejects physically plausible guest movement into a canonical maze wall', () => {
+    const host = new P2PHost({ hostPlayer: { id: 'host', name: 'Host', color: '#00F0FF' } });
+    const wall = MAZE_WALLS[0];
+    const startZ = wall.z - wall.depth * 0.5 - MAZE_PLAYER_RADIUS - 0.35;
+    const guest = createGuestRecord({
+      position: { x: wall.x, y: 17.5, z: startZ },
+      activeWeapon: 0,
+    });
+    host.playerRecords.set('guest', guest);
+
+    host.processClientState('guest', createClientState({
+      seq: 0,
+      timestamp: 1000,
+      x: wall.x,
+      y: 17.5,
+      z: startZ + 1,
+      activeWeapon: 0,
+    }));
+
+    assertEqual(guest.position.z, startZ, 'maze collision must keep the last authoritative position');
+    assertEqual(host.__gonePvpHardeningState.rejectedWorldCollision, 1);
+    assertEqual(
+      host.__gonePvpHardeningState.lastClientStateSeq.has('guest'),
+      false,
+      'rejected wall movement must not advance CLIENT_STATE authority',
+    );
+    host.destroy();
+  });
+
+  suite.test('Host hitscan cannot damage a player through a canonical maze wall', () => {
+    let hitConfirmed = null;
+    const host = new P2PHost({
+      hostPlayer: { id: 'host', name: 'Host', color: '#00F0FF' },
+      onHitConfirmed: (hit) => { hitConfirmed = hit; },
+    });
+    const wall = MAZE_WALLS[0];
+    const shooter = host.playerRecords.get('host');
+    shooter.position = { x: wall.x, y: 17.5, z: wall.z - 20 };
+    shooter.shieldExpiresAt = 0;
+
+    const victim = createGuestRecord({
+      id: 'victim',
+      slot: 2,
+      position: { x: wall.x, y: 17.5, z: wall.z + 20 },
+      activeWeapon: 0,
+      shieldExpiresAt: 0,
+    });
+    host.playerRecords.set(victim.id, victim);
+
+    host.fireHitscan(
+      host.hostPlayer.id,
+      0,
+      [shooter.position.x, 17.3, shooter.position.z],
+      [0, 0, 1],
+    );
+
+    assertEqual(victim.hp, 100, 'maze wall must occlude authoritative damage');
+    assertEqual(hitConfirmed, null, 'occluded shot must not emit a hit confirmation');
+    host.destroy();
+  });
+
 }

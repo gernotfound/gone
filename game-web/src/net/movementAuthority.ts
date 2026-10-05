@@ -83,7 +83,8 @@ export type MovementRejectionReason =
   | 'horizontal-speed'
   | 'teleport'
   | 'vertical-up'
-  | 'vertical-down';
+  | 'vertical-down'
+  | 'world-collision';
 
 export type MovementValidationResult =
   | { ok: true; next: MovementAuthorityState }

@@ -33,6 +33,11 @@ import type { WasmLagCompensator } from '../../pkg/game_core.js';
 import { calculateWeaponDamageAtDistance, getWeaponRuntimeById, WEAPON_KEYS } from '../weapons/weaponConfig.ts';
 import { intersectRobotHitbox } from './robotHitbox.ts';
 import {
+  MAZE_PLAYER_RADIUS,
+  mazeSegmentCrossesWall,
+  nearestMazeRayHitDistance,
+} from '../world/mazeLayout.ts';
+import {
   createMovementAuthorityState,
   isValidPitch,
   normalizeYaw,
@@ -292,6 +297,7 @@ export interface CombatValidationStats {
   rejectedTeleport: number;
   rejectedHorizontalSpeed: number;
   rejectedVerticalMovement: number;
+  rejectedWorldCollision: number;
 }
 
 function createCombatValidationStats(): CombatValidationStats {
@@ -312,6 +318,7 @@ function createCombatValidationStats(): CombatValidationStats {
     rejectedTeleport: 0,
     rejectedHorizontalSpeed: 0,
     rejectedVerticalMovement: 0,
+    rejectedWorldCollision: 0,
   };
 }
 
@@ -399,6 +406,7 @@ export class P2PHost {
     stats.rejectedMovement += 1;
     if (reason === 'teleport') stats.rejectedTeleport += 1;
     else if (reason === 'horizontal-speed') stats.rejectedHorizontalSpeed += 1;
+    else if (reason === 'world-collision') stats.rejectedWorldCollision += 1;
     else stats.rejectedVerticalMovement += 1;
   }
 
@@ -524,6 +532,16 @@ export class P2PHost {
     const movement = validateClientMovement(record.position, { x, y, z }, authority, now);
     if (!movement.ok) {
       this.rejectClientState(movement.reason);
+      return;
+    }
+    if (
+      mazeSegmentCrossesWall(
+        record.position,
+        { x, z },
+        MAZE_PLAYER_RADIUS,
+      )
+    ) {
+      this.rejectClientState('world-collision');
       return;
     }
 
@@ -688,6 +706,11 @@ export class P2PHost {
     this.broadcastBinary(relayBuffer, shooterId);
 
     const now = performance.now();
+    const mazeWallDistance = nearestMazeRayHitDistance(
+      { x: shot.originX, y: shot.originY, z: shot.originZ },
+      { x: shot.dirX, y: shot.dirY, z: shot.dirZ },
+      getWeaponRuntimeById(shot.weaponType).maxRange,
+    );
     type CandidateHit = {
       victim: PlayerCombatRecord;
       damage: number;
@@ -782,6 +805,7 @@ export class P2PHost {
     }
 
     if (!nearestHit) return;
+    if (mazeWallDistance !== null && mazeWallDistance <= nearestHit.distance + 0.01) return;
 
     const { victim, isHeadshot, hitX, hitY, hitZ } = nearestHit;
     let damage = nearestHit.damage;
