@@ -1,9 +1,10 @@
 import {
+  MAZE_CENTRAL_BOUNDARY_HALF_EXTENT,
   MAZE_CENTRAL_GATE_HALF_WIDTH,
-  MAZE_DOUBLE_WALL_CENTER_OFFSET,
+  MAZE_CORRIDOR_CELL_SIZE,
   MAZE_PLAYER_RADIUS,
   MAZE_WALL_THICKNESS,
-  MAZE_WORLD_RING_RADII,
+  MAZE_WALLS,
   isMazePositionBlocked,
   mazeSegmentCrossesWall,
   nearestMazeRayHitDistance,
@@ -12,103 +13,117 @@ import {
 import { findMazePath } from '../../game-web/src/world/mazeNavigation.ts';
 import { assert, assertEqual, assertGreaterThan } from '../helpers/assertions.mjs';
 
+function crossingForWall(wall, distance = 70) {
+  const horizontal = wall.width >= wall.depth;
+  if (horizontal) {
+    return {
+      start: { x: wall.x, z: wall.z - distance },
+      end: { x: wall.x, z: wall.z + distance },
+      parallelAxis: 'x',
+    };
+  }
+  return {
+    start: { x: wall.x - distance, z: wall.z },
+    end: { x: wall.x + distance, z: wall.z },
+    parallelAxis: 'z',
+  };
+}
+
 export async function run(suite) {
-  suite.test('Central clearing has exactly four broad cardinal passages through the first double wall', () => {
-    const innerNorthZ = -(MAZE_WORLD_RING_RADII[0] - MAZE_DOUBLE_WALL_CENTER_OFFSET);
-    const outerNorthZ = -(MAZE_WORLD_RING_RADII[0] + MAZE_DOUBLE_WALL_CENTER_OFFSET);
+  suite.test('Central clearing exposes exactly the four broad cardinal entrances', () => {
+    const boundary = MAZE_CENTRAL_BOUNDARY_HALF_EXTENT;
+    const outsideGate = MAZE_CENTRAL_GATE_HALF_WIDTH + MAZE_WALL_THICKNESS * 2;
 
-    assertEqual(
-      mazeSegmentCrossesWall(
-        { x: 0, z: innerNorthZ + 60 },
-        { x: 0, z: outerNorthZ - 60 },
-        MAZE_PLAYER_RADIUS,
-      ),
-      false,
-      'north central entrance must pass through both wall layers',
-    );
+    const passages = [
+      [{ x: 0, z: -boundary + 40 }, { x: 0, z: -boundary - 40 }],
+      [{ x: 0, z: boundary - 40 }, { x: 0, z: boundary + 40 }],
+      [{ x: -boundary + 40, z: 0 }, { x: -boundary - 40, z: 0 }],
+      [{ x: boundary - 40, z: 0 }, { x: boundary + 40, z: 0 }],
+    ];
+    for (const [start, end] of passages) {
+      assertEqual(
+        mazeSegmentCrossesWall(start, end, MAZE_PLAYER_RADIUS),
+        false,
+        'each cardinal entrance must pass cleanly through the doubled boundary',
+      );
+    }
+
+    const blockedCrossings = [
+      [{ x: outsideGate, z: -boundary + 40 }, { x: outsideGate, z: -boundary - 40 }],
+      [{ x: outsideGate, z: boundary - 40 }, { x: outsideGate, z: boundary + 40 }],
+      [{ x: -boundary + 40, z: outsideGate }, { x: -boundary - 40, z: outsideGate }],
+      [{ x: boundary - 40, z: outsideGate }, { x: boundary + 40, z: outsideGate }],
+    ];
+    for (const [start, end] of blockedCrossings) {
+      assert(
+        mazeSegmentCrossesWall(start, end, MAZE_PLAYER_RADIUS),
+        'central boundary must be solid immediately outside each authored gate',
+      );
+    }
+  });
+
+  suite.test('Generated maze wall forces a genuine detour through adjacent corridors', () => {
+    const wall = MAZE_WALLS.find((candidate) => candidate.id.startsWith('grid-'));
+    assert(wall, 'test requires at least one generated internal grid wall');
+
+    const { start, end, parallelAxis } = crossingForWall(wall, MAZE_CORRIDOR_CELL_SIZE * 0.38);
+    assert(mazeSegmentCrossesWall(start, end, 8), 'direct route must cross the generated wall');
+
+    const path = findMazePath(start, end, 8);
+    assertGreaterThan(path.length, 1, 'A* must produce a multi-waypoint detour around a generated wall');
+
+    const parallelOrigin = parallelAxis === 'x' ? start.x : start.z;
     assert(
-      mazeSegmentCrossesWall(
-        { x: MAZE_CENTRAL_GATE_HALF_WIDTH + MAZE_WALL_THICKNESS * 2, z: innerNorthZ + 60 },
-        { x: MAZE_CENTRAL_GATE_HALF_WIDTH + MAZE_WALL_THICKNESS * 2, z: outerNorthZ - 60 },
-        MAZE_PLAYER_RADIUS,
-      ),
-      'outside the north entrance the same crossing must hit the double wall',
-    );
-
-    assertEqual(
-      mazeSegmentCrossesWall(
-        { x: -innerNorthZ - 60, z: 0 },
-        { x: -outerNorthZ + 60, z: 0 },
-        MAZE_PLAYER_RADIUS,
-      ),
-      false,
-      'east central entrance must remain open through both layers',
-    );
-  });
-
-  suite.test('Maze movement resolver slides along a massive wall instead of cancelling the whole step', () => {
-    const wallZ = -(MAZE_WORLD_RING_RADII[0] - MAZE_DOUBLE_WALL_CENTER_OFFSET);
-    const start = { x: 220, z: wallZ + 20 };
-    const end = { x: 250, z: wallZ - 20 };
-    const resolved = resolveMazeMovement(start, end, MAZE_PLAYER_RADIUS);
-
-    assert(resolved.blocked, 'diagonal wall impact must report a collision');
-    assert(!isMazePositionBlocked(resolved.x, resolved.z, MAZE_PLAYER_RADIUS), 'resolved position must stay outside walls');
-  });
-
-  suite.test('Authoritative ray query hits solid central wall and misses the cardinal gate', () => {
-    const wallZ = -(MAZE_WORLD_RING_RADII[0] - MAZE_DOUBLE_WALL_CENTER_OFFSET);
-    const distance = nearestMazeRayHitDistance(
-      { x: 220, y: 20, z: wallZ + 40 },
-      { x: 0, y: 0, z: -1 },
-      100,
-    );
-    assert(distance !== null && distance > 0 && distance < 100, 'ray must hit the selected central wall');
-
-    const gateDistance = nearestMazeRayHitDistance(
-      { x: 0, y: 20, z: wallZ + 40 },
-      { x: 0, y: 0, z: -1 },
-      140,
-    );
-    assertEqual(gateDistance, null, 'ray through the north entrance must remain unobstructed');
-  });
-
-  suite.test('Maze A-star routes through a central cardinal entrance', () => {
-    const clearance = 8;
-    const start = { x: -216, z: -450 };
-    const goal = { x: -216, z: -650 };
-    assert(mazeSegmentCrossesWall(start, goal, clearance), 'direct route must cross the first double wall');
-
-    const path = findMazePath(start, goal, clearance);
-    assertGreaterThan(path.length, 1, 'blocked chase must produce a detour waypoint');
-    assert(
-      path.some((point) => Math.abs(point.x) <= 72),
-      'detour must route toward the centered north entrance',
+      path.some((point) => Math.abs((parallelAxis === 'x' ? point.x : point.z) - parallelOrigin) >= MAZE_CELL_SIZE),
+      'detour must make a substantial lateral turn instead of behaving like a ring opening',
     );
 
     let previous = start;
     for (const waypoint of path) {
       assert(
-        !mazeSegmentCrossesWall(previous, waypoint, clearance),
-        'every simplified A-star segment must stay outside canonical walls',
+        !mazeSegmentCrossesWall(previous, waypoint, 8),
+        'every simplified detour segment must stay outside canonical walls',
       );
       previous = waypoint;
     }
   });
 
-  suite.test('Deeper double-ring navigation uses staggered broad gates', () => {
-    const clearance = 8;
-    const secondInnerNorthZ = -(MAZE_WORLD_RING_RADII[1] - MAZE_DOUBLE_WALL_CENTER_OFFSET);
-    const secondOuterNorthZ = -(MAZE_WORLD_RING_RADII[1] + MAZE_DOUBLE_WALL_CENTER_OFFSET);
-    const start = { x: 0, z: secondInnerNorthZ + 70 };
-    const goal = { x: 0, z: secondOuterNorthZ - 70 };
-    assert(mazeSegmentCrossesWall(start, goal, clearance), 'straight radial route must be blocked on deeper ring');
+  suite.test('Maze movement resolver slides along generated walls instead of tunnelling through them', () => {
+    const wall = MAZE_WALLS.find((candidate) => candidate.id.startsWith('grid-'));
+    assert(wall, 'movement test requires an internal maze wall');
+    const horizontal = wall.width >= wall.depth;
+    const start = horizontal
+      ? { x: wall.x - 30, z: wall.z - 35 }
+      : { x: wall.x - 35, z: wall.z - 30 };
+    const end = horizontal
+      ? { x: wall.x + 30, z: wall.z + 35 }
+      : { x: wall.x + 35, z: wall.z + 30 };
 
-    const path = findMazePath(start, goal, clearance);
-    assertGreaterThan(path.length, 1, 'deeper ring must be navigable through a staggered gate');
-    assert(
-      path.some((point) => Math.abs(point.x) >= 72),
-      'detour must leave the radial centerline to find the staggered gate',
+    const resolved = resolveMazeMovement(start, end, MAZE_PLAYER_RADIUS);
+    assert(resolved.blocked, 'diagonal impact against generated wall must collide');
+    assert(!isMazePositionBlocked(resolved.x, resolved.z, MAZE_PLAYER_RADIUS), 'resolved position must remain outside walls');
+  });
+
+  suite.test('Authoritative ray query hits generated walls and misses the north entrance', () => {
+    const wall = MAZE_WALLS.find((candidate) => candidate.id.startsWith('grid-'));
+    assert(wall, 'ray test requires an internal maze wall');
+    const horizontal = wall.width >= wall.depth;
+    const origin = horizontal
+      ? { x: wall.x, y: 20, z: wall.z - 70 }
+      : { x: wall.x - 70, y: 20, z: wall.z };
+    const direction = horizontal
+      ? { x: 0, y: 0, z: 1 }
+      : { x: 1, y: 0, z: 0 };
+
+    const distance = nearestMazeRayHitDistance(origin, direction, 140);
+    assert(distance !== null && distance > 0 && distance < 140, 'ray must hit a generated internal wall');
+
+    const boundary = MAZE_CENTRAL_BOUNDARY_HALF_EXTENT;
+    const gateDistance = nearestMazeRayHitDistance(
+      { x: 0, y: 20, z: -boundary + 50 },
+      { x: 0, y: 0, z: -1 },
+      120,
     );
+    assertEqual(gateDistance, null, 'ray through the authored north entrance must remain unobstructed');
   });
 }
