@@ -36,6 +36,10 @@ export async function run(suite) {
 
     assert(visual.includes('THREE.InstancedMesh'), 'maze walls must render in a bounded instanced draw');
     assert(engine.includes('resolveMazeMovement'), 'local prediction must collide with maze walls');
+    assert(
+      engine.includes('player.velocity.x = (player.position.x - previousX) * invDelta'),
+      'local horizontal velocity must derive from the maze-resolved transform',
+    );
     assert(engine.includes('getMazeRaycastTargets'), 'local shot presentation must raycast maze walls');
     assert(host.includes("this.rejectClientState('world-collision')"), 'host must reject guest movement through maze walls');
     assert(host.includes('nearestMazeRayHitDistance'), 'host hitscan must be occluded by maze walls');
