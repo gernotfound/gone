@@ -15,3 +15,7 @@ export const CENTRAL_SUPPLY_AUTHORITY_MAX_RADIUS =
 export const GIANT_CRATER_CENTER_X = 1200;
 export const GIANT_CRATER_CENTER_Z = 1200;
 export const GIANT_CRATER_RADIUS = 250;
+
+
+/** Canonical authored gameplay boundary used by world-scale systems. */
+export const PLAYABLE_WORLD_HALF_EXTENT = 2350;
