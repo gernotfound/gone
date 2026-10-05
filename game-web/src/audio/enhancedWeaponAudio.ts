@@ -5,6 +5,8 @@ import {
   type WeaponSoundType,
 } from './soundSynth.ts';
 
+export const WEAPON_VOLUME_GAIN = 1.2;
+
 type WeaponLayerProfile = {
   baseLevel: number;
   headHz: number;
@@ -138,12 +140,15 @@ export class EnhancedWeaponAudio {
 
     // Keep the existing verified synth as the tonal signature and add physical
     // weight/detail around it instead of replacing it with an unrelated sound.
-    this.base.playWeaponSound(type, volumeScale * profile.baseLevel);
+    // Weapon output is intentionally boosted by 20% before both the canonical
+    // signature and the enhancement layers are rendered.
+    const boostedVolumeScale = volumeScale * WEAPON_VOLUME_GAIN;
+    this.base.playWeaponSound(type, boostedVolumeScale * profile.baseLevel);
     this.ensureLayerGraph();
     if (!this.ctx || !this.layerMaster || this.ctx.state === 'closed') return;
     if (this.ctx.state === 'suspended') void this.ctx.resume();
 
-    const level = Math.max(0, Math.min(2, volumeScale));
+    const level = Math.max(0, Math.min(2, boostedVolumeScale));
     if (level <= 0.0001 || this.masterVolume * this.sfxVolume <= 0.0001) return;
     this.synthesizeLayers(profile, type, level);
   }

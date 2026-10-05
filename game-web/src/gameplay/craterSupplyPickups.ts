@@ -5,9 +5,10 @@ import { getTerrainHeightAt } from '../world/chunkManager.ts';
 import { TRACER_STYLES } from '../vfx/tracerPool.ts';
 import { refillWeaponAmmo } from './advancedWeaponController.ts';
 import {
-  CRATER_SUPPLY_RADIUS,
-  GIANT_CRATER_CENTER_X,
-  GIANT_CRATER_CENTER_Z,
+  CENTRAL_SUPPLY_MAX_RADIUS,
+  CENTRAL_SUPPLY_MIN_RADIUS,
+  WORLD_CENTER_X,
+  WORLD_CENTER_Z,
 } from './spawnPolicy.ts';
 import type { WeaponKey } from '../weapons/weaponConfig.ts';
 import { HEALTH_PICKUP_AUTHORITY } from '../net/clientStateExtensions.ts';
@@ -43,7 +44,6 @@ const AMMO_KINDS: readonly AmmoWeapon[] = ['assalto', 'cecchino', 'pompa', 'mitr
 const SUPPLY_KINDS: readonly SupplyKind[] = [...AMMO_KINDS, 'health'];
 const MAX_PER_KIND = 3;
 const PICKUP_RADIUS = 3.25;
-const MIN_RANDOM_RADIUS = 28;
 const RESPAWN_MIN_MS = 20_000;
 const RESPAWN_MAX_MS = 32_000;
 const MIN_PICKUP_SEPARATION = 9;
@@ -91,7 +91,7 @@ function materialFor(kind: SupplyKind): THREE.MeshStandardMaterial {
 
 function createPickup(kind: SupplyKind, index: number): SupplyPickup {
   const group = new THREE.Group();
-  group.name = `CraterSupply-${kind}-${index}`;
+  group.name = `CentralSupply-${kind}-${index}`;
 
   const body = new THREE.Mesh(crateGeometry, materialFor(kind));
   body.castShadow = false;
@@ -127,19 +127,21 @@ function createPickup(kind: SupplyKind, index: number): SupplyPickup {
   };
 }
 
-function randomCraterPoint(): { x: number; z: number } {
+function randomCentralSupplyPoint(): { x: number; z: number } {
   const angle = Math.random() * Math.PI * 2;
-  const radius = Math.sqrt(Math.random()) * (CRATER_SUPPLY_RADIUS - MIN_RANDOM_RADIUS) + MIN_RANDOM_RADIUS;
+  const radius =
+    Math.sqrt(Math.random()) * (CENTRAL_SUPPLY_MAX_RADIUS - CENTRAL_SUPPLY_MIN_RADIUS) +
+    CENTRAL_SUPPLY_MIN_RADIUS;
   return {
-    x: GIANT_CRATER_CENTER_X + Math.cos(angle) * radius,
-    z: GIANT_CRATER_CENTER_Z + Math.sin(angle) * radius,
+    x: WORLD_CENTER_X + Math.cos(angle) * radius,
+    z: WORLD_CENTER_Z + Math.sin(angle) * radius,
   };
 }
 
 function placePickup(pickup: SupplyPickup): void {
-  let selected = randomCraterPoint();
+  let selected = randomCentralSupplyPoint();
   for (let attempt = 0; attempt < 12; attempt += 1) {
-    const candidate = randomCraterPoint();
+    const candidate = randomCentralSupplyPoint();
     const crowded = pickups.some((other) => {
       if (other === pickup || !other.active) return false;
       return Math.hypot(candidate.x - other.group.position.x, candidate.z - other.group.position.z) < MIN_PICKUP_SEPARATION;
@@ -335,9 +337,9 @@ function attachPoolsWhenSceneReady(): void {
 }
 
 /** Fixed-size pickup pools guarantee at most three crates per category. */
-export function startCraterSupplyPickups(): void {
-  if ((window as any).__goneCraterSupplyPickupsStarted) return;
-  (window as any).__goneCraterSupplyPickupsStarted = true;
+export function startCentralSupplyPickups(): void {
+  if ((window as any).__goneCentralSupplyPickupsStarted) return;
+  (window as any).__goneCentralSupplyPickupsStarted = true;
   window.addEventListener('gone-pickup-requested', collectNearbySupply);
   (window as any).goneSupplyPickups = {
     collectNearby: collectNearbySupply,

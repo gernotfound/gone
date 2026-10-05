@@ -11,36 +11,52 @@ export type SpawnThreat = {
   position?: { x: number; z: number } | null;
 };
 
+export const WORLD_CENTER_X = 0;
+export const WORLD_CENTER_Z = 0;
+export const CENTRAL_HUB_RADIUS = 40;
+export const CENTRAL_SUPPLY_MIN_RADIUS = 52;
+export const CENTRAL_SUPPLY_MAX_RADIUS = 150;
+
 export const GIANT_CRATER_CENTER_X = 1200;
 export const GIANT_CRATER_CENTER_Z = 1200;
 export const GIANT_CRATER_RADIUS = 250;
-export const CRATER_SUPPLY_RADIUS = 178;
 
 const SPAWN_SLOT_COUNT = 16;
-const INNER_SPAWN_RADIUS = 44;
-const OUTER_SPAWN_RADIUS = 72;
+const INNER_SPAWN_RADIUS = 18;
+const OUTER_SPAWN_RADIUS = 32;
 const TAU = Math.PI * 2;
 const SCORE_EPSILON = 0.01;
 
 /**
- * Pure crater spawn geometry. Keeping this module DOM/world-free lets the
- * authority policy run in Node tests and any future non-browser host runtime.
+ * The world origin is the narrative/gameplay hub. Slot 0 starts exactly at the
+ * map center while the remaining slots spread across the same protected
+ * clearing so multiplayer players never overlap on one transform.
  */
 export const SPAWN_POINTS: readonly SpawnPoint[] = Array.from({ length: SPAWN_SLOT_COUNT }, (_, index) => {
-  const outerRing = index >= 8;
-  const ringIndex = index % 8;
-  const radius = outerRing ? OUTER_SPAWN_RADIUS : INNER_SPAWN_RADIUS;
-  const angle = (ringIndex / 8) * TAU + (outerRing ? Math.PI / 8 : 0);
+  if (index === 0) {
+    return {
+      id: 'S1',
+      label: 'CENTRO 01',
+      x: WORLD_CENTER_X,
+      z: WORLD_CENTER_Z,
+    };
+  }
+
+  const innerRing = index <= 7;
+  const ringIndex = innerRing ? index - 1 : index - 8;
+  const ringSize = innerRing ? 7 : 8;
+  const radius = innerRing ? INNER_SPAWN_RADIUS : OUTER_SPAWN_RADIUS;
+  const angle = (ringIndex / ringSize) * TAU + (innerRing ? 0 : Math.PI / 8);
   return {
     id: `S${index + 1}`,
-    label: `CRATERE ${String(index + 1).padStart(2, '0')}`,
-    x: GIANT_CRATER_CENTER_X + Math.cos(angle) * radius,
-    z: GIANT_CRATER_CENTER_Z + Math.sin(angle) * radius,
+    label: `CENTRO ${String(index + 1).padStart(2, '0')}`,
+    x: WORLD_CENTER_X + Math.cos(angle) * radius,
+    z: WORLD_CENTER_Z + Math.sin(angle) * radius,
   };
 });
 
-export const PLAYER_SPAWN_X = SPAWN_POINTS[0].x;
-export const PLAYER_SPAWN_Z = SPAWN_POINTS[0].z;
+export const PLAYER_SPAWN_X = WORLD_CENTER_X;
+export const PLAYER_SPAWN_Z = WORLD_CENTER_Z;
 
 function normalizedSlot(slot: number | null | undefined): number {
   return Number.isInteger(slot) ? Math.abs(Number(slot)) % SPAWN_POINTS.length : 0;

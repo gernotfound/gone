@@ -65,5 +65,7 @@ export async function run(suite) {
     assert(enhanced.includes('tailMs: 360') && enhanced.includes('tailMs: 280'), 'sniper/shotgun must retain longer weight/decay');
     assert(index.includes('enhancedWeaponAudio as soundSynth'), 'application singleton must route through enhanced audio while preserving base synth exports');
     assert(enhanced.includes('this.base.playWeaponSound'), 'verified procedural synth must remain the base weapon signature');
+    assert(enhanced.includes('WEAPON_VOLUME_GAIN = 1.2'), 'weapon output must be boosted by exactly 20%');
+    assert(enhanced.includes('boostedVolumeScale'), 'both base signature and enhancement layers must share the volume boost');
   });
 }

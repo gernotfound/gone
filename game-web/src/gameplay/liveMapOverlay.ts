@@ -3,6 +3,7 @@ import { drawMinimap, GLOBAL_MAP_HALF_EXTENT } from '../ui/minimap.ts';
 import { inputState } from '../controls/playerInput.ts';
 import { getTerrainHeightAt } from '../world/chunkManager.ts';
 import { PLAYER_SPAWN_X, PLAYER_SPAWN_Z } from '../gameplay/spawnController.ts';
+import { GIANT_CRATER_CENTER_X, GIANT_CRATER_CENTER_Z } from './spawnPolicy.ts';
 
 let mapOpen = false;
 let suppressPointerLossUntil = 0;
@@ -38,9 +39,9 @@ function ensureMapHud(): void {
   if (!container || mapDecorated) return;
   mapDecorated = true;
 
-  addLandmark(container, 'map-landmark-spawn', PLAYER_SPAWN_X, PLAYER_SPAWN_Z, 'SPAWN · CRATERE SE', '#34d399');
+  addLandmark(container, 'map-landmark-spawn', PLAYER_SPAWN_X, PLAYER_SPAWN_Z, 'NUCLEO ZERO · SPAWN', '#34d399');
   addLandmark(container, 'map-landmark-massif', -1500, -1500, 'MASSICCIO NW', '#e2e8f0');
-  addLandmark(container, 'map-landmark-origin', 0, 0, 'ORIGINE 0,0', '#94a3b8');
+  addLandmark(container, 'map-landmark-crater', GIANT_CRATER_CENTER_X, GIANT_CRATER_CENTER_Z, 'CRATERE DEL SEGNALE', '#f59e0b');
 
   const scale = document.createElement('div');
   scale.id = 'map-scale-bar';

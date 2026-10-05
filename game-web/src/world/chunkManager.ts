@@ -3,6 +3,7 @@ import { generate_chunk, get_height_at } from '../../pkg/game_core.js';
 import { sceneManager } from '../rendering/scene.ts';
 import { createNaturalSunRay } from './naturalSunRays.ts';
 import { createGroundedRockInstances } from './rockInstances.ts';
+import { applyBiomePaletteToChunk } from './biomeRegistry.ts';
 import {
   acquireTerrainGeometry,
   applyTerrainData,
@@ -155,10 +156,19 @@ function loadChunkPayload(
     CHUNK_RESOLUTION,
   );
   try {
+    const heights = chunkData.get_heights();
+    const colors = applyBiomePaletteToChunk(
+      chunkData.get_colors(),
+      heights,
+      offsetX,
+      offsetZ,
+      CHUNK_SIZE,
+      CHUNK_RESOLUTION,
+    );
     const payload: ChunkPayload = {
-      heights: chunkData.get_heights(),
+      heights,
       normals: chunkData.get_normals(),
-      colors: chunkData.get_colors(),
+      colors,
       rocks: chunkData.get_rocks(),
     };
     cachePayload(id, payload);
