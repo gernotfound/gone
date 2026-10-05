@@ -145,9 +145,9 @@ Direct WebRTC (`directWebRtc.ts`) uses `iceServers: []` by project policy. `Nati
 
 - `world/worldTopology.ts`: shared immutable world-center/crater/supply geometry constants.
 - `world/biomeRegistry.ts`: biome identity and terrain-palette semantics.
-- `world/mazeLayout.ts`: canonical deterministic central + world-ring maze geometry, landmark clearings, spatial wall index and pure collision/ray queries used by client prediction and host authority.
-- `world/mazeNavigation.ts`: bounded grid A* over `mazeLayout`; it consumes canonical collision rather than defining a second nav authority.
-- `world/mazePrototype.ts`: instanced Three.js presentation of the canonical maze layout; it samples terrain support but does not own collision rules.
+- `world/mazeLayout.ts`: canonical deterministic double-wall maze geometry, large central clearing/four cardinal entrances, landmark clearings, spatial wall index and pure collision/ray queries used by client prediction and host authority.
+- `world/mazeNavigation.ts`: bounded 72 m-grid A* over `mazeLayout`; it consumes canonical collision rather than defining a second nav authority.
+- `world/mazePrototype.ts`: instanced Three.js presentation of the canonical maze layout. Walls are extruded from Y=-600 to Y=+1200 and never derive authority from terrain sampling.
 - `world/`: chunk lifecycle and terrain sampling.
 - `rendering/`: scene/renderer resources.
 - `models/`: model construction/loading/socket attachment.
