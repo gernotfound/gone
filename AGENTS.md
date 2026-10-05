@@ -200,10 +200,10 @@ Browser smoke mobile changes with pointerdown/pointermove; specifically verify r
 - `world/biomeRegistry.ts` owns deterministic biome identity, presentation palettes and working landmark metadata.
 - `docs/world_vision.md` is the working world/lore direction: Nucleo Zero at the origin, maze sectors around it, one meaningful POI per biome, and the southeast crater as a destination rather than the start.
 - Biome presentation may tint streamed terrain, but Rust/WASM remains the geometry/height authority. Do not fork collision physics just to iterate on biome art direction.
-- `world/mazeLayout.ts` owns canonical deterministic maze geometry, landmark clearings, spatial indexing and pure collision/occlusion queries. Client prediction, PvE movement and host authority must use this same layout.
+- `world/mazeLayout.ts` owns canonical deterministic maze geometry, the ~420 m wall-free Nucleo Zero clearing, four cardinal 160 m entrances, double-wall ring spacing, landmark clearings, spatial indexing and pure collision/occlusion queries. Client prediction, PvE movement and host authority must use this same layout.
 - `world/mazeNavigation.ts` owns bounded A* routing over canonical maze collision. Do not add a divergent navmesh for the same walls.
-- `world/mazePrototype.ts` owns only instanced wall presentation/terrain support. Never derive authority from rendered Three.js objects.
-- The maze now spans Nucleo Zero and five world control rings out to ~1980 m. POI structures, progression gates, biome-specific maze art and final lore remain later stages.
+- `world/mazePrototype.ts` owns only instanced wall presentation. Walls are deliberately extruded from Y=-600 to Y=+1200 so terrain cannot leave gaps below them and normal traversal cannot pass above them.
+- The authored maze footprint ends at +/-1660 m, approximately 50% of the square playable area. The outer map remains open for biome/POI space. POI structures, progression gates, biome-specific maze art and final lore remain later stages.
 
 ## Local gameplay / spawn
 
