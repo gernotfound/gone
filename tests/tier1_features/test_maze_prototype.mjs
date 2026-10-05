@@ -1,10 +1,17 @@
 import fs from 'fs';
 import path from 'path';
 import {
+  MAZE_CENTRAL_CLEARING_RADIUS,
+  MAZE_CENTRAL_GATE_WIDTH,
+  MAZE_DOUBLE_WALL_GAP,
   MAZE_LANDMARK_CLEARINGS,
   MAZE_PLAYER_RADIUS,
+  MAZE_TARGET_MAP_AREA_FRACTION,
+  MAZE_WALL_BOTTOM_Y,
+  MAZE_WALL_THICKNESS,
+  MAZE_WALL_TOP_Y,
   MAZE_WALLS,
-  MAZE_WORLD_COVERAGE_RADIUS,
+  MAZE_WORLD_COVERAGE_HALF_EXTENT,
   MAZE_WORLD_RING_RADII,
   isMazePositionBlocked,
 } from '../../game-web/src/world/mazeLayout.ts';
@@ -17,17 +24,33 @@ function source(...parts) {
 }
 
 export async function run(suite) {
-  suite.test('World maze spans all biome sectors while remaining instanced and bounded', () => {
-    assertGreaterThan(MAZE_WALLS.length, 300, 'world maze must extend materially beyond the central prototype');
+  suite.test('World maze occupies about half the map and leaves a large central clearing', () => {
+    assertGreaterThan(MAZE_WALLS.length, 250, 'world maze must contain a substantial double-wall network');
     assert(MAZE_WALLS.length <= 800, 'world maze wall count must remain bounded for mobile rendering');
-    assertEqual(MAZE_WORLD_RING_RADII.length, 5, 'world maze must keep five authored containment rings');
-    assertEqual(MAZE_WORLD_COVERAGE_RADIUS, 1980, 'outer control ring must span the playable world');
+    assertEqual(MAZE_WORLD_RING_RADII.length, 4, 'world maze must keep four broad double-wall control rings');
+    assertEqual(MAZE_WORLD_COVERAGE_HALF_EXTENT, 1660, 'outer maze footprint must stop at +/-1660m');
+    assert(
+      MAZE_TARGET_MAP_AREA_FRACTION >= 0.48 && MAZE_TARGET_MAP_AREA_FRACTION <= 0.52,
+      `maze footprint must stay near 50% of map area; got ${MAZE_TARGET_MAP_AREA_FRACTION}`,
+    );
+    assert(MAZE_CENTRAL_CLEARING_RADIUS >= 420, 'spawn clearing must remain very large');
+    assert(MAZE_CENTRAL_GATE_WIDTH >= 160, 'four central entrances must be wide');
+    assert(MAZE_WALL_THICKNESS >= 14, 'maze walls must be visually and physically massive');
+    assert(MAZE_DOUBLE_WALL_GAP >= 40, 'double-wall spacing must remain broad');
+    assert(MAZE_WALL_BOTTOM_Y <= -600, 'walls must start safely below all terrain');
+    assert(MAZE_WALL_TOP_Y >= 1200, 'walls must extend above all normal traversal');
 
     for (const spawn of SPAWN_POINTS) {
       assert(
         !isMazePositionBlocked(spawn.x, spawn.z, MAZE_PLAYER_RADIUS),
         `spawn ${spawn.id} must never overlap a maze wall`,
       );
+    }
+
+    for (let angle = 0; angle < Math.PI * 2; angle += Math.PI / 8) {
+      const x = Math.cos(angle) * MAZE_CENTRAL_CLEARING_RADIUS;
+      const z = Math.sin(angle) * MAZE_CENTRAL_CLEARING_RADIUS;
+      assert(!isMazePositionBlocked(x, z, MAZE_PLAYER_RADIUS), 'central clearing boundary must remain wall-free');
     }
 
     for (const clearing of MAZE_LANDMARK_CLEARINGS) {
