@@ -162,7 +162,8 @@ Browser smoke mobile changes with pointerdown/pointermove; specifically verify r
 
 ## Supply pickup interaction
 
-- `gameplay/craterSupplyPickups.ts` owns crater ammo/health crates and the interaction candidate.
+- `gameplay/craterSupplyPickups.ts` is the current compatibility filename for the central ammo/health crate owner; placement is no longer crater-based.
+- Supplies spawn in the annulus defined by `CENTRAL_SUPPLY_MIN_RADIUS` / `CENTRAL_SUPPLY_MAX_RADIUS` around world origin and must stay outside the protected central spawn clearing.
 - Proximity only selects the nearest useful crate and shows a prompt; it must **never auto-collect** in the animation loop.
 - `controls/playerInput.ts` translates `KeyE` into `gone-pickup-requested`.
 - Desktop collection requires `E`. Smartphone collection uses the contextual `TAKE` button created by the pickup owner and emits the same intent.
@@ -176,6 +177,7 @@ Browser smoke mobile changes with pointerdown/pointermove; specifically verify r
 - `audio/musicSourceGain.ts` owns reduced source gain.
 - `audio/soundSynth.ts` remains the verified procedural weapon signature and compatibility surface.
 - `audio/enhancedWeaponAudio.ts` is the application weapon-audio layer. It reuses the canonical `soundSynth` singleton / AudioContext and adds HEAD, BODY, LFE, MECHANICAL and TAIL layers with bounded pitch/filter variation.
+- Runtime weapon output carries a deliberate 1.20 gain multiplier before both the canonical signature and enhancement layers; preserve that contract unless balancing is explicitly changed.
 - AR/SMG tails stay deliberately short so automatic fire remains articulate; sniper/shotgun may use longer decay/body. Do not add external weapon audio assets unless explicitly requested/licensed.
 - iOS requires `play()` / Web Audio unlock from a real gesture. Keep persistent gesture recovery; foreground recovery is best-effort and may still require the next gesture.
 
@@ -190,11 +192,19 @@ Browser smoke mobile changes with pointerdown/pointermove; specifically verify r
 - `public/gone-cache-sw.js` may cache a requested safe `gone-performance-pack-*` cache name, while its own registration version remains the PWA `BUILD_ID`.
 - No legacy user migration/backfill is required; stale local performance-pack markers/caches can be discarded in favor of the current canonical pack.
 
+## World direction / biomes
+
+- `world/biomeRegistry.ts` owns deterministic biome identity, presentation palettes and working landmark metadata.
+- `docs/world_vision.md` is the working world/lore direction: Nucleo Zero at the origin, maze sectors around it, one meaningful POI per biome, and the southeast crater as a destination rather than the start.
+- Biome presentation may tint streamed terrain, but Rust/WASM remains the geometry/height authority. Do not fork collision physics just to iterate on biome art direction.
+- Physical maze walls, procedural POIs, progression gates and final lore are intentionally not part of the biome foundation; add them as explicit systems after prototype validation.
+
 ## Local gameplay / spawn
 
 - 100 HP, ~10 s spawn shield, ~5 s death phase; host authoritative.
 - Spawn policy: `gameplay/spawnPolicy.ts`.
-- Slot 0 intended spawn: X=+1200, Z=+1200; never restore `(0,17.5,0)` as gameplay spawn.
+- World/narrative center and slot 0 spawn are X=0, Z=0. Remaining multiplayer spawn slots stay inside the central origin clearing so players do not overlap.
+- The southeast giant crater at X=+1200, Z=+1200 remains a landmark, not the spawn or supply center.
 - `gameplay/networkBindings.ts` owns P2P↔gameplay state wiring and host per-slot respawn.
 - `remotePlayerRegistry.ts` owns remote model lifecycle/interpolation/shield presentation.
 - Solo spiders: `bionicSpiderEnemies.ts` + `models/bionicSpider.ts`; disabled in P2P until represented host-authoritatively.
