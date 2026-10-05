@@ -6,7 +6,8 @@ import {
   nearestMazeRayHitDistance,
   resolveMazeMovement,
 } from '../../game-web/src/world/mazeLayout.ts';
-import { assert, assertEqual } from '../helpers/assertions.mjs';
+import { findMazePath } from '../../game-web/src/world/mazeNavigation.ts';
+import { assert, assertEqual, assertGreaterThan } from '../helpers/assertions.mjs';
 
 export async function run(suite) {
   suite.test('Maze collision blocks wall crossings but preserves an authored inner gate', () => {
@@ -59,4 +60,41 @@ export async function run(suite) {
     );
     assertEqual(gateDistance, null, 'ray through authored inner gate must remain unobstructed');
   });
+
+  suite.test('Maze A-star detours through the authored central gate', () => {
+    const clearance = 8;
+    const start = { x: -108, z: -120 };
+    const goal = { x: -108, z: -60 };
+    assert(
+      mazeSegmentCrossesWall(start, goal, clearance),
+      'central test requires a direct wall obstruction',
+    );
+
+    const path = findMazePath(start, goal, clearance);
+    assertGreaterThan(path.length, 1, 'blocked chase must produce at least one detour waypoint');
+
+    let previous = start;
+    for (const waypoint of path) {
+      assert(
+        !mazeSegmentCrossesWall(previous, waypoint, clearance),
+        'every simplified A-star segment must stay outside canonical walls',
+      );
+      previous = waypoint;
+    }
+  });
+
+  suite.test('World-ring navigation finds a staggered gate instead of crossing the wall', () => {
+    const clearance = 8;
+    const start = { x: 0, z: -500 };
+    const goal = { x: 0, z: -580 };
+    assert(mazeSegmentCrossesWall(start, goal, clearance), '540m north ring must block the direct route');
+
+    const path = findMazePath(start, goal, clearance);
+    assertGreaterThan(path.length, 1, 'world ring must be navigable through a nearby gate');
+    assert(
+      path.some((point) => Math.abs(point.x) >= 36),
+      'detour must leave the blocked x=0 line to use the staggered ring gate',
+    );
+  });
+
 }
