@@ -16,7 +16,7 @@ import {
   isMazePositionBlocked,
 } from '../../game-web/src/world/mazeLayout.ts';
 import { SPAWN_POINTS } from '../../game-web/src/gameplay/spawnSelection.ts';
-import { assert, assertGreaterThan } from '../helpers/assertions.mjs';
+import { assert, assertEqual, assertGreaterThan } from '../helpers/assertions.mjs';
 import { PROJECT_ROOT } from '../helpers/asset_inspector.mjs';
 
 function source(...parts) {
