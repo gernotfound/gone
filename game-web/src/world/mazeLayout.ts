@@ -21,9 +21,17 @@ export type MazeWall = {
 type Bounds2 = { minX: number; maxX: number; minZ: number; maxZ: number };
 type GateRange = { center: number; halfWidth: number };
 type MazeClearing = { id: string; x: number; z: number; radius: number };
+type MazeCell = { ix: number; iz: number };
 
 export const MAZE_CELL_SIZE = 72;
+export const MAZE_CORRIDOR_CELL_SIZE = 184;
+export const MAZE_GRID_CELLS = 18;
+export const MAZE_GRID_HALF_EXTENT = (MAZE_GRID_CELLS * MAZE_CORRIDOR_CELL_SIZE) * 0.5;
+
 export const MAZE_WALL_THICKNESS = 14;
+export const MAZE_DOUBLE_WALL_GAP = 2;
+export const MAZE_DOUBLE_WALL_CENTER_OFFSET =
+  (MAZE_WALL_THICKNESS + MAZE_DOUBLE_WALL_GAP) * 0.5;
 export const MAZE_WALL_BOTTOM_Y = -600;
 export const MAZE_WALL_TOP_Y = 1200;
 export const MAZE_WALL_HEIGHT = MAZE_WALL_TOP_Y - MAZE_WALL_BOTTOM_Y;
@@ -31,27 +39,19 @@ export const MAZE_PLAYER_RADIUS = 1.15;
 export const MAZE_SUPPLY_CLEARANCE = 1.25;
 
 export const MAZE_CENTRAL_CLEARING_RADIUS = 420;
-export const MAZE_CENTRAL_GATE_HALF_WIDTH = 80;
+export const MAZE_CENTRAL_BOUNDARY_HALF_EXTENT = MAZE_CORRIDOR_CELL_SIZE * 3;
+export const MAZE_CENTRAL_GATE_HALF_WIDTH = MAZE_CORRIDOR_CELL_SIZE * 0.5;
 export const MAZE_CENTRAL_GATE_WIDTH = MAZE_CENTRAL_GATE_HALF_WIDTH * 2;
 
-export const MAZE_DOUBLE_WALL_GAP = 42;
-export const MAZE_DOUBLE_WALL_CENTER_OFFSET =
-  (MAZE_DOUBLE_WALL_GAP + MAZE_WALL_THICKNESS) * 0.5;
-
-/**
- * Square control rings. The last nominal radius plus the double-wall offset
- * lands at 1660 m, making the authored maze footprint almost exactly 50% of
- * the 4700 x 4700 playable square.
- */
-export const MAZE_WORLD_RING_RADII = [540, 920, 1300, 1632] as const;
 export const MAZE_WORLD_COVERAGE_HALF_EXTENT =
-  MAZE_WORLD_RING_RADII[MAZE_WORLD_RING_RADII.length - 1] + MAZE_DOUBLE_WALL_CENTER_OFFSET;
+  MAZE_GRID_HALF_EXTENT + MAZE_DOUBLE_WALL_CENTER_OFFSET;
 export const MAZE_WORLD_COVERAGE_RADIUS = MAZE_WORLD_COVERAGE_HALF_EXTENT;
 export const MAZE_TARGET_MAP_AREA_FRACTION =
   ((MAZE_WORLD_COVERAGE_HALF_EXTENT * 2) ** 2)
   / ((PLAYABLE_WORLD_HALF_EXTENT * 2) ** 2);
 
-export const MAZE_MAX_WALL_SEGMENT_LENGTH = 144;
+export const MAZE_LOOP_PROBABILITY = 0.15;
+export const MAZE_MAX_WALL_SEGMENT_LENGTH = MAZE_CORRIDOR_CELL_SIZE * 2;
 
 export const MAZE_LANDMARK_CLEARINGS: readonly MazeClearing[] = Object.freeze([
   {
@@ -81,6 +81,7 @@ export const MAZE_LANDMARK_CLEARINGS: readonly MazeClearing[] = Object.freeze([
 ]);
 
 const walls: MazeWall[] = [];
+const logicalWallIds = new Set<string>();
 
 function mergedGateIntervals(
   min: number,
@@ -111,7 +112,7 @@ function horizontalClearingGates(z: number): GateRange[] {
   const gates: GateRange[] = [];
   for (const clearing of MAZE_LANDMARK_CLEARINGS) {
     const dz = Math.abs(z - clearing.z);
-    const reach = clearing.radius + MAZE_WALL_THICKNESS * 0.5;
+    const reach = clearing.radius + MAZE_WALL_THICKNESS;
     if (dz >= reach) continue;
     gates.push({
       center: clearing.x,
@@ -125,7 +126,7 @@ function verticalClearingGates(x: number): GateRange[] {
   const gates: GateRange[] = [];
   for (const clearing of MAZE_LANDMARK_CLEARINGS) {
     const dx = Math.abs(x - clearing.x);
-    const reach = clearing.radius + MAZE_WALL_THICKNESS * 0.5;
+    const reach = clearing.radius + MAZE_WALL_THICKNESS;
     if (dx >= reach) continue;
     gates.push({
       center: clearing.z,
@@ -133,6 +134,93 @@ function verticalClearingGates(x: number): GateRange[] {
     });
   }
   return gates;
+}
+
+function segmentDistanceToPoint(
+  start: MazePoint2,
+  end: MazePoint2,
+  point: MazePoint2,
+): number {
+  const dx = end.x - start.x;
+  const dz = end.z - start.z;
+  const lengthSq = dx * dx + dz * dz;
+  if (lengthSq <= 1e-9) return Math.hypot(point.x - start.x, point.z - start.z);
+  const t = Math.max(
+    0,
+    Math.min(1, ((point.x - start.x) * dx + (point.z - start.z) * dz) / lengthSq),
+  );
+  return Math.hypot(
+    point.x - (start.x + dx * t),
+    point.z - (start.z + dz * t),
+  );
+}
+
+function intersectsLandmarkClearing(start: MazePoint2, end: MazePoint2): boolean {
+  return MAZE_LANDMARK_CLEARINGS.some((clearing) => (
+    segmentDistanceToPoint(start, end, clearing)
+    <= clearing.radius + MAZE_WALL_THICKNESS
+  ));
+}
+
+function isCentralEntranceDivider(start: MazePoint2, end: MazePoint2): boolean {
+  const epsilon = 1e-6;
+  const boundary = MAZE_CENTRAL_BOUNDARY_HALF_EXTENT;
+  const vertical = Math.abs(start.x - end.x) < epsilon;
+  if (vertical && Math.abs(start.x) < epsilon) {
+    const minZ = Math.min(start.z, end.z);
+    const maxZ = Math.max(start.z, end.z);
+    return (
+      (minZ <= -boundary && maxZ >= -boundary)
+      || (minZ <= boundary && maxZ >= boundary)
+    );
+  }
+
+  const horizontal = Math.abs(start.z - end.z) < epsilon;
+  if (horizontal && Math.abs(start.z) < epsilon) {
+    const minX = Math.min(start.x, end.x);
+    const maxX = Math.max(start.x, end.x);
+    return (
+      (minX <= -boundary && maxX >= -boundary)
+      || (minX <= boundary && maxX >= boundary)
+    );
+  }
+  return false;
+}
+
+function addDoubleHorizontalWall(id: string, x: number, z: number, width: number): void {
+  if (width <= MAZE_WALL_THICKNESS) return;
+  const start = { x: x - width * 0.5, z };
+  const end = { x: x + width * 0.5, z };
+  if (isCentralEntranceDivider(start, end) || intersectsLandmarkClearing(start, end)) return;
+  logicalWallIds.add(id);
+  for (const side of [-1, 1] as const) {
+    walls.push({
+      id: `${id}-${side < 0 ? 'a' : 'b'}`,
+      x,
+      z: z + side * MAZE_DOUBLE_WALL_CENTER_OFFSET,
+      width,
+      depth: MAZE_WALL_THICKNESS,
+      height: MAZE_WALL_HEIGHT,
+    });
+  }
+}
+
+function addDoubleVerticalWall(id: string, x: number, z: number, depth: number): void {
+  if (depth <= MAZE_WALL_THICKNESS) return;
+  const start = { x, z: z - depth * 0.5 };
+  const end = { x, z: z + depth * 0.5 };
+  if (isCentralEntranceDivider(start, end) || intersectsLandmarkClearing(start, end)) return;
+  logicalWallIds.add(id);
+  for (const side of [-1, 1] as const) {
+    walls.push({
+      id: `${id}-${side < 0 ? 'a' : 'b'}`,
+      x: x + side * MAZE_DOUBLE_WALL_CENTER_OFFSET,
+      z,
+      width: MAZE_WALL_THICKNESS,
+      depth,
+      height: MAZE_WALL_HEIGHT,
+    });
+  }
 }
 
 function addHorizontalSpan(idPrefix: string, z: number, startX: number, endX: number): void {
@@ -143,14 +231,12 @@ function addHorizontalSpan(idPrefix: string, z: number, startX: number, endX: nu
   for (let index = 0; index < count; index += 1) {
     const minX = startX + index * segmentLength;
     const maxX = index === count - 1 ? endX : minX + segmentLength;
-    walls.push({
-      id: `${idPrefix}-${index}`,
-      x: (minX + maxX) * 0.5,
+    addDoubleHorizontalWall(
+      `${idPrefix}-${index}`,
+      (minX + maxX) * 0.5,
       z,
-      width: maxX - minX,
-      depth: MAZE_WALL_THICKNESS,
-      height: MAZE_WALL_HEIGHT,
-    });
+      maxX - minX,
+    );
   }
 }
 
@@ -162,14 +248,12 @@ function addVerticalSpan(idPrefix: string, x: number, startZ: number, endZ: numb
   for (let index = 0; index < count; index += 1) {
     const minZ = startZ + index * segmentLength;
     const maxZ = index === count - 1 ? endZ : minZ + segmentLength;
-    walls.push({
-      id: `${idPrefix}-${index}`,
+    addDoubleVerticalWall(
+      `${idPrefix}-${index}`,
       x,
-      z: (minZ + maxZ) * 0.5,
-      width: MAZE_WALL_THICKNESS,
-      depth: maxZ - minZ,
-      height: MAZE_WALL_HEIGHT,
-    });
+      (minZ + maxZ) * 0.5,
+      maxZ - minZ,
+    );
   }
 }
 
@@ -207,78 +291,253 @@ function addVerticalRun(
   addVerticalSpan(`${idPrefix}-run${segmentIndex}`, x, cursor, maxZ);
 }
 
-type RingGates = {
-  north: readonly GateRange[];
-  south: readonly GateRange[];
-  west: readonly GateRange[];
-  east: readonly GateRange[];
-};
-
-function addSquareLayer(idPrefix: string, radius: number, gates: RingGates): void {
-  addHorizontalRun(`${idPrefix}-n`, -radius, -radius, radius, gates.north);
-  addHorizontalRun(`${idPrefix}-s`, radius, -radius, radius, gates.south);
-  addVerticalRun(`${idPrefix}-w`, -radius, -radius, radius, gates.west);
-  addVerticalRun(`${idPrefix}-e`, radius, -radius, radius, gates.east);
+function cellId(cell: MazeCell): string {
+  return `${cell.ix}:${cell.iz}`;
 }
 
-function addDoubleSquareRing(
-  idPrefix: string,
-  nominalRadius: number,
-  gates: RingGates,
-): void {
-  addSquareLayer(
-    `${idPrefix}-inner`,
-    nominalRadius - MAZE_DOUBLE_WALL_CENTER_OFFSET,
-    gates,
-  );
-  addSquareLayer(
-    `${idPrefix}-outer`,
-    nominalRadius + MAZE_DOUBLE_WALL_CENTER_OFFSET,
-    gates,
+function edgeKey(a: MazeCell, b: MazeCell): string {
+  const aKey = cellId(a);
+  const bKey = cellId(b);
+  return aKey < bKey ? `${aKey}|${bKey}` : `${bKey}|${aKey}`;
+}
+
+function isCentralHoleCell(ix: number, iz: number): boolean {
+  return ix >= 6 && ix <= 11 && iz >= 6 && iz <= 11;
+}
+
+function isMazeCell(ix: number, iz: number): boolean {
+  return (
+    ix >= 0
+    && ix < MAZE_GRID_CELLS
+    && iz >= 0
+    && iz < MAZE_GRID_CELLS
+    && !isCentralHoleCell(ix, iz)
   );
 }
 
-const centralEntrances: RingGates = {
-  north: [{ center: 0, halfWidth: MAZE_CENTRAL_GATE_HALF_WIDTH }],
-  south: [{ center: 0, halfWidth: MAZE_CENTRAL_GATE_HALF_WIDTH }],
-  west: [{ center: 0, halfWidth: MAZE_CENTRAL_GATE_HALF_WIDTH }],
-  east: [{ center: 0, halfWidth: MAZE_CENTRAL_GATE_HALF_WIDTH }],
-};
-
-// The spawn clearing is deliberately empty. The first maze boundary begins
-// beyond 500 m and can only be crossed through the four cardinal entrances.
-addDoubleSquareRing('center-gate', MAZE_WORLD_RING_RADII[0], centralEntrances);
-
-// Deeper rings keep very broad corridors but move their gates sideways so the
-// full labyrinth cannot be solved by running in one straight radial line.
-for (let index = 1; index < MAZE_WORLD_RING_RADII.length; index += 1) {
-  const radius = MAZE_WORLD_RING_RADII[index];
-  const sign = index % 2 === 0 ? 1 : -1;
-  const far = radius * 0.48;
-  const near = radius * 0.17;
-  const gateHalfWidth = index === MAZE_WORLD_RING_RADII.length - 1 ? 100 : 90;
-  const gates: RingGates = {
-    north: [
-      { center: -far * sign, halfWidth: gateHalfWidth },
-      { center: near * sign, halfWidth: gateHalfWidth },
-    ],
-    south: [
-      { center: -near * sign, halfWidth: gateHalfWidth },
-      { center: far * sign, halfWidth: gateHalfWidth },
-    ],
-    west: [
-      { center: far * sign, halfWidth: gateHalfWidth },
-      { center: -near * sign, halfWidth: gateHalfWidth },
-    ],
-    east: [
-      { center: near * sign, halfWidth: gateHalfWidth },
-      { center: -far * sign, halfWidth: gateHalfWidth },
-    ],
+function mazeCellCenter(cell: MazeCell): MazePoint2 {
+  return {
+    x: -MAZE_GRID_HALF_EXTENT + (cell.ix + 0.5) * MAZE_CORRIDOR_CELL_SIZE,
+    z: -MAZE_GRID_HALF_EXTENT + (cell.iz + 0.5) * MAZE_CORRIDOR_CELL_SIZE,
   };
-  addDoubleSquareRing(`world-${radius}`, radius, gates);
 }
+
+function xorshift32(state: number): number {
+  let value = state >>> 0;
+  value ^= (value << 13) >>> 0;
+  value ^= value >>> 17;
+  value ^= (value << 5) >>> 0;
+  return value >>> 0;
+}
+
+function allMazeCells(): MazeCell[] {
+  const cells: MazeCell[] = [];
+  for (let iz = 0; iz < MAZE_GRID_CELLS; iz += 1) {
+    for (let ix = 0; ix < MAZE_GRID_CELLS; ix += 1) {
+      if (isMazeCell(ix, iz)) cells.push({ ix, iz });
+    }
+  }
+  return cells;
+}
+
+function neighborsOf(cell: MazeCell): MazeCell[] {
+  const result: MazeCell[] = [];
+  const offsets = [
+    { ix: -1, iz: 0 },
+    { ix: 1, iz: 0 },
+    { ix: 0, iz: -1 },
+    { ix: 0, iz: 1 },
+  ] as const;
+  for (const offset of offsets) {
+    const ix = cell.ix + offset.ix;
+    const iz = cell.iz + offset.iz;
+    if (isMazeCell(ix, iz)) result.push({ ix, iz });
+  }
+  return result;
+}
+
+function buildMazePassages(): {
+  passages: Set<string>;
+  loopPassages: number;
+  deadEnds: number;
+  junctions: number;
+  cellCount: number;
+} {
+  const cells = allMazeCells();
+  const visited = new Set<string>();
+  const passages = new Set<string>();
+  const stack: MazeCell[] = [{ ix: 8, iz: 5 }];
+  let randomState = 0x6d2b79f5;
+  visited.add(cellId(stack[0]));
+
+  while (stack.length > 0) {
+    const current = stack[stack.length - 1];
+    const candidates = neighborsOf(current).filter((cell) => !visited.has(cellId(cell)));
+    if (candidates.length === 0) {
+      stack.pop();
+      continue;
+    }
+
+    randomState = xorshift32(randomState);
+    const next = candidates[randomState % candidates.length];
+    passages.add(edgeKey(current, next));
+    visited.add(cellId(next));
+    stack.push(next);
+  }
+
+  const closedEdges: Array<{ a: MazeCell; b: MazeCell }> = [];
+  for (const cell of cells) {
+    for (const neighbor of [
+      { ix: cell.ix + 1, iz: cell.iz },
+      { ix: cell.ix, iz: cell.iz + 1 },
+    ]) {
+      if (!isMazeCell(neighbor.ix, neighbor.iz)) continue;
+      const key = edgeKey(cell, neighbor);
+      if (!passages.has(key)) closedEdges.push({ a: cell, b: neighbor });
+    }
+  }
+
+  let loopPassages = 0;
+  for (const edge of closedEdges) {
+    randomState = xorshift32(randomState);
+    if ((randomState % 10_000) >= MAZE_LOOP_PROBABILITY * 10_000) continue;
+    passages.add(edgeKey(edge.a, edge.b));
+    loopPassages += 1;
+  }
+
+  const degree = new Map<string, number>();
+  for (const cell of cells) degree.set(cellId(cell), 0);
+  for (const key of passages) {
+    const [a, b] = key.split('|');
+    degree.set(a, (degree.get(a) ?? 0) + 1);
+    degree.set(b, (degree.get(b) ?? 0) + 1);
+  }
+
+  return {
+    passages,
+    loopPassages,
+    deadEnds: [...degree.values()].filter((value) => value === 1).length,
+    junctions: [...degree.values()].filter((value) => value >= 3).length,
+    cellCount: cells.length,
+  };
+}
+
+const mazeTopology = buildMazePassages();
+
+export const MAZE_TOPOLOGY_STATS = Object.freeze({
+  cellCount: mazeTopology.cellCount,
+  loopPassages: mazeTopology.loopPassages,
+  deadEnds: mazeTopology.deadEnds,
+  junctions: mazeTopology.junctions,
+});
+
+function addInternalMazeWalls(): void {
+  for (let iz = 0; iz < MAZE_GRID_CELLS; iz += 1) {
+    for (let ix = 0; ix < MAZE_GRID_CELLS; ix += 1) {
+      if (!isMazeCell(ix, iz)) continue;
+      const cell = { ix, iz };
+      const center = mazeCellCenter(cell);
+
+      const right = { ix: ix + 1, iz };
+      if (isMazeCell(right.ix, right.iz) && !mazeTopology.passages.has(edgeKey(cell, right))) {
+        addDoubleVerticalWall(
+          `grid-v-${ix + 1}-${iz}`,
+          center.x + MAZE_CORRIDOR_CELL_SIZE * 0.5,
+          center.z,
+          MAZE_CORRIDOR_CELL_SIZE,
+        );
+      }
+
+      const down = { ix, iz: iz + 1 };
+      if (isMazeCell(down.ix, down.iz) && !mazeTopology.passages.has(edgeKey(cell, down))) {
+        addDoubleHorizontalWall(
+          `grid-h-${ix}-${iz + 1}`,
+          center.x,
+          center.z + MAZE_CORRIDOR_CELL_SIZE * 0.5,
+          MAZE_CORRIDOR_CELL_SIZE,
+        );
+      }
+    }
+  }
+}
+
+const centralEntrance: readonly GateRange[] = [
+  { center: 0, halfWidth: MAZE_CENTRAL_GATE_HALF_WIDTH },
+];
+
+// Nucleo Zero is a large, empty "Glade". These four openings are the only
+// passages from the clearing into the generated maze.
+addHorizontalRun(
+  'center-n',
+  -MAZE_CENTRAL_BOUNDARY_HALF_EXTENT,
+  -MAZE_CENTRAL_BOUNDARY_HALF_EXTENT,
+  MAZE_CENTRAL_BOUNDARY_HALF_EXTENT,
+  centralEntrance,
+);
+addHorizontalRun(
+  'center-s',
+  MAZE_CENTRAL_BOUNDARY_HALF_EXTENT,
+  -MAZE_CENTRAL_BOUNDARY_HALF_EXTENT,
+  MAZE_CENTRAL_BOUNDARY_HALF_EXTENT,
+  centralEntrance,
+);
+addVerticalRun(
+  'center-w',
+  -MAZE_CENTRAL_BOUNDARY_HALF_EXTENT,
+  -MAZE_CENTRAL_BOUNDARY_HALF_EXTENT,
+  MAZE_CENTRAL_BOUNDARY_HALF_EXTENT,
+  centralEntrance,
+);
+addVerticalRun(
+  'center-e',
+  MAZE_CENTRAL_BOUNDARY_HALF_EXTENT,
+  -MAZE_CENTRAL_BOUNDARY_HALF_EXTENT,
+  MAZE_CENTRAL_BOUNDARY_HALF_EXTENT,
+  centralEntrance,
+);
+
+addInternalMazeWalls();
+
+const outerExitOffset = MAZE_CORRIDOR_CELL_SIZE * 6.5;
+const outerExitHalfWidth = MAZE_CORRIDOR_CELL_SIZE * 0.5;
+const outerExits: readonly GateRange[] = [
+  { center: -outerExitOffset, halfWidth: outerExitHalfWidth },
+  { center: outerExitOffset, halfWidth: outerExitHalfWidth },
+];
+
+// The maze itself occupies ~50% of the map. Beyond this perimeter the biome
+// space opens again; paired exits on every side keep each quadrant reachable.
+addHorizontalRun(
+  'outer-n',
+  -MAZE_GRID_HALF_EXTENT,
+  -MAZE_GRID_HALF_EXTENT,
+  MAZE_GRID_HALF_EXTENT,
+  outerExits,
+);
+addHorizontalRun(
+  'outer-s',
+  MAZE_GRID_HALF_EXTENT,
+  -MAZE_GRID_HALF_EXTENT,
+  MAZE_GRID_HALF_EXTENT,
+  outerExits,
+);
+addVerticalRun(
+  'outer-w',
+  -MAZE_GRID_HALF_EXTENT,
+  -MAZE_GRID_HALF_EXTENT,
+  MAZE_GRID_HALF_EXTENT,
+  outerExits,
+);
+addVerticalRun(
+  'outer-e',
+  MAZE_GRID_HALF_EXTENT,
+  -MAZE_GRID_HALF_EXTENT,
+  MAZE_GRID_HALF_EXTENT,
+  outerExits,
+);
 
 export const MAZE_WALLS: readonly MazeWall[] = Object.freeze(walls);
+export const MAZE_LOGICAL_WALL_COUNT = logicalWallIds.size;
 
 function wallBounds(wall: MazeWall, padding = 0): Bounds2 {
   return {
@@ -322,7 +581,7 @@ function segmentIntersectsBounds(start: MazePoint2, end: MazePoint2, bounds: Bou
   );
 }
 
-const SPATIAL_CELL_SIZE = 180;
+const SPATIAL_CELL_SIZE = MAZE_CORRIDOR_CELL_SIZE;
 const spatialWallIndex = new Map<string, number[]>();
 
 function spatialCell(value: number): number {
@@ -387,8 +646,6 @@ export function mazeSegmentCrossesWall(
     const startedInside = pointInBounds(start, bounds);
     const endedInside = pointInBounds(end, bounds);
 
-    // Layout migrations must never trap an entity already overlapping a new
-    // wall: moving out remains legal.
     if (startedInside && !endedInside) continue;
     if (startedInside && endedInside) return true;
     if (!startedInside && segmentIntersectsBounds(start, end, bounds)) return true;

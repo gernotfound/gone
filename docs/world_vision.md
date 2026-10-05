@@ -63,7 +63,7 @@ No single explanation should become canon until the POI sequence and intended ga
 
 The maze should be generated or authored as a **navigation system**, not a carpet of random walls. The center must always be legible. Main routes should create loops, not only dead ends. Sector gates should make biome transitions readable. High-value POIs should have multiple approaches with different exposure and traversal cost.
 
-A useful long-term topology is concentric: central hub, inner maze, biome sectors, outer control ring. This supports progressively more dangerous expeditions while keeping the player's mental model stable.
+The stable mental model is now: central hub, four cardinal entrances, a genuinely branching maze field, biome landmarks and then the open outer world. The maze should feel learnable through repeated expeditions, but never reducible to following one concentric band.
 
 ## Implementation stages
 
@@ -78,11 +78,13 @@ A useful long-term topology is concentric: central hub, inner maze, biome sector
 
 ### Stage 2 — maze prototype
 
-The first reusable maze cell system now surrounds Nucleo Zero with three concentric, staggered wall rings and four outer sector gates. The prototype uses 36 m cells, 4 m-thick walls and 24 m wall height. The layout is deterministic and shared between local collision, host movement validation, host hitscan occlusion and supply placement.
+Nucleo Zero is a **large open central clearing**, intentionally free of maze walls for roughly 420 m in every direction. The first maze boundary sits beyond 500 m. Exactly four broad cardinal entrances — north, south, east and west — connect the clearing to the maze; each opening is about 184 m wide.
 
-Nucleo Zero is now a **large open central clearing**, intentionally free of maze walls for roughly 420 m in every direction. The first real maze boundary begins beyond 500 m and is a paired/double wall. Exactly four broad cardinal entrances — north, south, east and west — connect the clearing to the maze. Each entrance is about 160 m wide so the player reads it as a major route rather than a narrow doorway.
+Outside that clearing, the maze is no longer built from concentric bands. It uses an 18x18 coarse grid of roughly 184 m cells with the central 6x6 block removed. A fixed seeded depth-first carve creates the primary connected route network; deterministic extra openings add controlled loops so the result contains real junctions, wrong turns, dead ends and alternate routes rather than a single perfect-maze tree. The seed is fixed so every player and the host see the same world.
 
-The structural maze uses four broad double-wall bands centered around roughly 540, 920, 1300 and 1632 m. The outer layer stops at about +/-1660 m, making the authored maze footprint approximately 50% of the square playable map. Major travel corridors between control bands are hundreds of meters wide, while the two slabs in each double wall keep a 42 m separation. Landmark clearings reserve space around the Cratere del Segnale, Osservatorio Fratturato, Stazione di Pompaggio 04 and Serre Sommerse.
+Every retained logical wall is rendered as two massive parallel slabs. The gap between the pair is deliberately narrower than the player collision envelope, so it reads visually as a double wall without becoming a hidden traversal lane. Landmark clearings remove nearby internal walls around the Cratere del Segnale, Osservatorio Fratturato, Stazione di Pompaggio 04 and Serre Sommerse.
+
+The outer wall envelope stops near +/-1660 m, keeping the maze footprint at approximately 50% of the square playable map. The space between neighboring logical wall lines is about 184 m, leaving broad combat/navigation corridors rather than claustrophobic passages.
 
 Maze walls are intentionally extreme vertical structures: presentation runs from Y=-600 to Y=+1200. This guarantees they begin below plausible terrain cavities and extend far above the traversal envelope rather than trying to follow every local terrain height.
 
@@ -98,7 +100,7 @@ Define which information or mechanisms found in one sector unlock routes or unde
 
 ### Stage 5 — full biome expansion
 
-The structural maze now occupies about half of the playable map and reaches every quadrant through the four-gate central structure and broad double-wall bands. This stage therefore means **biome differentiation**, not basic wall coverage: distinct traversal language, assets, soundscape, enemies/resources, POIs and progression logic for each sector.
+The structural maze now occupies about half of the playable map and reaches every quadrant through the four-gate central structure and branching generated corridor network. This stage therefore means **biome differentiation**, not basic wall coverage: distinct traversal language, assets, soundscape, enemies/resources, POIs and progression logic for each sector.
 
 ## Non-goals for the first pass
 
