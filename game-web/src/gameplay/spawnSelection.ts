@@ -1,3 +1,19 @@
+import {
+  WORLD_CENTER_X,
+  WORLD_CENTER_Z,
+} from '../world/worldTopology.ts';
+
+export {
+  CENTRAL_HUB_RADIUS,
+  CENTRAL_SUPPLY_MAX_RADIUS,
+  CENTRAL_SUPPLY_MIN_RADIUS,
+  GIANT_CRATER_CENTER_X,
+  GIANT_CRATER_CENTER_Z,
+  GIANT_CRATER_RADIUS,
+  WORLD_CENTER_X,
+  WORLD_CENTER_Z,
+} from '../world/worldTopology.ts';
+
 export type SpawnPoint = {
   id: string;
   label: string;
@@ -10,16 +26,6 @@ export type SpawnThreat = {
   isAlive?: boolean;
   position?: { x: number; z: number } | null;
 };
-
-export const WORLD_CENTER_X = 0;
-export const WORLD_CENTER_Z = 0;
-export const CENTRAL_HUB_RADIUS = 40;
-export const CENTRAL_SUPPLY_MIN_RADIUS = 52;
-export const CENTRAL_SUPPLY_MAX_RADIUS = 150;
-
-export const GIANT_CRATER_CENTER_X = 1200;
-export const GIANT_CRATER_CENTER_Z = 1200;
-export const GIANT_CRATER_RADIUS = 250;
 
 const SPAWN_SLOT_COUNT = 16;
 const INNER_SPAWN_RADIUS = 18;

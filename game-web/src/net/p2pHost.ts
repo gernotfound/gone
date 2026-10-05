@@ -538,13 +538,14 @@ export class P2PHost {
     this.__gonePvpHardeningState.acceptedClientStates += 1;
 
     if ((state.flags & CLIENT_STATE_EXT_FLAGS.HEALTH_PICKUP_REQUEST) !== 0 && record.hp < 100) {
-      const craterDistance = Math.hypot(
+      const supplyDistance = Math.hypot(
         record.position.x - HEALTH_PICKUP_AUTHORITY.centerX,
         record.position.z - HEALTH_PICKUP_AUTHORITY.centerZ,
       );
       const previousPickupAt = this.lastHealthPickupAt.get(peerId) ?? -Infinity;
       if (
-        craterDistance <= HEALTH_PICKUP_AUTHORITY.maxRadius
+        supplyDistance >= HEALTH_PICKUP_AUTHORITY.minRadius
+        && supplyDistance <= HEALTH_PICKUP_AUTHORITY.maxRadius
         && now - previousPickupAt >= HEALTH_PICKUP_AUTHORITY.cooldownMs
       ) {
         record.hp = 100;
