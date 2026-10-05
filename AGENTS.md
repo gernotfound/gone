@@ -200,9 +200,10 @@ Browser smoke mobile changes with pointerdown/pointermove; specifically verify r
 - `world/biomeRegistry.ts` owns deterministic biome identity, presentation palettes and working landmark metadata.
 - `docs/world_vision.md` is the working world/lore direction: Nucleo Zero at the origin, maze sectors around it, one meaningful POI per biome, and the southeast crater as a destination rather than the start.
 - Biome presentation may tint streamed terrain, but Rust/WASM remains the geometry/height authority. Do not fork collision physics just to iterate on biome art direction.
-- `world/mazeLayout.ts` owns canonical deterministic maze geometry and pure collision/occlusion queries. Client prediction and host authority must use this same layout.
-- `world/mazePrototype.ts` owns only instanced wall presentation. Never derive authority from rendered Three.js objects.
-- The current maze is an inner prototype around Nucleo Zero; procedural full-world maze expansion, POIs, progression gates and final lore remain later stages.
+- `world/mazeLayout.ts` owns canonical deterministic maze geometry, the ~420 m wall-free Nucleo Zero clearing, four cardinal 160 m entrances, double-wall ring spacing, landmark clearings, spatial indexing and pure collision/occlusion queries. Client prediction, PvE movement and host authority must use this same layout.
+- `world/mazeNavigation.ts` owns bounded A* routing over canonical maze collision. Do not add a divergent navmesh for the same walls.
+- `world/mazePrototype.ts` owns only instanced wall presentation. Walls are deliberately extruded from Y=-600 to Y=+1200 so terrain cannot leave gaps below them and normal traversal cannot pass above them.
+- The authored maze footprint ends at +/-1660 m, approximately 50% of the square playable area. The outer map remains open for biome/POI space. POI structures, progression gates, biome-specific maze art and final lore remain later stages.
 
 ## Local gameplay / spawn
 
@@ -212,7 +213,7 @@ Browser smoke mobile changes with pointerdown/pointermove; specifically verify r
 - The southeast giant crater at X=+1200, Z=+1200 remains a landmark, not the spawn or supply center.
 - `gameplay/networkBindings.ts` owns P2P↔gameplay state wiring and host per-slot respawn.
 - `remotePlayerRegistry.ts` owns remote model lifecycle/interpolation/shield presentation.
-- Solo spiders: `bionicSpiderEnemies.ts` + `models/bionicSpider.ts`; disabled in P2P until represented host-authoritatively. Their spawn/movement must respect canonical maze walls even though advanced maze pathfinding is not implemented yet.
+- Solo spiders: `bionicSpiderEnemies.ts` + `models/bionicSpider.ts`; disabled in P2P until represented host-authoritatively. Spawn/movement respect canonical maze walls; blocked chases use bounded `mazeNavigation.ts` waypoint routing with throttled replans.
 
 ## Weapons
 
@@ -270,7 +271,7 @@ Current baseline:
 - Touch: `mobile/mobileRuntime.ts`, `smartphoneControlsGuard.ts`, `pubgTouchControls.ts`, `competitiveTouchControls.ts`, `touchPreferences.ts`, `touchLayoutEditor.ts`.
 - PWA/mobile lifecycle: `pwa/pwaRuntime.ts`, `mobile/mobileSessionResume.ts`.
 - Diagnostics: `observability/clientDiagnostics.ts`, `api/client-telemetry.js`.
-- World: `world/chunkManager.ts`, `world/worldConfig.ts`, `world/worldTopology.ts`, `world/biomeRegistry.ts`, `world/mazeLayout.ts`, `world/mazePrototype.ts`.
+- World: `world/chunkManager.ts`, `world/worldConfig.ts`, `world/worldTopology.ts`, `world/biomeRegistry.ts`, `world/mazeLayout.ts`, `world/mazeNavigation.ts`, `world/mazePrototype.ts`.
 
 ## Current structural direction
 

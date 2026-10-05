@@ -249,4 +249,29 @@ export async function run(suite) {
     assert(maxFrameDelta < 0.45, `Joint rotations must stay continuous; observed ${maxFrameDelta.toFixed(3)} rad/frame`);
     system.dispose();
   });
+
+  suite.test('Spider chase uses maze pathfinding when the player is behind a wall', () => {
+    const scene = new THREE.Scene();
+    const system = new BionicSpiderEnemySystem();
+    system.init(scene, () => 0, () => {});
+    const player = new THREE.Vector3(-216, 0, -650);
+    system.update(0, player, true, true, false);
+
+    const id = system.spawnAtCrater(-216, -450, 'maze-routing');
+    assert(id !== null, 'Maze routing test requires a spider outside the inner wall');
+
+    for (let i = 0; i < 16; i += 1) system.update(0.1, player, true, true, false);
+    const emerged = system.getSnapshot(id);
+    assert(emerged && !emerged.emerging, 'Spider must finish emergence before route evaluation');
+    const initialX = emerged.x;
+
+    for (let i = 0; i < 24; i += 1) system.update(0.1, player, true, true, false);
+    const routed = system.getSnapshot(id);
+    assert(
+      routed.x > initialX + 5,
+      `Spider must make lateral progress toward the centered gate instead of grinding into the double wall; x=${routed.x}`,
+    );
+    system.dispose();
+  });
+
 }

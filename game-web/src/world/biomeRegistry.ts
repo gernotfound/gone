@@ -17,8 +17,8 @@ export type BiomeDefinition = {
   };
 };
 
-export const CENTRAL_BIOME_RADIUS = 220;
-export const CENTRAL_BIOME_BLEND = 60;
+export const CENTRAL_BIOME_RADIUS = 420;
+export const CENTRAL_BIOME_BLEND = 80;
 
 export const BIOMES: Record<BiomeId, BiomeDefinition> = {
   central_hub: {

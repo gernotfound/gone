@@ -1,9 +1,10 @@
 import * as THREE from 'three';
 import { sceneManager } from '../rendering/scene.ts';
-import { getTerrainHeightAt } from './chunkManager.ts';
 import {
   MAZE_WALLS,
-  MAZE_WALL_EMBED_DEPTH,
+  MAZE_WALL_BOTTOM_Y,
+  MAZE_WALL_HEIGHT,
+  MAZE_WALL_TOP_Y,
   type MazeWall,
 } from './mazeLayout.ts';
 
@@ -11,17 +12,13 @@ const dummy = new THREE.Object3D();
 let mazeMesh: THREE.InstancedMesh<THREE.BoxGeometry, THREE.MeshStandardMaterial> | null = null;
 
 function wallTransform(wall: MazeWall): void {
-  const ground = getTerrainHeightAt(wall.x, wall.z);
-  const renderedHeight = wall.height + MAZE_WALL_EMBED_DEPTH;
-  const bottom = ground - MAZE_WALL_EMBED_DEPTH;
-
   dummy.position.set(
     wall.x,
-    bottom + renderedHeight * 0.5,
+    (MAZE_WALL_BOTTOM_Y + MAZE_WALL_TOP_Y) * 0.5,
     wall.z,
   );
   dummy.rotation.set(0, 0, 0);
-  dummy.scale.set(wall.width, renderedHeight, wall.depth);
+  dummy.scale.set(wall.width, MAZE_WALL_HEIGHT, wall.depth);
   dummy.updateMatrix();
 }
 
@@ -35,7 +32,7 @@ function buildMazeMesh(): THREE.InstancedMesh<THREE.BoxGeometry, THREE.MeshStand
     metalness: 0.38,
   });
   const mesh = new THREE.InstancedMesh(geometry, material, MAZE_WALLS.length);
-  mesh.name = 'CentralMazePrototype';
+  mesh.name = 'WorldMaze';
   mesh.castShadow = false;
   mesh.receiveShadow = false;
   mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);

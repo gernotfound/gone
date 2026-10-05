@@ -117,7 +117,7 @@ Touch sustained FIRE must route to `advancedWeaponController`; it must not leave
 
 ### 6. Networking (`game-web/src/net/`)
 
-The browser host remains authoritative for PvP. Visual rays/tracers never own damage. Canonical maze walls also participate in host-side hitscan occlusion; client raycasts only mirror that authority for presentation.
+The browser host remains authoritative for PvP. Visual rays/tracers never own damage. Canonical maze walls across the full world-ring network also participate in host-side hitscan occlusion; client raycasts only mirror that authority for presentation.
 
 #### Movement authority
 
@@ -145,8 +145,9 @@ Direct WebRTC (`directWebRtc.ts`) uses `iceServers: []` by project policy. `Nati
 
 - `world/worldTopology.ts`: shared immutable world-center/crater/supply geometry constants.
 - `world/biomeRegistry.ts`: biome identity and terrain-palette semantics.
-- `world/mazeLayout.ts`: canonical deterministic maze wall geometry plus pure collision/ray queries used by both client prediction and host authority.
-- `world/mazePrototype.ts`: instanced Three.js presentation of the canonical maze layout; it does not own collision rules.
+- `world/mazeLayout.ts`: canonical deterministic double-wall maze geometry, large central clearing/four cardinal entrances, landmark clearings, spatial wall index and pure collision/ray queries used by client prediction and host authority.
+- `world/mazeNavigation.ts`: bounded 72 m-grid A* over `mazeLayout`; it consumes canonical collision rather than defining a second nav authority.
+- `world/mazePrototype.ts`: instanced Three.js presentation of the canonical maze layout. Walls are extruded from Y=-600 to Y=+1200 and never derive authority from terrain sampling.
 - `world/`: chunk lifecycle and terrain sampling.
 - `rendering/`: scene/renderer resources.
 - `models/`: model construction/loading/socket attachment.

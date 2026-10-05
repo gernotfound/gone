@@ -80,7 +80,13 @@ A useful long-term topology is concentric: central hub, inner maze, biome sector
 
 The first reusable maze cell system now surrounds Nucleo Zero with three concentric, staggered wall rings and four outer sector gates. The prototype uses 36 m cells, 4 m-thick walls and 24 m wall height. The layout is deterministic and shared between local collision, host movement validation, host hitscan occlusion and supply placement.
 
-The prototype is intentionally bounded rather than full-world. It exists to validate corridor width, combat readability, mobile performance, line of sight, jumping/crouching constraints, networking and navigation before scaling the pattern across biome sectors.
+Nucleo Zero is now a **large open central clearing**, intentionally free of maze walls for roughly 420 m in every direction. The first real maze boundary begins beyond 500 m and is a paired/double wall. Exactly four broad cardinal entrances — north, south, east and west — connect the clearing to the maze. Each entrance is about 160 m wide so the player reads it as a major route rather than a narrow doorway.
+
+The structural maze uses four broad double-wall bands centered around roughly 540, 920, 1300 and 1632 m. The outer layer stops at about +/-1660 m, making the authored maze footprint approximately 50% of the square playable map. Major travel corridors between control bands are hundreds of meters wide, while the two slabs in each double wall keep a 42 m separation. Landmark clearings reserve space around the Cratere del Segnale, Osservatorio Fratturato, Stazione di Pompaggio 04 and Serre Sommerse.
+
+Maze walls are intentionally extreme vertical structures: presentation runs from Y=-600 to Y=+1200. This guarantees they begin below plausible terrain cavities and extend far above the traversal envelope rather than trying to follow every local terrain height.
+
+Solo spider AI uses bounded A* waypoint routing when canonical maze walls block a direct chase. This is deliberately obstacle routing, not a second navigation authority: the pathfinder consumes the same wall collision queries used by the player and host.
 
 ### Stage 3 — first complete sector
 
@@ -92,8 +98,8 @@ Define which information or mechanisms found in one sector unlock routes or unde
 
 ### Stage 5 — full biome expansion
 
-Only after the first sector proves the pattern, extend the system to the remaining regions with distinct traversal, assets, soundscape, enemies/resources and POIs.
+The structural maze now occupies about half of the playable map and reaches every quadrant through the four-gate central structure and broad double-wall bands. This stage therefore means **biome differentiation**, not basic wall coverage: distinct traversal language, assets, soundscape, enemies/resources, POIs and progression logic for each sector.
 
 ## Non-goals for the first pass
 
-This foundation does not yet add physical maze walls, procedural POI placement, quest scripting, biome-specific enemies, final lore, or progression locks. Those systems need separate design and performance validation rather than being hidden inside terrain generation.
+The current world still does not add procedural POI structures, quest scripting, biome-specific enemies, progression locks, final lore or hierarchical/navmesh AI beyond the bounded maze A*. Those systems need separate design and performance validation rather than being hidden inside terrain generation.
