@@ -254,10 +254,10 @@ export async function run(suite) {
     const scene = new THREE.Scene();
     const system = new BionicSpiderEnemySystem();
     system.init(scene, () => 0, () => {});
-    const player = new THREE.Vector3(-108, 0, -60);
+    const player = new THREE.Vector3(-216, 0, -650);
     system.update(0, player, true, true, false);
 
-    const id = system.spawnAtCrater(-108, -120, 'maze-routing');
+    const id = system.spawnAtCrater(-216, -450, 'maze-routing');
     assert(id !== null, 'Maze routing test requires a spider outside the inner wall');
 
     for (let i = 0; i < 16; i += 1) system.update(0.1, player, true, true, false);
@@ -269,7 +269,7 @@ export async function run(suite) {
     const routed = system.getSnapshot(id);
     assert(
       routed.x > initialX + 5,
-      `Spider must make lateral progress toward the x=0 gate instead of grinding into the wall; x=${routed.x}`,
+      `Spider must make lateral progress toward the centered gate instead of grinding into the double wall; x=${routed.x}`,
     );
     system.dispose();
   });
