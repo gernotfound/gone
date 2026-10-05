@@ -209,7 +209,7 @@ function addDoubleVerticalWall(id: string, x: number, z: number, depth: number):
   if (depth <= MAZE_WALL_THICKNESS) return;
   const start = { x, z: z - depth * 0.5 };
   const end = { x, z: z + depth * 0.5 };
-  if (intersectsLandmarkClearing(start, end)) return;
+  if (isCentralEntranceDivider(start, end) || intersectsLandmarkClearing(start, end)) return;
   logicalWallIds.add(id);
   for (const side of [-1, 1] as const) {
     walls.push({
