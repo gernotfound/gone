@@ -4,6 +4,7 @@ import {
   BIOMES,
   getBiomeAt,
 } from '../../game-web/src/world/biomeRegistry.ts';
+import { HEALTH_PICKUP_AUTHORITY } from '../../game-web/src/net/clientStateExtensions.ts';
 import {
   CENTRAL_HUB_RADIUS,
   CENTRAL_SUPPLY_MAX_RADIUS,
@@ -42,10 +43,25 @@ export async function run(suite) {
     assert(CENTRAL_SUPPLY_MIN_RADIUS > CENTRAL_HUB_RADIUS, 'loot must start outside the protected spawn clearing');
     assert(CENTRAL_SUPPLY_MAX_RADIUS > CENTRAL_SUPPLY_MIN_RADIUS, 'central loot annulus must have positive width');
 
+    assertEqual(HEALTH_PICKUP_AUTHORITY.centerX, WORLD_CENTER_X);
+    assertEqual(HEALTH_PICKUP_AUTHORITY.centerZ, WORLD_CENTER_Z);
+    assert(
+      HEALTH_PICKUP_AUTHORITY.minRadius < CENTRAL_SUPPLY_MIN_RADIUS,
+      'host authority must include pickup interaction slack at the inner edge',
+    );
+    assert(
+      HEALTH_PICKUP_AUTHORITY.maxRadius > CENTRAL_SUPPLY_MAX_RADIUS,
+      'host authority must include pickup interaction slack at the outer edge',
+    );
+
     const pickup = source('game-web', 'src', 'gameplay', 'craterSupplyPickups.ts');
     assert(pickup.includes('randomCentralSupplyPoint'), 'pickup placement must be central-hub based');
     assert(pickup.includes('WORLD_CENTER_X') && pickup.includes('WORLD_CENTER_Z'), 'pickup placement must use world center');
     assert(!pickup.includes('GIANT_CRATER_CENTER_X') && !pickup.includes('GIANT_CRATER_CENTER_Z'), 'crater coordinates must not drive supply placement');
+
+    const host = source('game-web', 'src', 'net', 'p2pHost.ts');
+    assert(host.includes('supplyDistance >= HEALTH_PICKUP_AUTHORITY.minRadius'), 'host must reject forged health pickup requests inside the hub');
+    assert(host.includes('supplyDistance <= HEALTH_PICKUP_AUTHORITY.maxRadius'), 'host must reject forged health pickup requests outside the supply annulus');
   });
 
   suite.test('Biome registry maps the hub and four maze sectors deterministically', () => {
