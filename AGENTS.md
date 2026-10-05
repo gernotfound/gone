@@ -212,7 +212,7 @@ Browser smoke mobile changes with pointerdown/pointermove; specifically verify r
 - The southeast giant crater at X=+1200, Z=+1200 remains a landmark, not the spawn or supply center.
 - `gameplay/networkBindings.ts` owns P2P↔gameplay state wiring and host per-slot respawn.
 - `remotePlayerRegistry.ts` owns remote model lifecycle/interpolation/shield presentation.
-- Solo spiders: `bionicSpiderEnemies.ts` + `models/bionicSpider.ts`; disabled in P2P until represented host-authoritatively.
+- Solo spiders: `bionicSpiderEnemies.ts` + `models/bionicSpider.ts`; disabled in P2P until represented host-authoritatively. Their spawn/movement must respect canonical maze walls even though advanced maze pathfinding is not implemented yet.
 
 ## Weapons
 
