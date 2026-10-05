@@ -2,6 +2,7 @@ import { bootstrap } from '../gameplay/engine.ts';
 import { startAdvancedWeaponController } from '../gameplay/advancedWeaponController.ts';
 import { startAimMovementTuning } from '../gameplay/aimMovementTuning.ts';
 import { startCentralSupplyPickups } from '../gameplay/craterSupplyPickups.ts';
+import { startMazePrototype } from '../world/mazePrototype.ts';
 import { startDynamicPrecisionReticle } from '../gameplay/dynamicPrecisionReticle.ts';
 import { startLocalMuzzleFlashBinding } from '../gameplay/localMuzzleFlashBinding.ts';
 import { startPrecisionShotRuntime } from '../gameplay/precisionShotRuntime.ts';
@@ -167,9 +168,15 @@ const CLIENT_RUNTIME_MODULES: readonly RuntimeModuleDefinition[] = [
     start: startSpawnController,
   },
   {
-    name: 'centralSupplyPickups',
+    name: 'mazePrototype',
     phase: 'presentation',
     dependsOn: BOOTSTRAP_DEPENDENCY,
+    start: startMazePrototype,
+  },
+  {
+    name: 'centralSupplyPickups',
+    phase: 'presentation',
+    dependsOn: ['bootstrap', 'mazePrototype'],
     start: startCentralSupplyPickups,
   },
   {
