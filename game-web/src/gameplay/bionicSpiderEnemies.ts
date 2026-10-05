@@ -21,6 +21,7 @@ import {
   type MazePoint2,
 } from '../world/mazeLayout.ts';
 import { findMazePath, MAZE_NAV_REPATH_DISTANCE } from '../world/mazeNavigation.ts';
+import { PLAYABLE_WORLD_HALF_EXTENT } from '../world/worldTopology.ts';
 
 export const BIONIC_SPIDER_MAX_HP = 100;
 export const BIONIC_SPIDER_MOVE_SPEED = ((12 + 24) / 2) * 0.8;
@@ -34,7 +35,7 @@ const CRATER_GRID = 200;
 const SPAWN_MIN_DISTANCE = 105;
 const SPAWN_MAX_DISTANCE = 620;
 const HARD_DESPAWN_DISTANCE = 980;
-const WORLD_LIMIT = 2350;
+const WORLD_LIMIT = PLAYABLE_WORLD_HALF_EXTENT;
 const EMERGE_DURATION = 1.15;
 const DAMAGE_ANIM_DURATION = 0.26;
 const DEATH_ANIM_DURATION = 1.25;
