@@ -33,7 +33,11 @@ export async function run(suite) {
     assertEqual(MAZE_CORRIDOR_CELL_SIZE, 184, 'maze corridors must remain very wide');
     assertEqual(MAZE_CENTRAL_BOUNDARY_HALF_EXTENT, 552, 'first maze wall must remain well away from spawn');
     assertGreaterThan(MAZE_LOGICAL_WALL_COUNT, 180, 'maze must contain many logical walls, not only perimeter rings');
-    assertGreaterThan(MAZE_WALLS.length, MAZE_LOGICAL_WALL_COUNT, 'every logical wall must render as a doubled structure');
+    assertEqual(
+      MAZE_WALLS.length,
+      MAZE_LOGICAL_WALL_COUNT * 2,
+      'every logical wall must render as exactly two physical slabs',
+    );
     assert(MAZE_WALLS.length <= 900, 'instanced physical wall count must stay bounded for mobile rendering');
     assertEqual(MAZE_TOPOLOGY_STATS.cellCount, 288, 'central clearing must be removed from the 18x18 maze graph');
     assertGreaterThan(MAZE_TOPOLOGY_STATS.deadEnds, 15, 'maze must contain meaningful dead ends');
