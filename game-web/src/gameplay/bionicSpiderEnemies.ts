@@ -14,7 +14,13 @@ import {
   type BionicSpiderHitRegion,
   type BionicSpiderModel,
 } from '../models/bionicSpider.ts';
-import { isMazePositionBlocked, resolveMazeMovement } from '../world/mazeLayout.ts';
+import {
+  isMazePositionBlocked,
+  mazeSegmentCrossesWall,
+  resolveMazeMovement,
+  type MazePoint2,
+} from '../world/mazeLayout.ts';
+import { findMazePath, MAZE_NAV_REPATH_DISTANCE } from '../world/mazeNavigation.ts';
 
 export const BIONIC_SPIDER_MAX_HP = 100;
 export const BIONIC_SPIDER_MOVE_SPEED = ((12 + 24) / 2) * 0.8;
@@ -37,6 +43,8 @@ const ATTACK_COOLDOWN = 0.82;
 const ATTACK_ANIM_DURATION = 0.30;
 const MOB_COLLISION_PASSES = 3;
 const MOB_MIN_SEPARATION = BIONIC_SPIDER_COLLISION_RADIUS * 2;
+const MAZE_REPATH_BASE_SECONDS = 0.38;
+const MAZE_WAYPOINT_REACH = Math.max(7, BIONIC_SPIDER_COLLISION_RADIUS * 0.8);
 
 // The supplied preview advances actionTime by 0.02/frame and multiplies it by
 // 0.8 for the gait cycle. At its intended ~60 Hz that is 0.96 cycles/second.
@@ -92,6 +100,11 @@ type EnemyState = {
   terrainProbeTimer: number;
   deathSide: number;
   flinchSide: number;
+  mazePath: MazePoint2[];
+  mazePathIndex: number;
+  mazeRepathTimer: number;
+  mazeTargetX: number;
+  mazeTargetZ: number;
   legs: LegState[];
 };
 
@@ -268,6 +281,11 @@ export class BionicSpiderEnemySystem {
       terrainProbeTimer: (id % 4) * 0.025,
       deathSide: id % 2 === 0 ? 1 : -1,
       flinchSide: 1,
+      mazePath: [],
+      mazePathIndex: 0,
+      mazeRepathTimer: 0,
+      mazeTargetX: x,
+      mazeTargetZ: z,
       legs: [],
     };
 
@@ -399,10 +417,74 @@ export class BionicSpiderEnemySystem {
     const distance = Math.hypot(dx, dz);
     const shouldChase = playerAlive && distance > BIONIC_SPIDER_CONTACT_RADIUS + 0.35 * BIONIC_SPIDER_SCALE;
     if (shouldChase) {
-      const desiredYaw = Math.atan2(dx, dz);
-      enemy.yaw = approachAngle(enemy.yaw, desiredYaw, 2.35 * delta);
-      enemy.speed = moveTowards(enemy.speed, BIONIC_SPIDER_MOVE_SPEED, 15 * delta);
+      const current = {
+        x: enemy.model.root.position.x,
+        z: enemy.model.root.position.z,
+      };
+      const goal = { x: playerPosition.x, z: playerPosition.z };
+      const directBlocked = mazeSegmentCrossesWall(
+        current,
+        goal,
+        BIONIC_SPIDER_COLLISION_RADIUS,
+      );
+      let chaseTarget = goal;
+
+      if (directBlocked) {
+        enemy.mazeRepathTimer -= delta;
+        const targetMoved = Math.hypot(
+          playerPosition.x - enemy.mazeTargetX,
+          playerPosition.z - enemy.mazeTargetZ,
+        ) >= MAZE_NAV_REPATH_DISTANCE;
+        if (
+          enemy.mazeRepathTimer <= 0
+          || targetMoved
+          || enemy.mazePathIndex >= enemy.mazePath.length
+        ) {
+          enemy.mazePath = findMazePath(
+            current,
+            goal,
+            BIONIC_SPIDER_COLLISION_RADIUS,
+          );
+          enemy.mazePathIndex = 0;
+          enemy.mazeTargetX = playerPosition.x;
+          enemy.mazeTargetZ = playerPosition.z;
+          enemy.mazeRepathTimer = MAZE_REPATH_BASE_SECONDS + (enemy.id % 4) * 0.035;
+        }
+
+        while (enemy.mazePathIndex < enemy.mazePath.length) {
+          const waypoint = enemy.mazePath[enemy.mazePathIndex];
+          if (Math.hypot(waypoint.x - current.x, waypoint.z - current.z) > MAZE_WAYPOINT_REACH) {
+            chaseTarget = waypoint;
+            break;
+          }
+          enemy.mazePathIndex += 1;
+        }
+
+        if (enemy.mazePathIndex >= enemy.mazePath.length) {
+          enemy.speed = moveTowards(enemy.speed, 0, 22 * delta);
+          chaseTarget = current;
+        }
+      } else {
+        enemy.mazePath.length = 0;
+        enemy.mazePathIndex = 0;
+        enemy.mazeRepathTimer = 0;
+        enemy.mazeTargetX = playerPosition.x;
+        enemy.mazeTargetZ = playerPosition.z;
+      }
+
+      const targetDx = chaseTarget.x - enemy.model.root.position.x;
+      const targetDz = chaseTarget.z - enemy.model.root.position.z;
+      if (Math.hypot(targetDx, targetDz) > 0.01) {
+        const desiredYaw = Math.atan2(targetDx, targetDz);
+        enemy.yaw = approachAngle(enemy.yaw, desiredYaw, 2.35 * delta);
+        if (!directBlocked || enemy.mazePathIndex < enemy.mazePath.length) {
+          enemy.speed = moveTowards(enemy.speed, BIONIC_SPIDER_MOVE_SPEED, 15 * delta);
+        }
+      }
     } else {
+      enemy.mazePath.length = 0;
+      enemy.mazePathIndex = 0;
+      enemy.mazeRepathTimer = 0;
       enemy.speed = moveTowards(enemy.speed, 0, 22 * delta);
     }
 
