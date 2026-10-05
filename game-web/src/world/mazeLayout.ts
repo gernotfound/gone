@@ -3,6 +3,7 @@ import {
   GIANT_CRATER_CENTER_X,
   GIANT_CRATER_CENTER_Z,
   GIANT_CRATER_RADIUS,
+  PLAYABLE_WORLD_HALF_EXTENT,
 } from './worldTopology.ts';
 
 export type MazePoint2 = { x: number; z: number };
@@ -21,15 +22,36 @@ type Bounds2 = { minX: number; maxX: number; minZ: number; maxZ: number };
 type GateRange = { center: number; halfWidth: number };
 type MazeClearing = { id: string; x: number; z: number; radius: number };
 
-export const MAZE_CELL_SIZE = 36;
-export const MAZE_WALL_THICKNESS = 4;
-export const MAZE_WALL_HEIGHT = 24;
-export const MAZE_WALL_EMBED_DEPTH = 6;
+export const MAZE_CELL_SIZE = 72;
+export const MAZE_WALL_THICKNESS = 14;
+export const MAZE_WALL_BOTTOM_Y = -600;
+export const MAZE_WALL_TOP_Y = 1200;
+export const MAZE_WALL_HEIGHT = MAZE_WALL_TOP_Y - MAZE_WALL_BOTTOM_Y;
 export const MAZE_PLAYER_RADIUS = 1.15;
 export const MAZE_SUPPLY_CLEARANCE = 1.25;
-export const MAZE_WORLD_RING_RADII = [540, 900, 1260, 1620, 1980] as const;
-export const MAZE_WORLD_COVERAGE_RADIUS = MAZE_WORLD_RING_RADII[MAZE_WORLD_RING_RADII.length - 1];
-export const MAZE_MAX_WALL_SEGMENT_LENGTH = 108;
+
+export const MAZE_CENTRAL_CLEARING_RADIUS = 420;
+export const MAZE_CENTRAL_GATE_HALF_WIDTH = 80;
+export const MAZE_CENTRAL_GATE_WIDTH = MAZE_CENTRAL_GATE_HALF_WIDTH * 2;
+
+export const MAZE_DOUBLE_WALL_GAP = 42;
+export const MAZE_DOUBLE_WALL_CENTER_OFFSET =
+  (MAZE_DOUBLE_WALL_GAP + MAZE_WALL_THICKNESS) * 0.5;
+
+/**
+ * Square control rings. The last nominal radius plus the double-wall offset
+ * lands at 1660 m, making the authored maze footprint almost exactly 50% of
+ * the 4700 x 4700 playable square.
+ */
+export const MAZE_WORLD_RING_RADII = [540, 920, 1300, 1632] as const;
+export const MAZE_WORLD_COVERAGE_HALF_EXTENT =
+  MAZE_WORLD_RING_RADII[MAZE_WORLD_RING_RADII.length - 1] + MAZE_DOUBLE_WALL_CENTER_OFFSET;
+export const MAZE_WORLD_COVERAGE_RADIUS = MAZE_WORLD_COVERAGE_HALF_EXTENT;
+export const MAZE_TARGET_MAP_AREA_FRACTION =
+  ((MAZE_WORLD_COVERAGE_HALF_EXTENT * 2) ** 2)
+  / ((PLAYABLE_WORLD_HALF_EXTENT * 2) ** 2);
+
+export const MAZE_MAX_WALL_SEGMENT_LENGTH = 144;
 
 export const MAZE_LANDMARK_CLEARINGS: readonly MazeClearing[] = Object.freeze([
   {
@@ -59,34 +81,6 @@ export const MAZE_LANDMARK_CLEARINGS: readonly MazeClearing[] = Object.freeze([
 ]);
 
 const walls: MazeWall[] = [];
-
-function addHorizontal(idPrefix: string, z: number, centers: readonly number[], skipped: ReadonlySet<number>): void {
-  for (const x of centers) {
-    if (skipped.has(x)) continue;
-    walls.push({
-      id: `${idPrefix}-x${x}`,
-      x,
-      z,
-      width: MAZE_CELL_SIZE,
-      depth: MAZE_WALL_THICKNESS,
-      height: MAZE_WALL_HEIGHT,
-    });
-  }
-}
-
-function addVertical(idPrefix: string, x: number, centers: readonly number[], skipped: ReadonlySet<number>): void {
-  for (const z of centers) {
-    if (skipped.has(z)) continue;
-    walls.push({
-      id: `${idPrefix}-z${z}`,
-      x,
-      z,
-      width: MAZE_WALL_THICKNESS,
-      depth: MAZE_CELL_SIZE,
-      height: MAZE_WALL_HEIGHT,
-    });
-  }
-}
 
 function mergedGateIntervals(
   min: number,
@@ -213,76 +207,76 @@ function addVerticalRun(
   addVerticalSpan(`${idPrefix}-run${segmentIndex}`, x, cursor, maxZ);
 }
 
-const INNER_CENTERS = [-108, -72, -36, 0, 36, 72, 108] as const;
-const MID_CENTERS = [-144, -108, -72, -36, 0, 36, 72, 108, 144] as const;
-const OUTER_CENTERS = [-198, -162, -126, -90, -54, -18, 18, 54, 90, 126, 162, 198] as const;
+type RingGates = {
+  north: readonly GateRange[];
+  south: readonly GateRange[];
+  west: readonly GateRange[];
+  east: readonly GateRange[];
+};
 
-// Nucleo Zero prototype: intentionally readable at spawn.
-addHorizontal('inner-n', -90, INNER_CENTERS, new Set([0]));
-addHorizontal('inner-s', 90, INNER_CENTERS, new Set([36]));
-addVertical('inner-w', -90, INNER_CENTERS, new Set([-36]));
-addVertical('inner-e', 90, INNER_CENTERS, new Set([36]));
+function addSquareLayer(idPrefix: string, radius: number, gates: RingGates): void {
+  addHorizontalRun(`${idPrefix}-n`, -radius, -radius, radius, gates.north);
+  addHorizontalRun(`${idPrefix}-s`, radius, -radius, radius, gates.south);
+  addVerticalRun(`${idPrefix}-w`, -radius, -radius, radius, gates.west);
+  addVerticalRun(`${idPrefix}-e`, radius, -radius, radius, gates.east);
+}
 
-addHorizontal('mid-n', -162, MID_CENTERS, new Set([72]));
-addHorizontal('mid-s', 162, MID_CENTERS, new Set([-72]));
-addVertical('mid-w', -162, MID_CENTERS, new Set([72]));
-addVertical('mid-e', 162, MID_CENTERS, new Set([-72]));
-
-const outerGate = new Set([-18, 18]);
-addHorizontal('outer-n', -216, OUTER_CENTERS, outerGate);
-addHorizontal('outer-s', 216, OUTER_CENTERS, outerGate);
-addVertical('outer-w', -216, OUTER_CENTERS, outerGate);
-addVertical('outer-e', 216, OUTER_CENTERS, outerGate);
-
-// World control rings: sparse, loop-friendly containment bands that extend the
-// maze contract through all four biomes without carpeting every terrain cell.
-MAZE_WORLD_RING_RADII.forEach((radius, index) => {
-  const gateHalfWidth = index < 2 ? 72 : 90;
-  const stagger = index % 2 === 0 ? 1 : -1;
-  const far = radius * 0.54;
-  const near = radius * 0.16;
-
-  addHorizontalRun(
-    `world-${radius}-n`,
-    -radius,
-    -radius,
-    radius,
-    [
-      { center: -far * stagger, halfWidth: gateHalfWidth },
-      { center: near * stagger, halfWidth: gateHalfWidth },
-    ],
+function addDoubleSquareRing(
+  idPrefix: string,
+  nominalRadius: number,
+  gates: RingGates,
+): void {
+  addSquareLayer(
+    `${idPrefix}-inner`,
+    nominalRadius - MAZE_DOUBLE_WALL_CENTER_OFFSET,
+    gates,
   );
-  addHorizontalRun(
-    `world-${radius}-s`,
-    radius,
-    -radius,
-    radius,
-    [
-      { center: -near * stagger, halfWidth: gateHalfWidth },
-      { center: far * stagger, halfWidth: gateHalfWidth },
-    ],
+  addSquareLayer(
+    `${idPrefix}-outer`,
+    nominalRadius + MAZE_DOUBLE_WALL_CENTER_OFFSET,
+    gates,
   );
-  addVerticalRun(
-    `world-${radius}-w`,
-    -radius,
-    -radius,
-    radius,
-    [
-      { center: far * stagger, halfWidth: gateHalfWidth },
-      { center: -near * stagger, halfWidth: gateHalfWidth },
+}
+
+const centralEntrances: RingGates = {
+  north: [{ center: 0, halfWidth: MAZE_CENTRAL_GATE_HALF_WIDTH }],
+  south: [{ center: 0, halfWidth: MAZE_CENTRAL_GATE_HALF_WIDTH }],
+  west: [{ center: 0, halfWidth: MAZE_CENTRAL_GATE_HALF_WIDTH }],
+  east: [{ center: 0, halfWidth: MAZE_CENTRAL_GATE_HALF_WIDTH }],
+};
+
+// The spawn clearing is deliberately empty. The first maze boundary begins
+// beyond 500 m and can only be crossed through the four cardinal entrances.
+addDoubleSquareRing('center-gate', MAZE_WORLD_RING_RADII[0], centralEntrances);
+
+// Deeper rings keep very broad corridors but move their gates sideways so the
+// full labyrinth cannot be solved by running in one straight radial line.
+for (let index = 1; index < MAZE_WORLD_RING_RADII.length; index += 1) {
+  const radius = MAZE_WORLD_RING_RADII[index];
+  const sign = index % 2 === 0 ? 1 : -1;
+  const far = radius * 0.48;
+  const near = radius * 0.17;
+  const gateHalfWidth = index === MAZE_WORLD_RING_RADII.length - 1 ? 100 : 90;
+  const gates: RingGates = {
+    north: [
+      { center: -far * sign, halfWidth: gateHalfWidth },
+      { center: near * sign, halfWidth: gateHalfWidth },
     ],
-  );
-  addVerticalRun(
-    `world-${radius}-e`,
-    radius,
-    -radius,
-    radius,
-    [
-      { center: near * stagger, halfWidth: gateHalfWidth },
-      { center: -far * stagger, halfWidth: gateHalfWidth },
+    south: [
+      { center: -near * sign, halfWidth: gateHalfWidth },
+      { center: far * sign, halfWidth: gateHalfWidth },
     ],
-  );
-});
+    west: [
+      { center: far * sign, halfWidth: gateHalfWidth },
+      { center: -near * sign, halfWidth: gateHalfWidth },
+    ],
+    east: [
+      { center: near * sign, halfWidth: gateHalfWidth },
+      { center: -far * sign, halfWidth: gateHalfWidth },
+    ],
+  };
+  addDoubleSquareRing(`world-${radius}`, radius, gates);
+}
 
 export const MAZE_WALLS: readonly MazeWall[] = Object.freeze(walls);
 
@@ -393,8 +387,8 @@ export function mazeSegmentCrossesWall(
     const startedInside = pointInBounds(start, bounds);
     const endedInside = pointInBounds(end, bounds);
 
-    // Authority/layout migrations must never trap an entity that already
-    // overlaps a newly-authored wall: moving outward remains legal.
+    // Layout migrations must never trap an entity already overlapping a new
+    // wall: moving out remains legal.
     if (startedInside && !endedInside) continue;
     if (startedInside && endedInside) return true;
     if (!startedInside && segmentIntersectsBounds(start, end, bounds)) return true;
