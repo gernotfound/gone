@@ -2,6 +2,7 @@ import './craterSupplyPickups.css';
 import * as THREE from 'three';
 import { sceneManager } from '../rendering/scene.ts';
 import { getTerrainHeightAt } from '../world/chunkManager.ts';
+import { SUPPLY_PICKUP_RADIUS } from '../world/worldTopology.ts';
 import { TRACER_STYLES } from '../vfx/tracerPool.ts';
 import { refillWeaponAmmo } from './advancedWeaponController.ts';
 import {
@@ -43,7 +44,6 @@ type SupplyPickup = {
 const AMMO_KINDS: readonly AmmoWeapon[] = ['assalto', 'cecchino', 'pompa', 'mitraglietta'];
 const SUPPLY_KINDS: readonly SupplyKind[] = [...AMMO_KINDS, 'health'];
 const MAX_PER_KIND = 3;
-const PICKUP_RADIUS = 3.25;
 const RESPAWN_MIN_MS = 20_000;
 const RESPAWN_MAX_MS = 32_000;
 const MIN_PICKUP_SEPARATION = 9;
@@ -209,7 +209,7 @@ function withinPickupRange(pickup: SupplyPickup, player: LocalPlayer): boolean {
   const dx = player.position.x - pickup.group.position.x;
   const dy = player.position.y - pickup.group.position.y;
   const dz = player.position.z - pickup.group.position.z;
-  return dx * dx + dz * dz <= PICKUP_RADIUS * PICKUP_RADIUS && Math.abs(dy) <= 4.5;
+  return dx * dx + dz * dz <= SUPPLY_PICKUP_RADIUS * SUPPLY_PICKUP_RADIUS && Math.abs(dy) <= 4.5;
 }
 
 function gameplayVisible(): boolean {
