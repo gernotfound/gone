@@ -3,6 +3,8 @@ import init, { PhysicsInput, step_physics } from '../../pkg/game_core.js';
 import { sceneManager } from '../rendering/scene.ts';
 import { inputState, initInput, resetInputState } from '../controls/playerInput.ts';
 import { updateChunks, getChunkMeshes, getTerrainHeightAt } from '../world/chunkManager.ts';
+import { resolveMazeMovement } from '../world/mazeLayout.ts';
+import { getMazeRaycastTargets } from '../world/mazePrototype.ts';
 import {
   type WeaponModelType,
   WEAPON_TYPES,
@@ -306,7 +308,7 @@ function fireWeapon(): void {
   camera.getWorldDirection(rayDirection);
   const raycaster = new THREE.Raycaster(rayOrigin, rayDirection, 0, runtime.maxRange);
 
-  const targets: THREE.Object3D[] = [...getChunkMeshes()];
+  const targets: THREE.Object3D[] = [...getChunkMeshes(), ...getMazeRaycastTargets()];
   for (const remote of remotePlayers.values()) targets.push(remote.group);
   for (const enemyTarget of bionicSpiderEnemies.getRaycastTargets()) targets.push(enemyTarget);
 
@@ -537,6 +539,18 @@ function initGame(): void {
   }
 }
 
+function groundedPlayerYAt(x: number, z: number): number {
+  const radius = 1.5;
+  const terrain = Math.max(
+    getTerrainHeightAt(x, z),
+    getTerrainHeightAt(x + radius, z),
+    getTerrainHeightAt(x - radius, z),
+    getTerrainHeightAt(x, z + radius),
+    getTerrainHeightAt(x, z - radius),
+  );
+  return terrain + player.height + player.floatHeight;
+}
+
 function updatePhysics(delta: number): void {
   if (!player.isAlive) return;
 
@@ -569,7 +583,14 @@ function updatePhysics(delta: number): void {
     delta,
   );
   const state = step_physics(input);
-  player.position.set(state.x, state.y, state.z);
+  const mazePosition = resolveMazeMovement(
+    { x: previousX, z: previousZ },
+    { x: state.x, z: state.z },
+  );
+  const resolvedY = mazePosition.blocked && state.is_grounded
+    ? groundedPlayerYAt(mazePosition.x, mazePosition.z)
+    : state.y;
+  player.position.set(mazePosition.x, resolvedY, mazePosition.z);
   const invDelta = delta > 1e-6 ? 1 / delta : 0;
   player.velocity.x = (state.x - previousX) * invDelta;
   player.velocity.y = state.vel_y;
