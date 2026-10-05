@@ -80,7 +80,9 @@ A useful long-term topology is concentric: central hub, inner maze, biome sector
 
 The first reusable maze cell system now surrounds Nucleo Zero with three concentric, staggered wall rings and four outer sector gates. The prototype uses 36 m cells, 4 m-thick walls and 24 m wall height. The layout is deterministic and shared between local collision, host movement validation, host hitscan occlusion and supply placement.
 
-The prototype is intentionally bounded rather than full-world. It exists to validate corridor width, combat readability, mobile performance, line of sight, jumping/crouching constraints, networking and navigation before scaling the pattern across biome sectors.
+The central prototype has now been extended into five sparse world control rings at roughly 540, 900, 1260, 1620 and 1980 m from Nucleo Zero. Gates are staggered so routes remain loop-based rather than straight radial corridors, while landmark clearings reserve space around the Cratere del Segnale, Osservatorio Fratturato, Stazione di Pompaggio 04 and Serre Sommerse. Rendering remains one instanced wall system and gameplay queries use a spatial wall index.
+
+Solo spider AI now uses bounded A* waypoint routing when canonical maze walls block a direct chase. This is deliberately obstacle routing, not a second navigation authority: the pathfinder consumes the same wall collision queries used by the player and host.
 
 ### Stage 3 — first complete sector
 
@@ -92,8 +94,8 @@ Define which information or mechanisms found in one sector unlock routes or unde
 
 ### Stage 5 — full biome expansion
 
-Only after the first sector proves the pattern, extend the system to the remaining regions with distinct traversal, assets, soundscape, enemies/resources and POIs.
+The structural maze now reaches every quadrant through the world control rings. This stage therefore means **biome differentiation**, not basic wall coverage: distinct traversal language, assets, soundscape, enemies/resources, POIs and progression logic for each sector.
 
 ## Non-goals for the first pass
 
-This foundation does not yet add physical maze walls, procedural POI placement, quest scripting, biome-specific enemies, final lore, or progression locks. Those systems need separate design and performance validation rather than being hidden inside terrain generation.
+The current world still does not add procedural POI structures, quest scripting, biome-specific enemies, progression locks, final lore or hierarchical/navmesh AI beyond the bounded maze A*. Those systems need separate design and performance validation rather than being hidden inside terrain generation.
