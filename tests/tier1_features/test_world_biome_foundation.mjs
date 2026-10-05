@@ -57,5 +57,10 @@ export async function run(suite) {
 
     const chunks = source('game-web', 'src', 'world', 'chunkManager.ts');
     assert(chunks.includes('applyBiomePaletteToChunk'), 'streamed terrain must apply the biome palette');
+
+    const liveMap = source('game-web', 'src', 'gameplay', 'liveMapOverlay.ts');
+    assert(liveMap.includes('NUCLEO ZERO · SPAWN'), 'live map must identify the new central spawn');
+    assert(liveMap.includes('CRATERE DEL SEGNALE'), 'live map must preserve the southeast crater as a landmark');
+    assert(!liveMap.includes('SPAWN · CRATERE SE'), 'legacy crater-spawn labeling must be removed');
   });
 }
