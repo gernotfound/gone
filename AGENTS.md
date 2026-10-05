@@ -96,6 +96,8 @@ It must **not** import DOM or `engine.ts`.
 - Guest movement is client-predicted but host-validated. `net/movementAuthority.ts` owns the movement envelope; `p2pHost.ts` owns accepted transform state.
 - Movement limits come from Rust physics (30 m/s max horizontal, 25 m/s jump, 54 m/s terminal fall), use host receipt time, bounded jitter/cumulative credit and a separate per-packet teleport ceiling.
 - Rejected movement must not advance position, sequence/timestamp authority, health-pickup proximity or lag-compensation history.
+- Movement through canonical maze walls is a host-side rejection reason. Local prediction resolves the same geometry with wall sliding.
+- Host hitscan must stop at canonical maze walls before applying player damage; local/remote raycasts include the rendered maze only for matching presentation.
 - Spawn/respawn are explicit host-authorized transitions that reset movement validation; clients reconcile from authoritative self snapshots rather than inventing a second multiplayer respawn coordinate.
 - `gameplay/networkBindings.ts` may snap the local predicted player only for first authority seed, host respawn or large authority divergence; normal prediction remains local.
 - Binary core opcodes: 0x01 CLIENT_STATE, 0x02 WORLD_SNAPSHOT, 0x03 FIRE_HITSCAN, 0x04 HIT_CONFIRMED.
@@ -168,7 +170,8 @@ Browser smoke mobile changes with pointerdown/pointermove; specifically verify r
 - `controls/playerInput.ts` translates `KeyE` into `gone-pickup-requested`.
 - Desktop collection requires `E`. Smartphone collection uses the contextual `TAKE` button created by the pickup owner and emits the same intent.
 - `gameplay/craterSupplyPickups.css` owns contextual TAKE placement/handedness. The button must remain hidden when there is no useful nearby supply.
-- Health pickup authority/network semantics remain unchanged; only the local interaction trigger changed.
+- Guest health pickup requests are host-guarded by the shared central supply annulus in `world/worldTopology.ts`; placement and authority must remain spatially aligned.
+- Supply placement must reject points overlapping canonical maze walls.
 
 ## Audio / iOS
 
@@ -197,7 +200,9 @@ Browser smoke mobile changes with pointerdown/pointermove; specifically verify r
 - `world/biomeRegistry.ts` owns deterministic biome identity, presentation palettes and working landmark metadata.
 - `docs/world_vision.md` is the working world/lore direction: Nucleo Zero at the origin, maze sectors around it, one meaningful POI per biome, and the southeast crater as a destination rather than the start.
 - Biome presentation may tint streamed terrain, but Rust/WASM remains the geometry/height authority. Do not fork collision physics just to iterate on biome art direction.
-- Physical maze walls, procedural POIs, progression gates and final lore are intentionally not part of the biome foundation; add them as explicit systems after prototype validation.
+- `world/mazeLayout.ts` owns canonical deterministic maze geometry and pure collision/occlusion queries. Client prediction and host authority must use this same layout.
+- `world/mazePrototype.ts` owns only instanced wall presentation. Never derive authority from rendered Three.js objects.
+- The current maze is an inner prototype around Nucleo Zero; procedural full-world maze expansion, POIs, progression gates and final lore remain later stages.
 
 ## Local gameplay / spawn
 
@@ -265,7 +270,7 @@ Current baseline:
 - Touch: `mobile/mobileRuntime.ts`, `smartphoneControlsGuard.ts`, `pubgTouchControls.ts`, `competitiveTouchControls.ts`, `touchPreferences.ts`, `touchLayoutEditor.ts`.
 - PWA/mobile lifecycle: `pwa/pwaRuntime.ts`, `mobile/mobileSessionResume.ts`.
 - Diagnostics: `observability/clientDiagnostics.ts`, `api/client-telemetry.js`.
-- World: `world/chunkManager.ts`, `world/worldConfig.ts`.
+- World: `world/chunkManager.ts`, `world/worldConfig.ts`, `world/worldTopology.ts`, `world/biomeRegistry.ts`, `world/mazeLayout.ts`, `world/mazePrototype.ts`.
 
 ## Current structural direction
 
