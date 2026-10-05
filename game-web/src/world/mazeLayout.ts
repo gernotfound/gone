@@ -162,11 +162,36 @@ function intersectsLandmarkClearing(start: MazePoint2, end: MazePoint2): boolean
   ));
 }
 
+function isCentralEntranceDivider(start: MazePoint2, end: MazePoint2): boolean {
+  const epsilon = 1e-6;
+  const boundary = MAZE_CENTRAL_BOUNDARY_HALF_EXTENT;
+  const vertical = Math.abs(start.x - end.x) < epsilon;
+  if (vertical && Math.abs(start.x) < epsilon) {
+    const minZ = Math.min(start.z, end.z);
+    const maxZ = Math.max(start.z, end.z);
+    return (
+      (minZ <= -boundary && maxZ >= -boundary)
+      || (minZ <= boundary && maxZ >= boundary)
+    );
+  }
+
+  const horizontal = Math.abs(start.z - end.z) < epsilon;
+  if (horizontal && Math.abs(start.z) < epsilon) {
+    const minX = Math.min(start.x, end.x);
+    const maxX = Math.max(start.x, end.x);
+    return (
+      (minX <= -boundary && maxX >= -boundary)
+      || (minX <= boundary && maxX >= boundary)
+    );
+  }
+  return false;
+}
+
 function addDoubleHorizontalWall(id: string, x: number, z: number, width: number): void {
   if (width <= MAZE_WALL_THICKNESS) return;
   const start = { x: x - width * 0.5, z };
   const end = { x: x + width * 0.5, z };
-  if (intersectsLandmarkClearing(start, end)) return;
+  if (isCentralEntranceDivider(start, end) || intersectsLandmarkClearing(start, end)) return;
   logicalWallIds.add(id);
   for (const side of [-1, 1] as const) {
     walls.push({
