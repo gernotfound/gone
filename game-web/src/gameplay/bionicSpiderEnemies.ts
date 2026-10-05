@@ -14,6 +14,7 @@ import {
   type BionicSpiderHitRegion,
   type BionicSpiderModel,
 } from '../models/bionicSpider.ts';
+import { isMazePositionBlocked, resolveMazeMovement } from '../world/mazeLayout.ts';
 
 export const BIONIC_SPIDER_MAX_HP = 100;
 export const BIONIC_SPIDER_MOVE_SPEED = ((12 + 24) / 2) * 0.8;
@@ -235,6 +236,7 @@ export class BionicSpiderEnemySystem {
   public spawnAtCrater(x: number, z: number, craterKey = `manual:${x.toFixed(1)}:${z.toFixed(1)}`): number | null {
     if (!this.scene || !this.terrainHeightAt || this.enemies.size >= BIONIC_SPIDER_MAX_ACTIVE) return null;
     if (this.activeCraterKeys.has(craterKey)) return null;
+    if (isMazePositionBlocked(x, z, BIONIC_SPIDER_COLLISION_RADIUS)) return null;
 
     const id = this.nextEnemyId++;
     const model = createBionicSpiderModel(id);
@@ -331,6 +333,7 @@ export class BionicSpiderEnemySystem {
 
     const consider = (x: number, z: number, key: string, occupancy: number): void => {
       if (occupancy < 0.48 || Math.abs(x) > WORLD_LIMIT || Math.abs(z) > WORLD_LIMIT) return;
+      if (isMazePositionBlocked(x, z, BIONIC_SPIDER_COLLISION_RADIUS)) return;
       if (this.activeCraterKeys.has(key) || (this.craterCooldownUntil.get(key) ?? 0) > now) return;
       const dx = x - playerPosition.x;
       const dz = z - playerPosition.z;
@@ -472,8 +475,20 @@ export class BionicSpiderEnemySystem {
   }
 
   private resolveMobCollisionPosition(enemy: EnemyState, nextX: number, nextZ: number): { x: number; z: number } {
-    let x = THREE.MathUtils.clamp(nextX, -WORLD_LIMIT, WORLD_LIMIT);
-    let z = THREE.MathUtils.clamp(nextZ, -WORLD_LIMIT, WORLD_LIMIT);
+    const current = {
+      x: enemy.model.root.position.x,
+      z: enemy.model.root.position.z,
+    };
+    const mazeResolved = resolveMazeMovement(
+      current,
+      {
+        x: THREE.MathUtils.clamp(nextX, -WORLD_LIMIT, WORLD_LIMIT),
+        z: THREE.MathUtils.clamp(nextZ, -WORLD_LIMIT, WORLD_LIMIT),
+      },
+      BIONIC_SPIDER_COLLISION_RADIUS,
+    );
+    let x = mazeResolved.x;
+    let z = mazeResolved.z;
     const minDistanceSq = MOB_MIN_SEPARATION * MOB_MIN_SEPARATION;
 
     for (let pass = 0; pass < MOB_COLLISION_PASSES; pass += 1) {
@@ -502,7 +517,12 @@ export class BionicSpiderEnemySystem {
       if (!adjusted) break;
     }
 
-    return { x, z };
+    const finalMazeResolved = resolveMazeMovement(
+      current,
+      { x, z },
+      BIONIC_SPIDER_COLLISION_RADIUS,
+    );
+    return { x: finalMazeResolved.x, z: finalMazeResolved.z };
   }
 
   private probeTerrain(enemy: EnemyState): void {
