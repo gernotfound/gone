@@ -78,7 +78,9 @@ A useful long-term topology is concentric: central hub, inner maze, biome sector
 
 ### Stage 2 — maze prototype
 
-Build one reusable maze cell system around Nucleo Zero. Validate corridor width, combat readability, mobile performance, line of sight, jumping/crouching constraints, streaming and networking before scaling it across the world.
+The first reusable maze cell system now surrounds Nucleo Zero with three concentric, staggered wall rings and four outer sector gates. The prototype uses 36 m cells, 4 m-thick walls and 24 m wall height. The layout is deterministic and shared between local collision, host movement validation, host hitscan occlusion and supply placement.
+
+The prototype is intentionally bounded rather than full-world. It exists to validate corridor width, combat readability, mobile performance, line of sight, jumping/crouching constraints, networking and navigation before scaling the pattern across biome sectors.
 
 ### Stage 3 — first complete sector
 
