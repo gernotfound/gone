@@ -592,9 +592,9 @@ function updatePhysics(delta: number): void {
     : state.y;
   player.position.set(mazePosition.x, resolvedY, mazePosition.z);
   const invDelta = delta > 1e-6 ? 1 / delta : 0;
-  player.velocity.x = (state.x - previousX) * invDelta;
+  player.velocity.x = (player.position.x - previousX) * invDelta;
   player.velocity.y = state.vel_y;
-  player.velocity.z = (state.z - previousZ) * invDelta;
+  player.velocity.z = (player.position.z - previousZ) * invDelta;
   player.isGrounded = state.is_grounded;
   input.free();
   state.free();
