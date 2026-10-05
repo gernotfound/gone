@@ -22,6 +22,7 @@ import {
   BionicSpiderEnemySystem,
   craterCenterForCell,
 } from '../../game-web/src/gameplay/bionicSpiderEnemies.ts';
+import { MAZE_CORRIDOR_CELL_SIZE, MAZE_WALLS } from '../../game-web/src/world/mazeLayout.ts';
 import {
   assert,
   assertCloseTo,
@@ -250,26 +251,35 @@ export async function run(suite) {
     system.dispose();
   });
 
-  suite.test('Spider chase uses maze pathfinding when the player is behind a wall', () => {
+  suite.test('Spider chase detours around a generated maze wall instead of grinding into it', () => {
+    const wall = MAZE_WALLS.find((candidate) => (
+      candidate.id.startsWith('grid-h-')
+      && Math.abs(candidate.x) < 1000
+      && Math.abs(candidate.z) < 1000
+    ));
+    assert(wall, 'Spider routing test requires a generated horizontal maze wall');
+
     const scene = new THREE.Scene();
     const system = new BionicSpiderEnemySystem();
     system.init(scene, () => 0, () => {});
-    const player = new THREE.Vector3(-216, 0, -650);
+
+    const offset = MAZE_CORRIDOR_CELL_SIZE * 0.38;
+    const player = new THREE.Vector3(wall.x, 0, wall.z + offset);
     system.update(0, player, true, true, false);
 
-    const id = system.spawnAtCrater(-216, -450, 'maze-routing');
-    assert(id !== null, 'Maze routing test requires a spider outside the inner wall');
+    const id = system.spawnAtCrater(wall.x, wall.z - offset, 'maze-routing');
+    assert(id !== null, 'Maze routing test requires a spider on the opposite side of a generated wall');
 
     for (let i = 0; i < 16; i += 1) system.update(0.1, player, true, true, false);
     const emerged = system.getSnapshot(id);
     assert(emerged && !emerged.emerging, 'Spider must finish emergence before route evaluation');
     const initialX = emerged.x;
 
-    for (let i = 0; i < 24; i += 1) system.update(0.1, player, true, true, false);
+    for (let i = 0; i < 30; i += 1) system.update(0.1, player, true, true, false);
     const routed = system.getSnapshot(id);
     assert(
-      routed.x > initialX + 5,
-      `Spider must make lateral progress toward the centered gate instead of grinding into the double wall; x=${routed.x}`,
+      Math.abs(routed.x - initialX) > 5,
+      `Spider must make lateral progress around the wall; startX=${initialX}, x=${routed.x}`,
     );
     system.dispose();
   });
