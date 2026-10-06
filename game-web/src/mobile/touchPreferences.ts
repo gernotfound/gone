@@ -20,10 +20,10 @@ const DEFAULTS: TouchPreferences = {
   adsSensitivity: 1,
   adsMode: 'hold',
   buttonScale: 1,
-  buttonOpacity: 1,
+  buttonOpacity: 0.82,
   handedness: 'right',
   fireDragDeadZone: 8,
-  secondaryFire: true,
+  secondaryFire: false,
   gyroEnabled: false,
   gyroSensitivity: 1,
 };

@@ -283,9 +283,14 @@ try {
     return Boolean(ui && !ui.classList.contains('hidden') && window.goneMobileControls?.snapshot?.().gameplayActive && document.getElementById('mc-weapon-slot-4'));
   }), 'gameplay start', 90_000);
 
+  await page.evaluate(() => window.goneTouchPreferences.set({ secondaryFire: true }));
+  await waitFor(page, () => page.evaluate(() => document.documentElement.classList.contains('gone-touch-secondary-fire')), 'secondary claw opt-in');
+
   const handedness = await assertHandednessMirror(page);
   const reflow = await assertDynamicReflow(page, cdp);
   const portraitSafety = await assertPortraitSafety(page, cdp);
+
+  await page.evaluate(() => window.goneTouchPreferences.set({ secondaryFire: false }));
 
   const finalState = await page.evaluate(() => ({
     adaptive: window.goneMobileAdaptivePresentation.snapshot(),

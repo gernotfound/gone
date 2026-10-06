@@ -455,3 +455,74 @@ html.gone-smartphone #gone-mobile-controls :is(#mc-fire,#mc-fire-left,#mc-aim,#m
   opacity: 1;
   filter: brightness(1.18) drop-shadow(0 0 5px rgba(255,255,255,.16));
 }
+
+/* Reduced visual density for phone play.
+ * Keep all canonical control owners and 48px hit targets, but reserve strong
+ * chrome for FIRE / ADS and contextually useful actions. */
+html.gone-smartphone #mobile-stick {
+  border-color: rgba(103,232,249,.20) !important;
+  background: radial-gradient(circle, rgba(15,23,42,.06), rgba(2,6,23,.14)) !important;
+  box-shadow: inset 0 0 18px rgba(34,211,238,.05) !important;
+}
+
+html.gone-smartphone #mobile-stick-knob {
+  border-color: rgba(165,243,252,.55) !important;
+  background: rgba(8,145,178,.18) !important;
+  box-shadow: 0 0 12px rgba(34,211,238,.14) !important;
+}
+
+html.gone-smartphone #gone-mobile-controls :is(#mc-menu,#mc-map,#mc-jump,#mc-crouch,#mc-reload) {
+  background: rgba(2,6,23,.18) !important;
+  border-color: rgba(203,213,225,.24) !important;
+  box-shadow: none !important;
+  backdrop-filter: blur(3px) !important;
+}
+
+html.gone-smartphone #gone-mobile-controls :is(#mc-menu,#mc-map) {
+  opacity: calc(var(--gone-touch-opacity) * .68) !important;
+}
+
+/* Smart sprint is already owned by the movement stick edge. Retain the DOM
+ * button for compatibility/accessibility state, but remove duplicate chrome. */
+html.gone-smartphone #mc-sprint {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* Reload has no gameplay meaning while the knife is equipped. */
+html.gone-smartphone #mc-reload[data-gone-ammo-state="melee"] {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+html.gone-smartphone #mc-weapon-switcher {
+  background: transparent !important;
+  backdrop-filter: none !important;
+  box-shadow: none !important;
+  gap: clamp(1px, .35dvw, 3px) !important;
+  padding: 0 !important;
+}
+
+html.gone-smartphone #gone-mobile-controls #mc-weapon-slots .mc-weapon-slot {
+  color: rgba(226,232,240,.68) !important;
+  border-color: rgba(148,163,184,.18) !important;
+  background: rgba(2,6,23,.14) !important;
+  box-shadow: none !important;
+}
+
+html.gone-smartphone #gone-mobile-controls #mc-weapon-slots .mc-weapon-slot.is-active {
+  color: #ecfeff !important;
+  border-color: rgba(103,232,249,.88) !important;
+  background: rgba(8,145,178,.30) !important;
+  box-shadow: 0 0 0 1px rgba(34,211,238,.10), 0 0 10px rgba(34,211,238,.16) !important;
+}
+
+html.gone-smartphone #advanced-weapon-hud[data-gone-ammo-state="melee"] {
+  width: clamp(106px, 16dvw, 132px) !important;
+  background: rgba(2,6,23,.24) !important;
+  border-color: rgba(34,211,238,.20) !important;
+}
+
+html.gone-smartphone #advanced-weapon-hud[data-gone-ammo-state="melee"] > div:last-child {
+  display: none !important;
+}
