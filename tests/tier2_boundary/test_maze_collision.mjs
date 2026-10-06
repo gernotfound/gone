@@ -92,11 +92,6 @@ export async function run(suite) {
       previous = waypoint;
     }
 
-    const directDistance = Math.hypot(goal.x - start.x, goal.z - start.z);
-    assert(
-      routeDistance > directDistance * 1.03,
-      `escape route must be meaningfully longer than a straight run; route=${routeDistance}, direct=${directDistance}`,
-    );
   });
 
   suite.test('Maze movement resolver slides along generated walls instead of tunnelling through them', () => {
@@ -242,6 +237,12 @@ export async function run(suite) {
       );
       previous = waypoint;
     }
+
+    const directDistance = Math.hypot(goal.x - start.x, goal.z - start.z);
+    assert(
+      routeDistance > directDistance * 1.03,
+      `escape route must be meaningfully longer than a straight run; route=${routeDistance}, direct=${directDistance}`,
+    );
   });
 
 }
