@@ -5,10 +5,15 @@ import {
   MAZE_CENTRAL_CLEARING_RADIUS,
   MAZE_CENTRAL_GATE_WIDTH,
   MAZE_CORRIDOR_CELL_SIZE,
+  MAZE_DIFFICULTY_RATING,
   MAZE_DOUBLE_WALL_GAP,
   MAZE_GRID_CELLS,
   MAZE_LANDMARK_CLEARINGS,
   MAZE_LOGICAL_WALL_COUNT,
+  MAZE_NARROW_CORRIDOR_COUNT,
+  MAZE_NARROW_CORRIDOR_WIDTH,
+  MAZE_OUTER_EXIT_COUNT,
+  MAZE_OUTER_EXIT_SIDE,
   MAZE_PLAYER_RADIUS,
   MAZE_TARGET_MAP_AREA_FRACTION,
   MAZE_TOPOLOGY_STATS,
@@ -40,9 +45,19 @@ export async function run(suite) {
     );
     assert(MAZE_WALLS.length <= 900, 'instanced physical wall count must stay bounded for mobile rendering');
     assertEqual(MAZE_TOPOLOGY_STATS.cellCount, 288, 'central clearing must be removed from the 18x18 maze graph');
-    assertGreaterThan(MAZE_TOPOLOGY_STATS.deadEnds, 15, 'maze must contain meaningful dead ends');
-    assertGreaterThan(MAZE_TOPOLOGY_STATS.junctions, 40, 'maze must contain many branches/junctions');
-    assertGreaterThan(MAZE_TOPOLOGY_STATS.loopPassages, 20, 'maze must include controlled loops and alternate routes');
+    assertEqual(MAZE_DIFFICULTY_RATING, 9, 'maze topology must target difficulty 9/10');
+    assertGreaterThan(MAZE_TOPOLOGY_STATS.deadEnds, 25, 'difficulty-nine maze must contain many convincing dead ends');
+    assertGreaterThan(MAZE_TOPOLOGY_STATS.junctions, 40, 'maze must preserve many branches/junctions');
+    assertGreaterThan(MAZE_TOPOLOGY_STATS.loopPassages, 5, 'maze must retain some alternate-route loops');
+    assert(
+      MAZE_TOPOLOGY_STATS.loopPassages <= 15,
+      `difficulty-nine maze must not be over-connected; loops=${MAZE_TOPOLOGY_STATS.loopPassages}`,
+    );
+    assertEqual(MAZE_OUTER_EXIT_COUNT, 1, 'maze must have exactly one authored exit to the outer world');
+    assertEqual(MAZE_OUTER_EXIT_SIDE, 'east', 'single exit must lead toward the eastern Signal Crater sector');
+    assertGreaterThan(MAZE_NARROW_CORRIDOR_COUNT, 15, 'maze must include several deterministic choke corridors');
+    assert(MAZE_NARROW_CORRIDOR_COUNT <= 40, 'narrow corridors must remain selective rather than replacing broad routes');
+    assertEqual(MAZE_NARROW_CORRIDOR_WIDTH, 96, 'selected choke corridors must narrow to the authored 96m width');
     assert(
       MAZE_WORLD_COVERAGE_HALF_EXTENT >= 1650 && MAZE_WORLD_COVERAGE_HALF_EXTENT <= 1670,
       'outer maze footprint must remain near +/-1660m',
