@@ -80,11 +80,13 @@ The stable mental model is now: central hub, four cardinal entrances, a genuinel
 
 Nucleo Zero is a **large open central clearing**, intentionally free of maze walls for roughly 420 m in every direction. The first maze boundary sits beyond 500 m. Exactly four broad cardinal entrances — north, south, east and west — connect the clearing to the maze; each opening is about 184 m wide.
 
-Outside that clearing, the maze is no longer built from concentric bands. It uses an 18x18 coarse grid of roughly 184 m cells with the central 6x6 block removed. A fixed seeded depth-first carve creates the primary connected route network; deterministic extra openings add controlled loops so the result contains real junctions, wrong turns, dead ends and alternate routes rather than a single perfect-maze tree. The seed is fixed so every player and the host see the same world.
+Outside that clearing, the maze is no longer built from concentric bands. It uses an 18x18 coarse grid of roughly 184 m cells with the central 6x6 block removed. A fixed seeded depth-first carve creates the primary connected route network. The difficulty target is now **9/10**: loop carving is deliberately sparse, so wrong turns and dead ends matter more, while a small number of alternate routes prevents the topology from becoming a trivial perfect-maze tree. The seed is fixed so every player and the host see the same world.
 
 Every retained logical wall is rendered as two massive parallel slabs. The gap between the pair is deliberately narrower than the player collision envelope, so it reads visually as a double wall without becoming a hidden traversal lane. Landmark clearings remove nearby internal walls around the Cratere del Segnale, Osservatorio Fratturato, Stazione di Pompaggio 04 and Serre Sommerse.
 
-The outer wall envelope stops near +/-1660 m, keeping the maze footprint at approximately 50% of the square playable map. The space between neighboring logical wall lines is about 184 m, leaving broad combat/navigation corridors rather than claustrophobic passages.
+Most navigation remains broad: neighboring logical wall lines are about 184 m apart. A deterministic minority of passages now compress locally to about **96 m** for short choke sections, creating tension and reduced sightlines without making the whole maze claustrophobic.
+
+The outer wall envelope stops near +/-1660 m, keeping the maze footprint at approximately 50% of the square playable map. There is now **one and only one exit to the outer world**, on the eastern perimeter toward the Cratere del Segnale sector. The four cardinal openings around Nucleo Zero remain the four ways to enter the maze from the central clearing; they are not additional world exits.
 
 Maze walls are intentionally extreme vertical structures: presentation runs from Y=-600 to Y=+1200. This guarantees they begin below plausible terrain cavities and extend far above the traversal envelope rather than trying to follow every local terrain height.
 
