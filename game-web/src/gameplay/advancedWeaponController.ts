@@ -19,7 +19,7 @@ type GoneGameApi = {
   keys?: { yaw: number; pitch: number; timestamp: number };
 };
 
-const HIP_FOV = 75;
+const HIP_FOV = 85;
 const BASE_MOUSE_SENSITIVITY = 0.002;
 const ammo: Record<WeaponKey, AmmoState> = Object.fromEntries(
   WEAPON_KEYS.map((key) => [key, {

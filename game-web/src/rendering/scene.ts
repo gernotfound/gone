@@ -28,7 +28,7 @@ export class SceneManager {
         this.rayGeo = createNaturalSunRayGeometry();
         this.rayMat = createNaturalSunRayMaterial();
 
-        this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / Math.max(1, window.innerHeight), 0.01, 3000);
+        this.camera = new THREE.PerspectiveCamera(85, window.innerWidth / Math.max(1, window.innerHeight), 0.01, 3000);
 
         this.renderer = new THREE.WebGLRenderer({
             canvas: DOM.gameCanvas,

@@ -95,6 +95,7 @@ try {
   assert(boot.diagnostics?.buildId, 'privacy-safe client diagnostics must initialize with a build id');
   assert(boot.pubgFireDrag?.enabled && boot.pubgFireDrag?.attached, 'PUBG-style fire-drag layer must attach to the fire button');
   assert(boot.secondaryFirePresent, 'secondary claw FIRE control must be created');
+  assert(!(await page.evaluate(() => document.documentElement.classList.contains('gone-touch-secondary-fire'))), 'secondary claw FIRE should default to opt-in');
   assert(boot.music.src.includes('Colossus March.mp3') && boot.music.inline, 'iOS music element must keep the BGM and playsinline lifecycle');
 
   await page.locator('#btn-settings').click();
@@ -123,6 +124,7 @@ try {
     el.dispatchEvent(new Event('input', { bubbles: true }));
   });
   await page.locator('#touch-handedness-left').click();
+  await page.locator('#touch-secondary-fire').click();
 
   const preferences = await page.evaluate(() => ({
     snapshot: window.goneTouchPreferences.snapshot(),
