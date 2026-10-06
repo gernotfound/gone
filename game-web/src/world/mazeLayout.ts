@@ -50,8 +50,17 @@ export const MAZE_TARGET_MAP_AREA_FRACTION =
   ((MAZE_WORLD_COVERAGE_HALF_EXTENT * 2) ** 2)
   / ((PLAYABLE_WORLD_HALF_EXTENT * 2) ** 2);
 
-export const MAZE_LOOP_PROBABILITY = 0.15;
+export const MAZE_DIFFICULTY_RATING = 9;
+export const MAZE_LOOP_PROBABILITY = 0.04;
+export const MAZE_NARROW_CORRIDOR_WIDTH = 96;
+export const MAZE_NARROW_CORRIDOR_LENGTH = 112;
+export const MAZE_NARROW_CORRIDOR_RATE = 0.25;
 export const MAZE_MAX_WALL_SEGMENT_LENGTH = MAZE_CORRIDOR_CELL_SIZE * 2;
+
+const MAZE_NARROW_RAIL_OFFSET =
+  MAZE_NARROW_CORRIDOR_WIDTH * 0.5
+  + MAZE_DOUBLE_WALL_CENTER_OFFSET
+  + MAZE_WALL_THICKNESS * 0.5;
 
 export const MAZE_LANDMARK_CLEARINGS: readonly MazeClearing[] = Object.freeze([
   {
@@ -82,6 +91,7 @@ export const MAZE_LANDMARK_CLEARINGS: readonly MazeClearing[] = Object.freeze([
 
 const walls: MazeWall[] = [];
 const logicalWallIds = new Set<string>();
+let narrowCorridorCount = 0;
 
 function mergedGateIntervals(
   min: number,
@@ -301,6 +311,16 @@ function edgeKey(a: MazeCell, b: MazeCell): string {
   return aKey < bKey ? `${aKey}|${bKey}` : `${bKey}|${aKey}`;
 }
 
+function parseCellId(value: string): MazeCell {
+  const [ix, iz] = value.split(':').map(Number);
+  return { ix, iz };
+}
+
+function parseEdgeKey(value: string): [MazeCell, MazeCell] {
+  const [a, b] = value.split('|');
+  return [parseCellId(a), parseCellId(b)];
+}
+
 function isCentralHoleCell(ix: number, iz: number): boolean {
   return ix >= 6 && ix <= 11 && iz >= 6 && iz <= 11;
 }
@@ -431,6 +451,91 @@ export const MAZE_TOPOLOGY_STATS = Object.freeze({
   junctions: mazeTopology.junctions,
 });
 
+function passageSelectionHash(a: MazeCell, b: MazeCell): number {
+  const aMix = Math.imul(a.ix + 1, 0x9e3779b1) ^ Math.imul(a.iz + 1, 0x85ebca77);
+  const bMix = Math.imul(b.ix + 1, 0xc2b2ae3d) ^ Math.imul(b.iz + 1, 0x27d4eb2f);
+  return xorshift32((aMix ^ bMix ^ 0x51ed270b) >>> 0);
+}
+
+function shouldNarrowPassage(a: MazeCell, b: MazeCell): boolean {
+  if (
+    Math.min(a.ix, b.ix, a.iz, b.iz) < 2
+    || Math.max(a.ix, b.ix, a.iz, b.iz) > MAZE_GRID_CELLS - 3
+  ) {
+    return false;
+  }
+
+  const aCenter = mazeCellCenter(a);
+  const bCenter = mazeCellCenter(b);
+  const midpoint = {
+    x: (aCenter.x + bCenter.x) * 0.5,
+    z: (aCenter.z + bCenter.z) * 0.5,
+  };
+  const protectedCenter = MAZE_CENTRAL_BOUNDARY_HALF_EXTENT + MAZE_CORRIDOR_CELL_SIZE * 0.75;
+  if (Math.abs(midpoint.x) <= protectedCenter && Math.abs(midpoint.z) <= protectedCenter) {
+    return false;
+  }
+
+  const landmarkMargin =
+    MAZE_NARROW_CORRIDOR_LENGTH * 0.5 + MAZE_NARROW_RAIL_OFFSET + MAZE_WALL_THICKNESS;
+  if (MAZE_LANDMARK_CLEARINGS.some((clearing) => (
+    Math.hypot(midpoint.x - clearing.x, midpoint.z - clearing.z)
+    <= clearing.radius + landmarkMargin
+  ))) {
+    return false;
+  }
+
+  return (passageSelectionHash(a, b) % 10_000) < MAZE_NARROW_CORRIDOR_RATE * 10_000;
+}
+
+function addNarrowPassage(a: MazeCell, b: MazeCell, index: number): void {
+  const aCenter = mazeCellCenter(a);
+  const bCenter = mazeCellCenter(b);
+  const midpoint = {
+    x: (aCenter.x + bCenter.x) * 0.5,
+    z: (aCenter.z + bCenter.z) * 0.5,
+  };
+
+  if (a.iz === b.iz) {
+    addDoubleHorizontalWall(
+      `choke-${index}-north`,
+      midpoint.x,
+      midpoint.z - MAZE_NARROW_RAIL_OFFSET,
+      MAZE_NARROW_CORRIDOR_LENGTH,
+    );
+    addDoubleHorizontalWall(
+      `choke-${index}-south`,
+      midpoint.x,
+      midpoint.z + MAZE_NARROW_RAIL_OFFSET,
+      MAZE_NARROW_CORRIDOR_LENGTH,
+    );
+  } else {
+    addDoubleVerticalWall(
+      `choke-${index}-west`,
+      midpoint.x - MAZE_NARROW_RAIL_OFFSET,
+      midpoint.z,
+      MAZE_NARROW_CORRIDOR_LENGTH,
+    );
+    addDoubleVerticalWall(
+      `choke-${index}-east`,
+      midpoint.x + MAZE_NARROW_RAIL_OFFSET,
+      midpoint.z,
+      MAZE_NARROW_CORRIDOR_LENGTH,
+    );
+  }
+  narrowCorridorCount += 1;
+}
+
+function addNarrowMazeCorridors(): void {
+  let index = 0;
+  for (const passage of [...mazeTopology.passages].sort()) {
+    const [a, b] = parseEdgeKey(passage);
+    if (!shouldNarrowPassage(a, b)) continue;
+    addNarrowPassage(a, b, index);
+    index += 1;
+  }
+}
+
 function addInternalMazeWalls(): void {
   for (let iz = 0; iz < MAZE_GRID_CELLS; iz += 1) {
     for (let ix = 0; ix < MAZE_GRID_CELLS; ix += 1) {
@@ -497,47 +602,50 @@ addVerticalRun(
 );
 
 addInternalMazeWalls();
+addNarrowMazeCorridors();
 
-const outerExitOffset = MAZE_CORRIDOR_CELL_SIZE * 6.5;
-const outerExitHalfWidth = MAZE_CORRIDOR_CELL_SIZE * 0.5;
-const outerExits: readonly GateRange[] = [
-  { center: -outerExitOffset, halfWidth: outerExitHalfWidth },
-  { center: outerExitOffset, halfWidth: outerExitHalfWidth },
+export const MAZE_OUTER_EXIT_COUNT = 1;
+export const MAZE_OUTER_EXIT_SIDE = 'east' as const;
+export const MAZE_OUTER_EXIT_CENTER = MAZE_CORRIDOR_CELL_SIZE * 6.5;
+export const MAZE_OUTER_EXIT_WIDTH = MAZE_CORRIDOR_CELL_SIZE * 0.75;
+const outerExitGate: readonly GateRange[] = [
+  { center: MAZE_OUTER_EXIT_CENTER, halfWidth: MAZE_OUTER_EXIT_WIDTH * 0.5 },
 ];
 
-// The maze itself occupies ~50% of the map. Beyond this perimeter the biome
-// space opens again; paired exits on every side keep each quadrant reachable.
+// Difficulty target 9/10: there is exactly one authored route from the maze
+// to the open outer world. All other perimeter sides are sealed.
 addHorizontalRun(
   'outer-n',
   -MAZE_GRID_HALF_EXTENT,
   -MAZE_GRID_HALF_EXTENT,
   MAZE_GRID_HALF_EXTENT,
-  outerExits,
+  [],
 );
 addHorizontalRun(
   'outer-s',
   MAZE_GRID_HALF_EXTENT,
   -MAZE_GRID_HALF_EXTENT,
   MAZE_GRID_HALF_EXTENT,
-  outerExits,
+  [],
 );
 addVerticalRun(
   'outer-w',
   -MAZE_GRID_HALF_EXTENT,
   -MAZE_GRID_HALF_EXTENT,
   MAZE_GRID_HALF_EXTENT,
-  outerExits,
+  [],
 );
 addVerticalRun(
   'outer-e',
   MAZE_GRID_HALF_EXTENT,
   -MAZE_GRID_HALF_EXTENT,
   MAZE_GRID_HALF_EXTENT,
-  outerExits,
+  outerExitGate,
 );
 
 export const MAZE_WALLS: readonly MazeWall[] = Object.freeze(walls);
 export const MAZE_LOGICAL_WALL_COUNT = logicalWallIds.size;
+export const MAZE_NARROW_CORRIDOR_COUNT = narrowCorridorCount;
 
 function wallBounds(wall: MazeWall, padding = 0): Bounds2 {
   return {

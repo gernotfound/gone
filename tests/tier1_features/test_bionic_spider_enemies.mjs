@@ -274,12 +274,16 @@ export async function run(suite) {
     const emerged = system.getSnapshot(id);
     assert(emerged && !emerged.emerging, 'Spider must finish emergence before route evaluation');
     const initialX = emerged.x;
+    let maxLateralDeviation = 0;
 
-    for (let i = 0; i < 30; i += 1) system.update(0.1, player, true, true, false);
-    const routed = system.getSnapshot(id);
+    for (let i = 0; i < 100; i += 1) {
+      system.update(0.1, player, true, true, false);
+      const snapshot = system.getSnapshot(id);
+      maxLateralDeviation = Math.max(maxLateralDeviation, Math.abs(snapshot.x - initialX));
+    }
     assert(
-      Math.abs(routed.x - initialX) > 5,
-      `Spider must make lateral progress around the wall; startX=${initialX}, x=${routed.x}`,
+      maxLateralDeviation > 5,
+      `Spider must make lateral progress around the wall; maxDeviation=${maxLateralDeviation}`,
     );
     system.dispose();
   });

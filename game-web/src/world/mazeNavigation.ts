@@ -9,7 +9,6 @@ import {
 export const MAZE_NAV_GRID_SIZE = MAZE_CELL_SIZE;
 export const MAZE_NAV_REPATH_DISTANCE = MAZE_CELL_SIZE * 1.5;
 export const MAZE_NAV_WORLD_LIMIT = MAZE_WORLD_COVERAGE_RADIUS + 360;
-const SEARCH_MARGIN = MAZE_CELL_SIZE * 10;
 const MAX_VISITED_NODES = 6000;
 
 type GridPoint = { ix: number; iz: number };
@@ -170,26 +169,14 @@ export function findMazePath(
   const goalGrid = nearestWalkableGrid(goal, clearance);
   if (!startGrid || !goalGrid) return [];
 
-  const minX = Math.max(
-    -MAZE_NAV_WORLD_LIMIT,
-    Math.min(start.x, goal.x) - SEARCH_MARGIN,
-  );
-  const maxX = Math.min(
-    MAZE_NAV_WORLD_LIMIT,
-    Math.max(start.x, goal.x) + SEARCH_MARGIN,
-  );
-  const minZ = Math.max(
-    -MAZE_NAV_WORLD_LIMIT,
-    Math.min(start.z, goal.z) - SEARCH_MARGIN,
-  );
-  const maxZ = Math.min(
-    MAZE_NAV_WORLD_LIMIT,
-    Math.max(start.z, goal.z) + SEARCH_MARGIN,
-  );
-  const minIx = Math.floor(minX / MAZE_NAV_GRID_SIZE);
-  const maxIx = Math.ceil(maxX / MAZE_NAV_GRID_SIZE);
-  const minIz = Math.floor(minZ / MAZE_NAV_GRID_SIZE);
-  const maxIz = Math.ceil(maxZ / MAZE_NAV_GRID_SIZE);
+  // Difficulty-nine topology can require a long detour even when start and
+  // goal are physically close. Search the entire bounded maze/navigation
+  // envelope instead of clipping A* to a local rectangle around the pair.
+  // At the 72 m grid this remains below MAX_VISITED_NODES for the full world.
+  const minIx = Math.floor(-MAZE_NAV_WORLD_LIMIT / MAZE_NAV_GRID_SIZE);
+  const maxIx = Math.ceil(MAZE_NAV_WORLD_LIMIT / MAZE_NAV_GRID_SIZE);
+  const minIz = Math.floor(-MAZE_NAV_WORLD_LIMIT / MAZE_NAV_GRID_SIZE);
+  const maxIz = Math.ceil(MAZE_NAV_WORLD_LIMIT / MAZE_NAV_GRID_SIZE);
 
   const startKey = keyOf(startGrid);
   const goalKey = keyOf(goalGrid);

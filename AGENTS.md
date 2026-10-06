@@ -201,10 +201,12 @@ Browser smoke mobile changes with pointerdown/pointermove; specifically verify r
 - `docs/world_vision.md` is the working world/lore direction: Nucleo Zero at the origin, maze sectors around it, one meaningful POI per biome, and the southeast crater as a destination rather than the start.
 - Biome presentation may tint streamed terrain, but Rust/WASM remains the geometry/height authority. Do not fork collision physics just to iterate on biome art direction.
 - `world/mazeLayout.ts` owns canonical deterministic maze geometry: an 18x18 coarse corridor grid with a 6x6 central void, ~420 m wall-free Nucleo Zero clearing, four cardinal ~184 m entrances, seeded DFS passage carving, deterministic extra loops, paired/double walls, landmark clearings, spatial indexing and pure collision/occlusion queries. Client prediction, PvE movement and host authority must use this same layout.
-- The maze must remain a **real branching topology**, not concentric control rings: preserve meaningful dead ends, junctions and alternate-route loops when editing the generator.
+- The maze must remain a **real branching topology**, not concentric control rings. Current target difficulty is 9/10: preserve many dead ends/junctions, only a small controlled set of alternate-route loops, and exactly one outer-world exit.
+- Most corridors remain based on ~184 m cells, but a deterministic minority contain ~96 m choke sections. Chokes must remain traversable by player/spider authority and must never replace the broad-corridor identity across the whole maze.
+- The only authored outer-world exit is on the east perimeter toward the Signal Crater sector. The four cardinal openings around Nucleo Zero are entrances into the maze, not exits from the world perimeter.
 - `world/mazeNavigation.ts` owns bounded A* routing over canonical maze collision. Do not add a divergent navmesh for the same walls.
 - `world/mazePrototype.ts` owns only instanced wall presentation. Walls are deliberately extruded from Y=-600 to Y=+1200 so terrain cannot leave gaps below them and normal traversal cannot pass above them.
-- The authored maze footprint ends near +/-1660 m, approximately 50% of the square playable area. Corridors are based on ~184 m cells, while the outer map remains open for biome/POI space. POI structures, progression gates, biome-specific maze art and final lore remain later stages.
+- The authored maze footprint ends near +/-1660 m, approximately 50% of the square playable area. The outer map remains open for biome/POI space. POI structures, progression gates, biome-specific maze art and final lore remain later stages.
 
 ## Local gameplay / spawn
 
