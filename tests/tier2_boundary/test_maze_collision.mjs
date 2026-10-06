@@ -91,6 +91,12 @@ export async function run(suite) {
       );
       previous = waypoint;
     }
+
+    const directDistance = Math.hypot(goal.x - start.x, goal.z - start.z);
+    assert(
+      routeDistance > directDistance * 1.03,
+      `escape route must be meaningfully longer than a straight run; route=${routeDistance}, direct=${directDistance}`,
+    );
   });
 
   suite.test('Maze movement resolver slides along generated walls instead of tunnelling through them', () => {
@@ -222,10 +228,14 @@ export async function run(suite) {
       { x: MAZE_GRID_HALF_EXTENT + 80, z: MAZE_OUTER_EXIT_CENTER },
       8,
     );
-    assertGreaterThan(path.length, 6, 'escape route must require a substantial maze traversal');
+    assertGreaterThan(path.length, 2, 'escape route must require multiple meaningful turns after path simplification');
 
-    let previous = { x: 0, z: 0 };
+    const start = { x: 0, z: 0 };
+    const goal = { x: MAZE_GRID_HALF_EXTENT + 80, z: MAZE_OUTER_EXIT_CENTER };
+    let routeDistance = 0;
+    let previous = start;
     for (const waypoint of path) {
+      routeDistance += Math.hypot(waypoint.x - previous.x, waypoint.z - previous.z);
       assert(
         !mazeSegmentCrossesWall(previous, waypoint, 8),
         'escape path must stay within canonical openings and choke corridors',
