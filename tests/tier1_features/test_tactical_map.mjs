@@ -6,9 +6,11 @@ import { PROJECT_ROOT } from '../helpers/asset_inspector.mjs';
 export async function run(suite) {
   const minimapPath = path.join(PROJECT_ROOT, 'game-web', 'src', 'ui', 'minimap.ts');
   const runtimePath = path.join(PROJECT_ROOT, 'game-web', 'src', 'runtime', 'startClientRuntime.ts');
+  const liveMapPath = path.join(PROJECT_ROOT, 'game-web', 'src', 'gameplay', 'liveMapOverlay.ts');
   const legacyMarkersPath = path.join(PROJECT_ROOT, 'game-web', 'src', 'gameplay', 'mapSpawnMarkers.ts');
   const minimap = fs.readFileSync(minimapPath, 'utf8');
   const runtime = fs.readFileSync(runtimePath, 'utf8');
+  const liveMap = fs.readFileSync(liveMapPath, 'utf8');
 
   suite.test('Tactical map renders the canonical maze wall geometry', () => {
     assert(
@@ -34,6 +36,13 @@ export async function run(suite) {
       !fs.existsSync(legacyMarkersPath),
       'obsolete marker module must remain removed rather than dormant',
     );
+  });
+
+  suite.test('Tactical map has no place-name or landmark marker layer', () => {
+    assert(!liveMap.includes('addLandmark('), 'live map must not create named landmark markers');
+    assert(!liveMap.includes('map-landmark-'), 'live map must not retain landmark marker DOM ids');
+    assert(!liveMap.includes('NUCLEO ZERO · SPAWN'), 'live map must not label the spawn location');
+    assert(!liveMap.includes('CRATERE DEL SEGNALE'), 'live map must not label world locations');
   });
 
   suite.test('Map terrain keeps a higher-resolution relief pass under the maze', () => {
