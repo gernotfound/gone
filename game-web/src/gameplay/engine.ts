@@ -670,7 +670,6 @@ function animate(timestamp?: number): void {
 function networkContext(): GameplayNetworkContext {
   return {
     player,
-    localShieldAnchor,
     getActiveWeaponIndex: () => currentWeaponIndex,
     handleLocalPlayerRespawn,
     handleLocalPlayerDamage,
