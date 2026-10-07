@@ -19,7 +19,6 @@ import {
   TERRAIN_BUILD_SOFT_BUDGET_MS,
   WORLD_FOG_FAR,
   chunkCoordToWorld,
-  chunkDistanceSq,
   isChunkInDetailRadius,
   isChunkInLoadRadius,
   worldToChunkCoord,
