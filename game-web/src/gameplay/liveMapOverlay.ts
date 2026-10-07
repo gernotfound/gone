@@ -2,8 +2,6 @@ import { DOM } from '../ui/menu.ts';
 import { drawMinimap, GLOBAL_MAP_HALF_EXTENT } from '../ui/minimap.ts';
 import { inputState } from '../controls/playerInput.ts';
 import { getTerrainHeightAt } from '../world/chunkManager.ts';
-import { PLAYER_SPAWN_X, PLAYER_SPAWN_Z } from '../gameplay/spawnController.ts';
-import { GIANT_CRATER_CENTER_X, GIANT_CRATER_CENTER_Z } from './spawnPolicy.ts';
 
 let mapOpen = false;
 let suppressPointerLossUntil = 0;
@@ -20,28 +18,11 @@ function pct(value: number): number {
   return ((value + GLOBAL_MAP_HALF_EXTENT) / MAP_SIZE) * 100;
 }
 
-function addLandmark(container: HTMLElement, id: string, x: number, z: number, label: string, color: string): void {
-  if (document.getElementById(id)) return;
-  const marker = document.createElement('div');
-  marker.id = id;
-  marker.style.cssText = [
-    'position:absolute', `left:${pct(x)}%`, `top:${pct(z)}%`, 'transform:translate(-50%,-50%)',
-    'pointer-events:none', 'z-index:3', 'font-family:ui-monospace,SFMono-Regular,Menlo,monospace',
-    'font-size:9px', 'font-weight:900', 'letter-spacing:.06em', 'white-space:nowrap',
-    `color:${color}`, `filter:drop-shadow(0 0 4px ${color})`,
-  ].join(';');
-  marker.innerHTML = `<span style="display:inline-block;width:8px;height:8px;border:2px solid ${color};transform:rotate(45deg);margin-right:6px;background:rgba(2,6,23,.75)"></span>${label}`;
-  container.appendChild(marker);
-}
-
 function ensureMapHud(): void {
   const container = DOM.minimapCanvas?.parentElement as HTMLElement | null;
   if (!container || mapDecorated) return;
   mapDecorated = true;
 
-  addLandmark(container, 'map-landmark-spawn', PLAYER_SPAWN_X, PLAYER_SPAWN_Z, 'NUCLEO ZERO · SPAWN', '#34d399');
-  addLandmark(container, 'map-landmark-massif', -1500, -1500, 'MASSICCIO NW', '#e2e8f0');
-  addLandmark(container, 'map-landmark-crater', GIANT_CRATER_CENTER_X, GIANT_CRATER_CENTER_Z, 'CRATERE DEL SEGNALE', '#f59e0b');
 
   const scale = document.createElement('div');
   scale.id = 'map-scale-bar';
