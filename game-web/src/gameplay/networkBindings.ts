@@ -24,17 +24,12 @@ type LocalPlayerNetworkState = {
   position: THREE.Vector3;
   velocity?: THREE.Vector3;
   isGrounded: boolean;
-  hp: number;
-  maxHp: number;
   isAlive: boolean;
-  isInvulnerable: boolean;
-  shieldExpiresAt: number;
   healthPickupRequestUntil?: number;
 };
 
 export type GameplayNetworkContext = {
   player: LocalPlayerNetworkState;
-  localShieldAnchor: THREE.Group;
   getActiveWeaponIndex: () => number;
   handleLocalPlayerRespawn: () => void;
   handleLocalPlayerDamage: (newHp: number) => void;
