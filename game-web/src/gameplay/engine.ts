@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import init, { PhysicsInput, step_physics } from '../../pkg/game_core.js';
 import { sceneManager } from '../rendering/scene.ts';
-import { inputState, initInput, resetInputState } from '../controls/playerInput.ts';
+import { inputState, initInput } from '../controls/playerInput.ts';
 import { updateChunks, getChunkMeshes, getTerrainHeightAt } from '../world/chunkManager.ts';
 import { resolveMazeMovement } from '../world/mazeLayout.ts';
 import { getMazeRaycastTargets } from '../world/mazePrototype.ts';
@@ -51,6 +51,7 @@ import {
   type GameplayNetworkContext,
 } from './networkBindings.ts';
 import { presentLegacyRemoteHitscan } from '../net/legacyRemoteShotPresentation.ts';
+import { LocalPlayerLifecycleController } from './localPlayerLifecycle.ts';
 
 export { WEAPON_COMBAT_STATS };
 export type { WeaponStats } from '../weapons/weaponCombatStats.ts';
@@ -147,9 +148,6 @@ const player = {
 
 const localShieldAnchor = new THREE.Group();
 localShieldAnchor.name = 'LocalShieldAnchor';
-const deathCameraPos = new THREE.Vector3(0, 20, 0);
-let deathCameraYaw = 0;
-let deathCameraPitch = -0.35;
 
 function localSpawnPoint() {
   if (activeP2PHost) return getSpawnPointForSlot(0);
@@ -163,51 +161,6 @@ function placeLocalPlayerAtSpawn(): void {
   player.velocity.set(0, 0, 0);
 }
 
-export function handleLocalPlayerDeath(): void {
-  if (!player.isAlive && player.deathTimer > 0) return;
-  player.isAlive = false;
-  player.hp = 0;
-  player.deathTimer = 5.0;
-  player.isInvulnerable = false;
-  player.shieldExpiresAt = 0;
-
-  shieldVfxController.detachShield(localShieldAnchor);
-  healthHud.updateShield(0);
-  resetInputState();
-  viewmodelRoot.visible = false;
-
-  deathCameraPos.set(player.position.x, player.position.y + 2.5, player.position.z);
-  deathCameraYaw = inputState.yaw;
-  deathCameraPitch = -0.35;
-  healthHud.showDeathOverlay(5.0);
-}
-
-export function handleLocalPlayerRespawn(): void {
-  player.isAlive = true;
-  player.hp = 100;
-  player.deathTimer = 0;
-  player.isInvulnerable = true;
-  player.shieldExpiresAt = performance.now() + 10000;
-  placeLocalPlayerAtSpawn();
-
-  viewmodelRoot.visible = true;
-  inputState.pitch = 0;
-  recoilCamPitch = 0;
-  recoilCamYaw = 0;
-
-  healthHud.hideDeathOverlay();
-  healthHud.updateHealth(100, 100);
-  shieldVfxController.attachShield(localShieldAnchor, 10.0, ZERO_VECTOR);
-  healthHud.updateShield(10.0);
-}
-
-export function handleLocalPlayerDamage(newHp: number): void {
-  if (!player.isAlive) return;
-  player.hp = Math.max(0, newHp);
-  healthHud.updateHealth(player.hp, player.maxHp);
-  if (player.hp <= 0) handleLocalPlayerDeath();
-}
-
 // --- LOCAL WEAPON / VIEWMODEL ---
 let currentWeaponIndex = 0;
 let currentWeaponType: WeaponModelType = 'assalto';
@@ -216,6 +169,29 @@ viewmodelRoot.name = 'ViewmodelRoot';
 const recoilContainer = new THREE.Group();
 recoilContainer.name = 'RecoilContainer';
 viewmodelRoot.add(recoilContainer);
+
+const localPlayerLifecycle = new LocalPlayerLifecycleController({
+  player,
+  shieldAnchor: localShieldAnchor,
+  viewmodelRoot,
+  placeAtSpawn: placeLocalPlayerAtSpawn,
+  resetRecoil: () => {
+    recoilCamPitch = 0;
+    recoilCamYaw = 0;
+  },
+});
+
+export function handleLocalPlayerDeath(): void {
+  localPlayerLifecycle.handleDeath();
+}
+
+export function handleLocalPlayerRespawn(): void {
+  localPlayerLifecycle.handleRespawn();
+}
+
+export function handleLocalPlayerDamage(newHp: number): void {
+  localPlayerLifecycle.handleDamage(newHp);
+}
 
 const viewmodelCache = new Map<WeaponModelType, THREE.Group>();
 const recoilOffset = new THREE.Vector3();
@@ -478,11 +454,7 @@ function initGame(): void {
 
   localShieldAnchor.position.set(player.position.x, player.position.y - player.height + 0.9, player.position.z);
   scene.add(localShieldAnchor);
-  player.isInvulnerable = true;
-  player.shieldExpiresAt = performance.now() + 10000;
-  shieldVfxController.attachShield(localShieldAnchor, 10.0, ZERO_VECTOR);
-  healthHud.updateShield(10.0);
-  healthHud.updateHealth(player.hp, player.maxHp);
+  localPlayerLifecycle.initialize();
 
   initInput({
     onWeaponSwitch: (index) => switchWeapon(index),
@@ -648,23 +620,13 @@ function animate(timestamp?: number): void {
     if (shotCooldown > 0) shotCooldown = Math.max(0, shotCooldown - delta);
     shieldVfxController.update(delta);
 
+    localPlayerLifecycle.update(
+      delta,
+      camera,
+      !activeP2PHost && !activeP2PClient,
+    );
+
     if (player.isAlive) {
-      localShieldAnchor.position.set(
-        player.position.x,
-        player.position.y - player.height + 0.9,
-        player.position.z,
-      );
-
-      const now = performance.now();
-      if (player.shieldExpiresAt > now) {
-        player.isInvulnerable = true;
-        healthHud.updateShield((player.shieldExpiresAt - now) / 1000);
-      } else if (player.isInvulnerable) {
-        player.isInvulnerable = false;
-        healthHud.updateShield(0);
-        shieldVfxController.detachShield(localShieldAnchor);
-      }
-
       if (
         inputState.fire &&
         shotCooldown <= 1e-4 &&
@@ -675,14 +637,6 @@ function animate(timestamp?: number): void {
 
       updatePhysics(delta);
       updateViewmodel(delta);
-    } else {
-      player.deathTimer = Math.max(0, player.deathTimer - delta);
-      healthHud.updateDeathCountdown(player.deathTimer);
-      camera.position.copy(deathCameraPos);
-      camera.rotation.set(deathCameraPitch, deathCameraYaw, 0, 'YXZ');
-      if (player.deathTimer <= 0 && !activeP2PHost && !activeP2PClient) {
-        handleLocalPlayerRespawn();
-      }
     }
 
     const enemiesEnabled = !activeP2PHost && !activeP2PClient;
@@ -721,6 +675,7 @@ function networkContext(): GameplayNetworkContext {
     handleLocalPlayerDeath,
     handleLocalPlayerRespawn,
     handleLocalPlayerDamage,
+    applyAuthoritativeLocalLifecycle: (state) => localPlayerLifecycle.applyAuthoritativeState(state),
     localEyeHeight: player.eyeHeight,
   };
 }
