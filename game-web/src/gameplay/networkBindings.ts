@@ -13,12 +13,12 @@ import { CLIENT_STATE_EXT_FLAGS } from '../net/clientStateExtensions.ts';
 import { LOCAL_AUTHORITY_CORRECTION_DISTANCE_M } from '../net/movementAuthority.ts';
 import { setActiveP2PClient, setActiveP2PHost } from '../net/multiplayerSessionController.ts';
 import { inputState } from '../controls/playerInput.ts';
-import { healthHud } from '../ui/healthHud.ts';
 import { shieldVfxController } from '../vfx/shieldVfx.ts';
 import { addOrUpdateRemotePlayer, remotePlayers } from './remotePlayerRegistry.ts';
 import { presentLegacyRemoteHitscan } from '../net/legacyRemoteShotPresentation.ts';
 import { getSafestRespawnPoint } from './spawnSelection.ts';
 import { getPlayerSpawnY } from './spawnPolicy.ts';
+import type { AuthoritativeLocalLifecycleState } from './localPlayerLifecycle.ts';
 
 type LocalPlayerNetworkState = {
   position: THREE.Vector3;
@@ -36,9 +36,9 @@ export type GameplayNetworkContext = {
   player: LocalPlayerNetworkState;
   localShieldAnchor: THREE.Group;
   getActiveWeaponIndex: () => number;
-  handleLocalPlayerDeath: () => void;
   handleLocalPlayerRespawn: () => void;
   handleLocalPlayerDamage: (newHp: number) => void;
+  applyAuthoritativeLocalLifecycle: (state: AuthoritativeLocalLifecycleState) => void;
   localEyeHeight: number;
 };
 
@@ -94,36 +94,18 @@ export function bindClientGameplayNetworking(client: P2PClient, context: Gamepla
 
       if (mySlot !== null && state.slot === mySlot) {
         const respawnedByHost = isAlive && !player.isAlive;
-        if (!isAlive && player.isAlive) {
-          context.handleLocalPlayerDeath();
-        } else if (respawnedByHost) {
-          context.handleLocalPlayerRespawn();
-        }
+        context.applyAuthoritativeLocalLifecycle({
+          hp: state.hp,
+          isAlive,
+          isShielded,
+          timerRemainingMs: state.timerRemainingMs,
+        });
 
         if (isAlive) {
           // Normal movement remains locally predicted. Host-owned respawns and
           // large divergence after a rejected state converge to the authoritative
           // coordinates instead of endlessly resending an invalid transform.
           applyAuthoritativeLocalPosition(player, state, respawnedByHost || !stateTickStarted);
-        }
-
-        player.hp = state.hp;
-        healthHud.updateHealth(player.hp, player.maxHp);
-        if (isShielded) {
-          player.isInvulnerable = true;
-          player.shieldExpiresAt = performance.now() + state.timerRemainingMs;
-          if (!shieldVfxController.hasShield(context.localShieldAnchor)) {
-            shieldVfxController.attachShield(
-              context.localShieldAnchor,
-              Math.max(0.1, state.timerRemainingMs / 1000),
-            );
-          }
-        } else {
-          player.isInvulnerable = false;
-          player.shieldExpiresAt = 0;
-          if (shieldVfxController.hasShield(context.localShieldAnchor)) {
-            shieldVfxController.detachShield(context.localShieldAnchor);
-          }
         }
 
         if (!stateTickStarted) {
