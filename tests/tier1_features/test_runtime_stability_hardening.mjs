@@ -10,6 +10,9 @@ function source(...parts) {
 export async function run(suite) {
   const main = source('game-web', 'src', 'main.ts');
   const engine = source('game-web', 'src', 'gameplay', 'engine.ts');
+  const localPlayerLifecycle = source('game-web', 'src', 'gameplay', 'localPlayerLifecycle.ts');
+  const bindings = source('game-web', 'src', 'gameplay', 'networkBindings.ts');
+  const p2pHost = source('game-web', 'src', 'net', 'p2pHost.ts');
   const input = source('game-web', 'src', 'controls', 'playerInput.ts');
   const runtime = source('game-web', 'src', 'runtime', 'startClientRuntime.ts');
   const kernel = source('game-web', 'src', 'runtime', 'runtimeKernel.ts');
@@ -18,6 +21,26 @@ export async function run(suite) {
   const diagnostics = source('game-web', 'src', 'observability', 'clientDiagnostics.ts');
   const telemetry = source('game-web', 'api', 'client-telemetry.js');
   const pwa = source('game-web', 'src', 'pwa', 'pwaRuntime.ts');
+  const networkPatchPath = path.join(PROJECT_ROOT, 'game-web', 'src', 'net', 'networkStabilityFix.ts');
+
+  suite.test('Host transport resilience belongs to P2PHost instead of a runtime monkey-patch', () => {
+    assert(!fs.existsSync(networkPatchPath), 'networkStabilityFix prototype patch must stay deleted');
+    assert(!runtime.includes('networkStabilityFix'), 'runtime composition must not register a host monkey-patch layer');
+    assert(p2pHost.includes('const state = peer.channel.readyState'), 'host broadcast must inspect transport readiness directly');
+    assert(p2pHost.includes("state === 'closing' || state === 'closed'"), 'host must identify terminal peer channels');
+    assert(p2pHost.includes('this.handlePeerDisconnect(id)'), 'host must clean terminal peers through its own lifecycle');
+  });
+
+  suite.test('Local combat lifecycle has one focused owner outside engine and networking', () => {
+    assert(localPlayerLifecycle.includes('class LocalPlayerLifecycleController'), 'local HP/death/respawn/shield lifecycle needs one owner');
+    assert(localPlayerLifecycle.includes('public handleDeath()') && localPlayerLifecycle.includes('public handleRespawn('), 'lifecycle owner must expose explicit transitions');
+    assert(localPlayerLifecycle.includes('public applyAuthoritativeState('), 'network snapshots must synchronize through the lifecycle owner');
+    assert(engine.includes('new LocalPlayerLifecycleController({'), 'engine must compose the lifecycle owner instead of duplicating its state machine');
+    assert(!engine.includes('player.deathTimer = Math.max(0, player.deathTimer - delta)'), 'engine loop must not own death countdown transitions');
+    assert(bindings.includes('context.applyAuthoritativeLocalLifecycle({'), 'network binding must forward authoritative lifecycle state');
+    assert(!bindings.includes('player.hp = state.hp'), 'network binding must not duplicate local HP ownership');
+    assert(!bindings.includes('player.isInvulnerable = true'), 'network binding must not duplicate local shield ownership');
+  });
 
   suite.test('Composition uses one declarative runtime kernel instead of local safe-start wrappers', () => {
     assert(main.includes('runtimeKernel.registerMany(SHELL_MODULES)'), 'shell features must register with the shared kernel');

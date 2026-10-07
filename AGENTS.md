@@ -279,12 +279,15 @@ Current baseline:
 
 ## Current structural direction
 
-The runtime-kernel/browser-lifecycle foundation and lobby/session split are complete architecture directions. Next high-value structural work:
+The runtime-kernel/browser-lifecycle foundation, lobby/session split and local player lifecycle split are complete architecture directions. Next high-value structural work:
 
-1. split local death/respawn/shield lifecycle out of `engine.ts` into a focused service/controller;
-2. split per-weapon model builders behind stable exports;
-3. if `p2pHost.ts` grows further, separate peer bookkeeping from authoritative combat without creating multiple authorities;
-4. gradually migrate remaining internal `window.gone*` consumers to typed services/events.
+1. split per-weapon model builders behind stable exports;
+2. separate `p2pHost.ts` peer bookkeeping from authoritative combat without creating multiple authorities;
+3. gradually migrate remaining internal `window.gone*` consumers to typed services/events.
+
+`gameplay/localPlayerLifecycle.ts` is the sole browser owner of local HP/death/respawn/spawn-shield transitions and their HUD/VFX/death-camera side effects. `engine.ts` composes it; `networkBindings.ts` synchronizes authoritative snapshots through it rather than mutating lifecycle state directly.
+
+Transport readiness and stale-peer cleanup belong directly to `P2PHost.broadcastBinary`. Do not reintroduce `networkStabilityFix.ts`, prototype replacement, or another runtime repair layer.
 
 Do not refactor for line count alone.
 

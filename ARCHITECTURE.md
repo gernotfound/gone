@@ -99,7 +99,8 @@ Touch sustained FIRE must route to `advancedWeaponController`; it must not leave
 
 `engine.ts` coordinates local loop/physics/camera/viewmodel and retains the compatibility facade, but new feature ownership should remain focused.
 
-- `networkBindings.ts`: typed P2P callback ↔ gameplay bridge; imports session setters from `net/multiplayerSessionController.ts`, never from UI.
+- `localPlayerLifecycle.ts`: sole browser owner of local HP/death/respawn/spawn-shield transitions plus their HUD/VFX/death-camera side effects. `engine.ts` composes it and `networkBindings.ts` forwards authoritative lifecycle snapshots through it.
+- `networkBindings.ts`: typed P2P callback ↔ gameplay bridge; imports session setters from `net/multiplayerSessionController.ts`, never from UI. It synchronizes local lifecycle through `localPlayerLifecycle.ts` rather than mutating HP/shield state directly.
 - `remotePlayerRegistry.ts`: remote model lifecycle/interpolation/shield presentation.
 - `advancedWeaponController.ts`: finite magazine/reserve/reload authority, trigger interception, ADS/FOV and ammo UX.
 - `spawnPolicy.ts`: deterministic terrain-correct spawn policy.
@@ -130,6 +131,8 @@ The host rejects duplicate/backward sequence numbers, non-increasing client time
 `gameplay/networkBindings.ts` reconciles the local predicted player to host coordinates on the first authoritative self snapshot, on host-owned respawn, or after large divergence. Normal sub-threshold prediction remains untouched. CLIENT_STATE ticking starts only after the first self snapshot reaches gameplay, preventing a pre-authority local spawn from being interpreted as movement. Manual/debug local teleports remain presentation-only: multiplayer authority will reject them unless the host itself performed the transition.
 
 Direct WebRTC (`directWebRtc.ts`) uses `iceServers: []` by project policy. `NativeRtcDataChannel` owns heartbeat/transport resilience: ~3 s heartbeat, ~15 s expiry, ~6 s grace for transient `disconnected`, deterministic terminal teardown.
+
+`P2PHost.broadcastBinary` owns send-time channel readiness and stale-peer cleanup. Expected closing/closed-channel sends are discarded, terminal peers are disconnected through the normal host lifecycle, and unexpected send failures remain observable. There is no prototype patch or runtime `networkStabilityFix` repair layer.
 
 `selfHostSession.ts` owns only local relay transport/status presentation. It **reuses `multiplayerSessionController`** for host registration and guest client/session callbacks; it must not create a parallel `P2PClient` lifecycle or roster implementation.
 
@@ -186,12 +189,11 @@ Prefer typed imports/events/context objects for new internal code.
 
 ## Structural targets
 
-The lobby/session split is complete. Recommended next refactor order:
+The lobby/session split and local-player lifecycle split are complete. Recommended next refactor order:
 
-1. **Engine lifecycle split** — move local death/respawn/shield lifecycle into a focused controller/service and reduce `engine.ts` state ownership.
-2. **Weapon model builders** — split per-weapon construction behind stable exports.
-3. **Host internals** — if `p2pHost.ts` grows further, separate peer bookkeeping from authoritative combat while retaining one host authority boundary.
-4. **Global facade migration** — move remaining internal `window.gone*` consumers to typed services/events where practical.
+1. **Weapon model builders** — split per-weapon construction behind stable exports.
+2. **Host internals** — separate peer bookkeeping from authoritative combat while retaining one host authority boundary.
+3. **Global facade migration** — move remaining internal `window.gone*` consumers to typed services/events where practical.
 
 Do not split modules merely for line-count goals.
 
