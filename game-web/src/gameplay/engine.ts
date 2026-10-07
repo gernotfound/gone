@@ -672,7 +672,6 @@ function networkContext(): GameplayNetworkContext {
     player,
     localShieldAnchor,
     getActiveWeaponIndex: () => currentWeaponIndex,
-    handleLocalPlayerDeath,
     handleLocalPlayerRespawn,
     handleLocalPlayerDamage,
     applyAuthoritativeLocalLifecycle: (state) => localPlayerLifecycle.applyAuthoritativeState(state),
