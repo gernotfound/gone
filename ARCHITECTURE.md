@@ -189,11 +189,10 @@ Prefer typed imports/events/context objects for new internal code.
 
 ## Structural targets
 
-The lobby/session split and local-player lifecycle split are complete. Recommended next refactor order:
+The lobby/session split, local-player lifecycle split and procedural weapon-builder split are complete. Recommended next refactor order:
 
-1. **Weapon model builders** — split per-weapon construction behind stable exports.
-2. **Host internals** — separate peer bookkeeping from authoritative combat while retaining one host authority boundary.
-3. **Global facade migration** — move remaining internal `window.gone*` consumers to typed services/events where practical.
+1. **Host internals** — separate peer bookkeeping from authoritative combat while retaining one host authority boundary.
+2. **Global facade migration** — move remaining internal `window.gone*` consumers to typed services/events where practical.
 
 Do not split modules merely for line-count goals.
 
