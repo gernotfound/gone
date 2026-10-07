@@ -1,9 +1,7 @@
 import * as THREE from 'three';
 import { generate_chunk, get_height_at } from '../../pkg/game_core.js';
 import { sceneManager } from '../rendering/scene.ts';
-import { createNaturalSunRay } from './naturalSunRays.ts';
 import { createGroundedRockInstances } from './rockInstances.ts';
-import { applyBiomePaletteToChunk } from './biomeRegistry.ts';
 import {
   acquireTerrainGeometry,
   applyTerrainData,
@@ -44,7 +42,6 @@ export interface ChunkRecord {
   rocks: THREE.InstancedMesh | null;
   rockData: Float32Array | null;
   heightData: Float32Array;
-  ray: THREE.Mesh | null;
 }
 
 type PendingChunk = {
@@ -116,11 +113,6 @@ function chunkId(cx: number, cz: number): string {
   return `${cx},${cz}`;
 }
 
-function seededRandom(seed: number): number {
-  const value = Math.sin(seed) * 43758.5453;
-  return value - Math.floor(value);
-}
-
 function cachePayload(id: string, payload: ChunkPayload): void {
   chunkDataCache.delete(id);
   chunkDataCache.set(id, payload);
@@ -157,14 +149,7 @@ function loadChunkPayload(
   );
   try {
     const heights = chunkData.get_heights();
-    const colors = applyBiomePaletteToChunk(
-      chunkData.get_colors(),
-      heights,
-      offsetX,
-      offsetZ,
-      CHUNK_SIZE,
-      CHUNK_RESOLUTION,
-    );
+    const colors = chunkData.get_colors();
     const payload: ChunkPayload = {
       heights,
       normals: chunkData.get_normals(),
@@ -213,15 +198,6 @@ function buildChunk(
     : null;
   if (rocks) mesh.add(rocks);
 
-  let ray: THREE.Mesh | null = null;
-  const seed = cx * 12.9898 + cz * 78.233;
-  if (seededRandom(seed) > 0.82) {
-    const localX = (seededRandom(seed + 2.1) - 0.5) * CHUNK_SIZE;
-    const localZ = (seededRandom(seed + 3.7) - 0.5) * CHUNK_SIZE;
-    ray = createNaturalSunRay(mesh, localX, localZ, seed);
-    mesh.add(ray);
-  }
-
   const record: ChunkRecord = {
     id,
     cx,
@@ -230,7 +206,6 @@ function buildChunk(
     rocks,
     rockData: nearDetail ? null : payload.rocks,
     heightData: payload.heights,
-    ray,
   };
   sceneManager.scene.add(mesh);
   activeChunks.set(id, record);
@@ -290,11 +265,6 @@ function reconcileChunkDetails(centerX: number, centerZ: number): void {
       pendingDetailIds.delete(record.id);
     }
 
-    if (record.ray) {
-      record.ray.visible =
-        desiredChunkIds.has(record.id) &&
-        chunkDistanceSq(record.cx, record.cz, centerX, centerZ) <= CHUNK_RADIUS * CHUNK_RADIUS + 1;
-    }
   }
 }
 
