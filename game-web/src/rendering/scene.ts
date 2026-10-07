@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 import { DOM } from '../ui/menu.ts';
-import { createNaturalSunRayGeometry, createNaturalSunRayMaterial } from './naturalSunRayResources.ts';
 import { WORLD_FOG_FAR, WORLD_FOG_NEAR } from '../world/worldConfig.ts';
 
 export class SceneManager {
@@ -10,8 +9,6 @@ export class SceneManager {
     public terrainMaterial!: THREE.MeshStandardMaterial;
     public rockGeo!: THREE.DodecahedronGeometry;
     public rockMat!: THREE.MeshStandardMaterial;
-    public rayGeo!: THREE.CylinderGeometry;
-    public rayMat!: THREE.MeshBasicMaterial;
 
     private isInitialized = false;
     private renderWidth = 0;
@@ -24,9 +21,6 @@ export class SceneManager {
         const fogColor = 0x1e293b;
         this.scene.background = new THREE.Color(fogColor);
         this.scene.fog = new THREE.Fog(fogColor, WORLD_FOG_NEAR, WORLD_FOG_FAR);
-
-        this.rayGeo = createNaturalSunRayGeometry();
-        this.rayMat = createNaturalSunRayMaterial();
 
         this.camera = new THREE.PerspectiveCamera(85, window.innerWidth / Math.max(1, window.innerHeight), 0.01, 3000);
 
@@ -87,8 +81,6 @@ export class SceneManager {
         this.terrainMaterial.dispose();
         this.rockGeo.dispose();
         this.rockMat.dispose();
-        this.rayGeo.dispose();
-        this.rayMat.dispose();
 
         this.renderer.dispose();
         this.renderWidth = 0;

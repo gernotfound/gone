@@ -12,7 +12,6 @@ import { startCombatFeedback } from '../gameplay/combatFeedback.ts';
 import { startDeathmatchScore } from '../gameplay/deathmatchScore.ts';
 import { startDeathmatchRoundLifecycle } from '../gameplay/deathmatchRoundLifecycle.ts';
 import { startRemoteRobotMotion } from '../gameplay/remoteRobotMotion.ts';
-import { startMapSpawnMarkers } from '../gameplay/mapSpawnMarkers.ts';
 import { startHostRemoteSync } from '../net/hostRemoteSync.ts';
 import { startLobbyPresenceSync } from '../net/lobbyPresenceSync.ts';
 import { startPvpTimingTuning } from '../net/pvpTuning.ts';
@@ -190,12 +189,6 @@ const CLIENT_RUNTIME_MODULES: readonly RuntimeModuleDefinition[] = [
     phase: 'presentation',
     dependsOn: BOOTSTRAP_DEPENDENCY,
     start: startLiveMapOverlay,
-  },
-  {
-    name: 'mapSpawnMarkers',
-    phase: 'presentation',
-    dependsOn: BOOTSTRAP_DEPENDENCY,
-    start: startMapSpawnMarkers,
   },
   {
     name: 'musicSourceGain',

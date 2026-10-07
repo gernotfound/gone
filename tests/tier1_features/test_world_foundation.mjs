@@ -1,9 +1,5 @@
 import fs from 'fs';
 import path from 'path';
-import {
-  BIOMES,
-  getBiomeAt,
-} from '../../game-web/src/world/biomeRegistry.ts';
 import { HEALTH_PICKUP_AUTHORITY } from '../../game-web/src/net/clientStateExtensions.ts';
 import {
   CENTRAL_HUB_RADIUS,
@@ -64,19 +60,27 @@ export async function run(suite) {
     assert(host.includes('supplyDistance <= HEALTH_PICKUP_AUTHORITY.maxRadius'), 'host must reject forged health pickup requests outside the supply annulus');
   });
 
-  suite.test('Biome registry maps the hub and four maze sectors deterministically', () => {
-    assertEqual(getBiomeAt(0, 0).id, BIOMES.central_hub.id);
-    assertEqual(getBiomeAt(-900, -900).id, BIOMES.alpine_fissures.id);
-    assertEqual(getBiomeAt(900, -900).id, BIOMES.flooded_lowlands.id);
-    assertEqual(getBiomeAt(900, 900).id, BIOMES.ash_basin.id);
-    assertEqual(getBiomeAt(-900, 900).id, BIOMES.overgrown_ruins.id);
-
+  suite.test('World presentation has no biome tint or natural sun-ray layer', () => {
     const chunks = source('game-web', 'src', 'world', 'chunkManager.ts');
-    assert(chunks.includes('applyBiomePaletteToChunk'), 'streamed terrain must apply the biome palette');
-
+    const scene = source('game-web', 'src', 'rendering', 'scene.ts');
     const liveMap = source('game-web', 'src', 'gameplay', 'liveMapOverlay.ts');
-    assert(liveMap.includes('NUCLEO ZERO · SPAWN'), 'live map must identify the new central spawn');
-    assert(liveMap.includes('CRATERE DEL SEGNALE'), 'live map must preserve the southeast crater as a landmark');
-    assert(!liveMap.includes('SPAWN · CRATERE SE'), 'legacy crater-spawn labeling must be removed');
+
+    assert(!chunks.includes('applyBiomePaletteToChunk'), 'streamed terrain must keep canonical Rust/WASM colors');
+    assert(!chunks.includes('createNaturalSunRay'), 'streamed chunks must not create sky-ray meshes');
+    assert(!scene.includes('rayGeo') && !scene.includes('rayMat'), 'scene must not allocate removed sun-ray resources');
+    assert(!liveMap.includes('addLandmark('), 'live map must remain free of named landmark markers');
+
+    assert(
+      !fs.existsSync(path.join(PROJECT_ROOT, 'game-web', 'src', 'world', 'biomeRegistry.ts')),
+      'removed biome presentation registry must not return',
+    );
+    assert(
+      !fs.existsSync(path.join(PROJECT_ROOT, 'game-web', 'src', 'world', 'naturalSunRays.ts')),
+      'removed chunk sun-ray generator must not return',
+    );
+    assert(
+      !fs.existsSync(path.join(PROJECT_ROOT, 'game-web', 'src', 'rendering', 'naturalSunRayResources.ts')),
+      'removed sun-ray render resources must not return',
+    );
   });
 }

@@ -195,18 +195,19 @@ Browser smoke mobile changes with pointerdown/pointermove; specifically verify r
 - `public/gone-cache-sw.js` may cache a requested safe `gone-performance-pack-*` cache name, while its own registration version remains the PWA `BUILD_ID`.
 - No legacy user migration/backfill is required; stale local performance-pack markers/caches can be discarded in favor of the current canonical pack.
 
-## World direction / biomes
+## World direction / presentation
 
-- `world/biomeRegistry.ts` owns deterministic biome identity, presentation palettes and working landmark metadata.
-- `docs/world_vision.md` is the working world/lore direction: Nucleo Zero at the origin, maze sectors around it, one meaningful POI per biome, and the southeast crater as a destination rather than the start.
-- Biome presentation may tint streamed terrain, but Rust/WASM remains the geometry/height authority. Do not fork collision physics just to iterate on biome art direction.
-- `world/mazeLayout.ts` owns canonical deterministic maze geometry: an 18x18 coarse corridor grid with a 6x6 central void, ~420 m wall-free Nucleo Zero clearing, four cardinal ~184 m entrances, seeded DFS passage carving, deterministic extra loops, paired/double walls, landmark clearings, spatial indexing and pure collision/occlusion queries. Client prediction, PvE movement and host authority must use this same layout.
+- `docs/world_vision.md` is the current world direction.
+- Streamed terrain uses canonical Rust/WASM vertex colors directly. The former `world/biomeRegistry.ts` tint/identity layer is intentionally removed; do not reintroduce quadrant biome recoloring without an explicit product decision.
+- Decorative chunk-level natural sun-ray meshes and their shared render resources are intentionally removed. Standard hemisphere/directional scene lighting remains.
+- The tactical map renders terrain relief plus canonical maze walls, player position and scale only; do not reintroduce loot/spawn ping layers or named place/landmark labels without an explicit product decision.
+- `world/mazeLayout.ts` owns canonical deterministic maze geometry: an 18x18 coarse corridor grid with a 6x6 central void, ~420 m wall-free central clearing, four cardinal ~184 m entrances, seeded DFS passage carving, deterministic extra loops, paired/double walls, landmark clearings, spatial indexing and pure collision/occlusion queries. Client prediction, PvE movement and host authority must use this same layout.
 - The maze must remain a **real branching topology**, not concentric control rings. Current target difficulty is 9/10: preserve many dead ends/junctions, only a small controlled set of alternate-route loops, and exactly one outer-world exit.
 - Most corridors remain based on ~184 m cells, but a deterministic minority contain ~96 m choke sections. Chokes must remain traversable by player/spider authority and must never replace the broad-corridor identity across the whole maze.
-- The only authored outer-world exit is on the east perimeter toward the Signal Crater sector. The four cardinal openings around Nucleo Zero are entrances into the maze, not exits from the world perimeter.
+- The only authored outer-world exit is on the east perimeter. The four cardinal openings around the center are entrances into the maze, not exits from the world perimeter.
 - `world/mazeNavigation.ts` owns bounded A* routing over canonical maze collision. Do not add a divergent navmesh for the same walls.
 - `world/mazePrototype.ts` owns only instanced wall presentation. Walls are deliberately extruded from Y=-600 to Y=+1200 so terrain cannot leave gaps below them and normal traversal cannot pass above them.
-- The authored maze footprint ends near +/-1660 m, approximately 50% of the square playable area. The outer map remains open for biome/POI space. POI structures, progression gates, biome-specific maze art and final lore remain later stages.
+- The authored maze footprint ends near +/-1660 m, approximately 50% of the square playable area.
 
 ## Local gameplay / spawn
 

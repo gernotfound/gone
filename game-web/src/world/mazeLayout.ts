@@ -1,4 +1,3 @@
-import { BIOMES } from './biomeRegistry.ts';
 import {
   GIANT_CRATER_CENTER_X,
   GIANT_CRATER_CENTER_Z,
@@ -71,20 +70,20 @@ export const MAZE_LANDMARK_CLEARINGS: readonly MazeClearing[] = Object.freeze([
   },
   {
     id: 'fractured-observatory',
-    x: BIOMES.alpine_fissures.anchor.x,
-    z: BIOMES.alpine_fissures.anchor.z,
+    x: -1500,
+    z: -1500,
     radius: 220,
   },
   {
     id: 'pumping-station-04',
-    x: BIOMES.flooded_lowlands.anchor.x,
-    z: BIOMES.flooded_lowlands.anchor.z,
+    x: 1200,
+    z: -1200,
     radius: 220,
   },
   {
     id: 'sunken-greenhouses',
-    x: BIOMES.overgrown_ruins.anchor.x,
-    z: BIOMES.overgrown_ruins.anchor.z,
+    x: -1200,
+    z: 1200,
     radius: 220,
   },
 ]);

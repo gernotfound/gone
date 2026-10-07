@@ -1,3 +1,4 @@
+import { MAZE_WALLS } from '../world/mazeLayout.ts';
 import { DOM } from './menu.ts';
 
 let minimapCtx: CanvasRenderingContext2D | null = null;
@@ -7,8 +8,8 @@ let cachedHeightSource: ((x: number, z: number) => number) | null = null;
 /** Designed gameplay window: includes NW mountain massif and SE giant crater. */
 export const GLOBAL_MAP_HALF_EXTENT = 2400;
 const GLOBAL_MAP_SIZE_METERS = GLOBAL_MAP_HALF_EXTENT * 2;
-const SAMPLE_SIZE = 192;
-const CONTOUR_METERS = 40;
+const SAMPLE_SIZE = 256;
+const CONTOUR_METERS = 80;
 
 function clamp01(value: number): number {
     return Math.max(0, Math.min(1, value));
@@ -18,33 +19,34 @@ function mix(a: number, b: number, t: number): number {
     return Math.round(a + (b - a) * t);
 }
 
-function altitudeColor(height: number, slope: number): [number, number, number] {
-    // Fixed elevation scale keeps the visual language stable between openings:
-    // deep terrain = navy/charcoal, high terrain = pale ice/stone.
+function altitudeColor(height: number, relief: number): [number, number, number] {
     const t = clamp01((height + 110) / 520);
     let r: number;
     let g: number;
     let b: number;
 
-    if (t < 0.42) {
-        const q = t / 0.42;
-        r = mix(5, 45, q);
-        g = mix(10, 62, q);
-        b = mix(25, 82, q);
-    } else if (t < 0.78) {
-        const q = (t - 0.42) / 0.36;
-        r = mix(45, 142, q);
-        g = mix(62, 164, q);
-        b = mix(82, 182, q);
+    if (t < 0.36) {
+        const q = t / 0.36;
+        r = mix(8, 28, q);
+        g = mix(20, 63, q);
+        b = mix(34, 70, q);
+    } else if (t < 0.72) {
+        const q = (t - 0.36) / 0.36;
+        r = mix(28, 83, q);
+        g = mix(63, 112, q);
+        b = mix(70, 105, q);
     } else {
-        const q = (t - 0.78) / 0.22;
-        r = mix(142, 238, q);
-        g = mix(164, 246, q);
-        b = mix(182, 250, q);
+        const q = (t - 0.72) / 0.28;
+        r = mix(83, 214, q);
+        g = mix(112, 222, q);
+        b = mix(105, 218, q);
     }
 
-    const reliefShade = Math.max(0.68, 1 - Math.min(0.32, slope * 0.025));
-    return [Math.round(r * reliefShade), Math.round(g * reliefShade), Math.round(b * reliefShade)];
+    return [
+        Math.round(r * relief),
+        Math.round(g * relief),
+        Math.round(b * relief),
+    ];
 }
 
 function buildGlobalMap(getTerrainHeightAt: (x: number, z: number) => number): HTMLCanvasElement {
@@ -70,20 +72,26 @@ function buildGlobalMap(getTerrainHeightAt: (x: number, z: number) => number): H
         for (let px = 0; px < SAMPLE_SIZE; px += 1) {
             const i = py * SAMPLE_SIZE + px;
             const h = heights[i];
+            const left = heights[py * SAMPLE_SIZE + Math.max(0, px - 1)];
             const right = heights[py * SAMPLE_SIZE + Math.min(SAMPLE_SIZE - 1, px + 1)];
+            const up = heights[Math.max(0, py - 1) * SAMPLE_SIZE + px];
             const down = heights[Math.min(SAMPLE_SIZE - 1, py + 1) * SAMPLE_SIZE + px];
-            const slope = Math.hypot(right - h, down - h) / Math.max(1, stepMeters);
-            let [r, g, b] = altitudeColor(h, slope);
 
-            // Subtle contour lines make elevation readable without obscuring
-            // the continuous light-high / dark-low altitude ramp.
+            // Directional hillshade gives the terrain a clearer top-down shape
+            // than a flat altitude ramp while remaining deterministic.
+            const relief = Math.max(
+                0.70,
+                Math.min(1.12, 0.94 + (left - right) * 0.006 + (up - down) * 0.004),
+            );
+            let [r, g, b] = altitudeColor(h, relief);
+
             const band = Math.floor((h + 400) / CONTOUR_METERS);
             const neighborBand = Math.floor((right + 400) / CONTOUR_METERS);
             const downBand = Math.floor((down + 400) / CONTOUR_METERS);
             if (band !== neighborBand || band !== downBand) {
-                r = Math.round(r * 0.72);
-                g = Math.round(g * 0.72);
-                b = Math.round(b * 0.76);
+                r = Math.round(r * 0.78);
+                g = Math.round(g * 0.78);
+                b = Math.round(b * 0.80);
             }
 
             const offset = i * 4;
@@ -97,23 +105,62 @@ function buildGlobalMap(getTerrainHeightAt: (x: number, z: number) => number): H
     return sample;
 }
 
-function drawMapChrome(ctx: CanvasRenderingContext2D, width: number, height: number): void {
+function worldToCanvasX(x: number, width: number): number {
+    return ((x + GLOBAL_MAP_HALF_EXTENT) / GLOBAL_MAP_SIZE_METERS) * width;
+}
+
+function worldToCanvasY(z: number, height: number): number {
+    return ((z + GLOBAL_MAP_HALF_EXTENT) / GLOBAL_MAP_SIZE_METERS) * height;
+}
+
+function drawMapGrid(ctx: CanvasRenderingContext2D, width: number, height: number): void {
     ctx.save();
-    ctx.strokeStyle = 'rgba(103,232,249,0.16)';
+    ctx.strokeStyle = 'rgba(207,250,254,0.12)';
     ctx.lineWidth = 1;
-    ctx.font = 'bold 11px ui-monospace, monospace';
-    ctx.fillStyle = 'rgba(207,250,254,0.82)';
 
     const gridMeters = 800;
     for (let meter = -1600; meter <= 1600; meter += gridMeters) {
-        const x = ((meter + GLOBAL_MAP_HALF_EXTENT) / GLOBAL_MAP_SIZE_METERS) * width;
-        const y = ((meter + GLOBAL_MAP_HALF_EXTENT) / GLOBAL_MAP_SIZE_METERS) * height;
+        const x = worldToCanvasX(meter, width);
+        const y = worldToCanvasY(meter, height);
         ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke();
         ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
     }
+    ctx.restore();
+}
 
-    // Keep only unobtrusive cardinal references. Opaque legend boxes are
-    // intentionally omitted so the terrain remains fully readable.
+function drawMazeOverlay(ctx: CanvasRenderingContext2D, width: number, height: number): void {
+    const pixelsPerMeterX = width / GLOBAL_MAP_SIZE_METERS;
+    const pixelsPerMeterY = height / GLOBAL_MAP_SIZE_METERS;
+
+    ctx.save();
+    ctx.fillStyle = 'rgba(241,245,249,0.88)';
+    ctx.shadowColor = 'rgba(2,6,23,0.92)';
+    ctx.shadowBlur = Math.max(1.5, width / 400);
+
+    // Draw the canonical physical wall footprints. The tactical map therefore
+    // always matches movement, hitscan and spider-navigation collision geometry.
+    for (const wall of MAZE_WALLS) {
+        const wallWidth = Math.max(1.25, wall.width * pixelsPerMeterX);
+        const wallDepth = Math.max(1.25, wall.depth * pixelsPerMeterY);
+        const centerX = worldToCanvasX(wall.x, width);
+        const centerY = worldToCanvasY(wall.z, height);
+        ctx.fillRect(
+            centerX - wallWidth * 0.5,
+            centerY - wallDepth * 0.5,
+            wallWidth,
+            wallDepth,
+        );
+    }
+    ctx.restore();
+}
+
+function drawMapLabels(ctx: CanvasRenderingContext2D, width: number, height: number): void {
+    ctx.save();
+    ctx.font = 'bold 11px ui-monospace, monospace';
+    ctx.fillStyle = 'rgba(236,254,255,0.90)';
+    ctx.shadowColor = 'rgba(2,6,23,0.95)';
+    ctx.shadowBlur = 4;
+
     ctx.textAlign = 'center';
     ctx.fillText('N', width / 2, 18);
     ctx.fillText('S', width / 2, height - 10);
@@ -156,7 +203,10 @@ export function drawMinimap(
     minimapCtx.clearRect(0, 0, width, height);
     minimapCtx.drawImage(cachedGlobalMap, 0, 0, width, height);
     minimapCtx.restore();
-    drawMapChrome(minimapCtx, width, height);
+
+    drawMapGrid(minimapCtx, width, height);
+    drawMazeOverlay(minimapCtx, width, height);
+    drawMapLabels(minimapCtx, width, height);
 
     if (DOM.playerDot) {
         const inside = Math.abs(playerX) <= GLOBAL_MAP_HALF_EXTENT && Math.abs(playerZ) <= GLOBAL_MAP_HALF_EXTENT;
