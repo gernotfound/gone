@@ -187,6 +187,8 @@ Vite/Rolldown isolates Three.js into stable `three-vendor` with strict execution
 
 Prefer typed imports/events/context objects for new internal code.
 
+The first migration from the browser debug facade is complete for remote motion, remote shot VFX, host rendering sync, PvP timing and kill-ammo reset: each reads the canonical `remotePlayerRegistry.ts` and/or `multiplayerSessionController.ts` directly. The global `window.goneGame` object stays for legacy browser integrations. Further migrations must preserve runtime callbacks and host authority, and should eliminate callback/prototype patching at its owner rather than adding repair polling.
+
 ## Structural targets
 
 The lobby/session split, local-player lifecycle split and procedural weapon-builder split are complete. Recommended next refactor order:

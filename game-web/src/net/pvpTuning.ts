@@ -1,15 +1,15 @@
 import type { WorldSnapshotData } from './binaryProtocol.ts';
 import { WEAPON_KEYS, type WeaponKey } from '../weapons/weaponConfig.ts';
 import { attachWeaponToRobot, createThirdPersonWeapon } from '../models/index.ts';
+import { remotePlayers } from '../gameplay/remotePlayerRegistry.ts';
+import { activeP2PClient } from './multiplayerSessionController.ts';
 
 function syncRemoteWeapons(client: any, snapshot: WorldSnapshotData): void {
-  const game = (window as any).goneGame;
-  if (!game?.remotePlayers) return;
   for (const playerState of snapshot.players) {
     if (client.playerSlot !== null && playerState.slot === client.playerSlot) continue;
     const id = client.slotToPlayerId?.get(playerState.slot);
     if (!id) continue;
-    const remote = game.remotePlayers.get(id);
+    const remote = remotePlayers.get(id);
     if (!remote?.group) continue;
     const desired = (WEAPON_KEYS[playerState.activeWeapon] ?? 'assalto') as WeaponKey;
     if (remote.weaponType !== desired) {
@@ -35,7 +35,7 @@ export function startPvpTimingTuning(): void {
   let lastMappedTimestamp = 0;
 
   window.setInterval(() => {
-    const client = (window as any).goneGame?.getP2PClient?.();
+    const client = activeP2PClient;
     if (!client || client === patchedClient || !client.config?.onWorldSnapshot) return;
 
     patchedClient = client;

@@ -1,4 +1,5 @@
 import { WEAPON_KEYS, WEAPON_RUNTIME } from '../weapons/weaponConfig.ts';
+import { activeP2PHost, activeP2PClient } from '../net/multiplayerSessionController.ts';
 
 const HOST_MARKER = '__goneKillAmmoResetHost';
 const CLIENT_MARKER = '__goneKillAmmoResetClient';
@@ -54,9 +55,8 @@ export function startKillAmmoReset(): void {
   (window as any).__goneKillAmmoResetStarted = true;
 
   const attach = () => {
-    const api = (window as any).goneGame;
-    attachHost(api?.getP2PHost?.());
-    attachClient(api?.getP2PClient?.());
+    attachHost(activeP2PHost);
+    attachClient(activeP2PClient);
   };
 
   attach();

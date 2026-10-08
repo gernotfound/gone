@@ -290,6 +290,8 @@ The runtime-kernel/browser-lifecycle foundation, lobby/session split, local play
 
 Transport readiness and stale-peer cleanup belong directly to `P2PHost.broadcastBinary`. Do not reintroduce `networkStabilityFix.ts`, prototype replacement, or another runtime repair layer.
 
+Remote presentation and session observers (`remoteRobotMotion.ts`, `hostRemoteSync.ts`, `pvpTuning.ts`, `remoteShotPresentation.ts`, `killAmmoReset.ts`) use the existing typed `remotePlayerRegistry` and `multiplayerSessionController` owners. `window.goneGame` remains a compatibility/debug facade, never the internal source of truth for these modules.
+
 Do not refactor for line count alone.
 
 ## Change discipline
