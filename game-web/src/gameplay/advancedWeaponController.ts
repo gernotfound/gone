@@ -74,6 +74,19 @@ function reloadProgress(now = performance.now()): number {
   return Math.max(0, Math.min(1, (now - reloadStartedAt) / span));
 }
 
+/** Canonical ammo reset on host-driven deathmatch round transition. */
+export function resetAllWeaponAmmoForRound(): void {
+  triggerHeld = false;
+  adsHeld = false;
+  inputState.fire = false;
+  inputState.aim = false;
+  resetAmmo();
+}
+
+export function isAdvancedWeaponAiming(): boolean {
+  return adsHeld;
+}
+
 function resetAmmo(): void {
   for (const key of WEAPON_KEYS) {
     ammo[key].magazine = WEAPON_RUNTIME[key].magazineSize;

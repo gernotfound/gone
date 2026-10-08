@@ -298,6 +298,79 @@ async function main() {
       `Unresolved shooter must use omnidirectional fallback: ${JSON.stringify(directionalFeedback.fallback)}`);
     invariant(directionalFeedback.fallback.angleStyle === '', 'Fallback impact must clear stale directional rotation');
 
+    console.log('[full-match] Verifying engine-owned local shot gate and authoritative round ammo reset');
+    const shotPolicy = await guest.evaluate(() => {
+      const game = window.goneGame;
+      const round = window.goneRoundLifecycle;
+      const weapons = window.goneWeapons;
+      if (!round?.snapshot || !game?.fireWeapon || !weapons?.ammo) {
+        throw new Error('Combat/round compatibility APIs missing');
+      }
+
+      const before = round.snapshot();
+      const originalFire = game.fireWeapon;
+      const originalPointerLockDescriptor = Object.getOwnPropertyDescriptor(document, 'pointerLockElement');
+      const baseRound = Math.max(1, before.round);
+      const roundEvent = (number, winnerSlot) => window.dispatchEvent(new CustomEvent('gone-deathmatch-sync', {
+        detail: {
+          source: 'client',
+          at: performance.now(),
+          snapshot: { round: number, targetKills: 10, winnerSlot, resetRemainingMs: 0, rows: [] },
+        },
+      }));
+
+      // Override pointer-lock state only for this isolated smoke. The real game
+      // has already initialized and rendered; no synthetic shot is sent to a peer.
+      Object.defineProperty(document, 'pointerLockElement', {
+        configurable: true,
+        get: () => document.body,
+      });
+      try {
+        if (!game.runtimeSnapshot().isGameRunning) throw new Error('Local game is not running');
+        if (game.getShotCooldown() > 0.0001) throw new Error('Shot cooldown must be ready at test start');
+
+        roundEvent(baseRound, 0);
+        const beforeLockedShot = round.snapshot().blockedLocalShots;
+        const cooldownBefore = game.getShotCooldown();
+        game.fireWeapon();
+        const cooldownAfter = game.getShotCooldown();
+        const locked = round.snapshot();
+
+        // The inventory belongs to advancedWeaponController; a new round must
+        // reset it atomically, not only mutate public ammo while reload is active.
+        weapons.ammo.assalto.magazine = 2;
+        weapons.ammo.assalto.reserve = 3;
+        roundEvent(baseRound + 1, null);
+        const next = round.snapshot();
+
+        return {
+          lockedShotCountDelta: locked.blockedLocalShots - beforeLockedShot,
+          cooldownUnchanged: cooldownBefore === cooldownAfter,
+          fireMethodStable: game.fireWeapon === originalFire,
+          roundResetDelta: next.localRoundResets - before.localRoundResets,
+          roundUnlocked: next.locked === false,
+          ammoRestored: weapons.ammo.assalto.magazine === weapons.config.assalto.magazineSize
+            && weapons.ammo.assalto.reserve === weapons.config.assalto.reserveAmmo,
+          aimAccuracy: game.getAimAccuracy?.(),
+          aimSpread: game.getAimSpreadRadians?.(),
+        };
+      } finally {
+        if (originalPointerLockDescriptor) {
+          Object.defineProperty(document, 'pointerLockElement', originalPointerLockDescriptor);
+        } else {
+          delete document.pointerLockElement;
+        }
+      }
+    });
+    invariant(shotPolicy.lockedShotCountDelta === 1 && shotPolicy.cooldownUnchanged,
+      `Round lock did not stop the real local fire entrypoint: ${JSON.stringify(shotPolicy)}`);
+    invariant(shotPolicy.fireMethodStable, 'Local fire function must not be monkey-patched across round transitions');
+    invariant(shotPolicy.roundResetDelta === 1 && shotPolicy.roundUnlocked && shotPolicy.ammoRestored,
+      `Authoritative round reset did not restore canonical ammo: ${JSON.stringify(shotPolicy)}`);
+    invariant(Number.isFinite(shotPolicy.aimAccuracy) && shotPolicy.aimAccuracy >= 0 && shotPolicy.aimAccuracy <= 1
+      && Number.isFinite(shotPolicy.aimSpread) && shotPolicy.aimSpread >= 0,
+      `Precision debug facade was not preserved: ${JSON.stringify(shotPolicy)}`);
+
     if (errors.length) throw new Error(`Runtime/browser errors detected:\n${errors.join('\n')}`);
 
     console.log('[full-match] PASS', JSON.stringify({

@@ -22,6 +22,9 @@ export async function run(suite) {
   const telemetry = source('game-web', 'api', 'client-telemetry.js');
   const pwa = source('game-web', 'src', 'pwa', 'pwaRuntime.ts');
   const networkPatchPath = path.join(PROJECT_ROOT, 'game-web', 'src', 'net', 'networkStabilityFix.ts');
+  const precision = source('game-web', 'src', 'gameplay', 'precisionShotRuntime.ts');
+  const roundLifecycle = source('game-web', 'src', 'gameplay', 'deathmatchRoundLifecycle.ts');
+  const weapons = source('game-web', 'src', 'gameplay', 'advancedWeaponController.ts');
 
   suite.test('Host transport resilience belongs to P2PHost instead of a runtime monkey-patch', () => {
     assert(!fs.existsSync(networkPatchPath), 'networkStabilityFix prototype patch must stay deleted');
@@ -29,6 +32,20 @@ export async function run(suite) {
     assert(p2pHost.includes('const state = peer.channel.readyState'), 'host broadcast must inspect transport readiness directly');
     assert(p2pHost.includes("state === 'closing' || state === 'closed'"), 'host must identify terminal peer channels');
     assert(p2pHost.includes('this.handlePeerDisconnect(id)'), 'host must clean terminal peers through its own lifecycle');
+  });
+
+  suite.test('Local shots use one engine-owned pipeline, not competing runtime fireWeapon wrappers', () => {
+    assert(engine.includes('if (!canFireLocalRoundShot()) return;'), 'engine must reject local shots while a deathmatch round is locked');
+    assert(engine.includes('fireWithPrecision(currentWeaponType, commitWeaponShot);'), 'all local fire paths must apply spread before a shot commits');
+    assert(engine.includes('function commitWeaponShot(): void {'), 'engine must own exactly one shot implementation');
+    assert(!precision.includes('api.fireWeapon =') && !precision.includes('originalFireWeapon'), 'precision must not overwrite compatibility fire methods');
+    assert(precision.includes('finally {') && precision.includes('camera.quaternion.copy(originalQuaternion)'), 'temporary shot spread must restore the camera on every exit path');
+    assert(!roundLifecycle.includes('game.fireWeapon =') && !roundLifecycle.includes('setInterval('), 'round lock must not monkey-patch or poll for fire methods');
+    assert(roundLifecycle.includes('export function canFireLocalRoundShot(): boolean'), 'round owner must expose an explicit synchronous shot gate');
+    assert(roundLifecycle.includes('resetAllWeaponAmmoForRound()'), 'round owner must delegate ammo resets to the canonical inventory owner');
+    assert(weapons.includes('export function resetAllWeaponAmmoForRound(): void'), 'ammo owner must atomically clear reload and restore inventory');
+    assert(roundLifecycle.includes('configureRoundLocalRespawn(') && engine.includes('configureRoundLocalRespawn(handleLocalPlayerRespawn)'), 'round reset must call registered local lifecycle, not the window facade');
+    assert(engine.includes('fireWeapon,') && precision.includes('api.getAimSpreadRadians ='), 'legacy browser diagnostics and fire method must remain available');
   });
 
   suite.test('Remote presentation reads typed session and registry owners, not the browser debug facade', () => {

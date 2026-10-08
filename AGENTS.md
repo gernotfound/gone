@@ -150,6 +150,10 @@ Competitive contract:
 - do not add prone/slide/lean UI until gameplay exists;
 - map is non-modal on phone: movement/look/FIRE/ADS/reload/weapon switch remain usable; map stays partially transparent below touch controls; MAP must close itself while open.
 
+## Local shot pipeline authority
+
+`gameplay/engine.ts` is the only local shot entrypoint: it checks the explicit deathmatch permission from `deathmatchRoundLifecycle.ts` before executing `precisionShotRuntime.fireWithPrecision` around the shot commit. This covers engine-private, desktop/mobile controller and public compatibility `fireWeapon` callers. The round owner resets ammo through `advancedWeaponController.resetAllWeaponAmmoForRound`, which cancels reload, held trigger and ADS; engine registers the lifecycle respawn callback. Never monkey-patch `goneGame.fireWeapon` or poll for wrappers. `precisionShotRuntime` registers only legacy accuracy diagnostics.
+
 ## Ammo authority
 
 `gameplay/advancedWeaponController.ts` is the only authoritative local owner of magazine/reserve/reload UX.
