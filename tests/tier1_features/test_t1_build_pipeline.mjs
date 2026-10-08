@@ -72,13 +72,30 @@ export async function run(suite) {
     assert(projContent.includes('TTK'), 'PROJECT.md must document TTK balance');
   });
 
-  suite.test('F-17: Canonical procedural model sources are versioned in the repository', () => {
-    const uniqueSources = [...new Set(Object.values(ASSET_SOURCES))];
-    assertEqual(uniqueSources.length, 2, 'Robot and weapon procedural sources should be canonicalized into two builders');
-    for (const sourcePath of uniqueSources) {
+  suite.test('F-17: Each weapon and robot has one versioned procedural model owner', () => {
+    const expectedBuilders = {
+      assalto: ['weapons/assaultRifle.ts', 'createAssaultRifleModel'],
+      cecchino: ['weapons/sniperRifle.ts', 'createSniperRifleModel'],
+      pompa: ['weapons/shotgun.ts', 'createShotgunModel'],
+      mitraglietta: ['weapons/smg.ts', 'createSmgModel'],
+      coltello: ['weapons/knife.ts', 'createKnifeModel'],
+    };
+    assertEqual(Object.keys(ASSET_SOURCES).length, 6, 'five weapons and one robot need canonical model sources');
+    assertEqual(new Set(Object.values(ASSET_SOURCES)).size, 6, 'each model must have its own source');
+
+    for (const [weapon, [relativePath, factoryName]] of Object.entries(expectedBuilders)) {
+      const sourcePath = path.join(PROJECT_ROOT, 'game-web', 'src', 'models', relativePath);
+      assertEqual(ASSET_SOURCES[weapon], sourcePath, `asset inspector must point at the canonical ${weapon} builder`);
       assert(fs.existsSync(sourcePath), `Versioned procedural source must exist: ${sourcePath}`);
-      assertGreaterThan(fs.statSync(sourcePath).size, 5000, `Procedural source must be substantive: ${sourcePath}`);
+      const content = fs.readFileSync(sourcePath, 'utf8');
+      assertGreaterThan(content.length, 4000, `Weapon builder must retain substantive geometry: ${weapon}`);
+      assert(content.includes(`export function ${factoryName}()`), `Canonical builder must export ${factoryName}`);
+      assert(content.split('add(').length - 1 >= 25, `Procedural model must retain its component geometry: ${weapon}`);
     }
+
+    const robotPath = ASSET_SOURCES.modello;
+    assert(fs.existsSync(robotPath), 'Versioned robot model source must exist');
+    assertGreaterThan(fs.statSync(robotPath).size, 5000, 'Robot procedural source must remain substantive');
   });
 
   suite.test('F-17: docs/weapons_balance.md exists and documents all 5 weapons with TTK balance rationale', () => {

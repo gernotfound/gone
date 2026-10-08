@@ -279,11 +279,12 @@ Current baseline:
 
 ## Current structural direction
 
-The runtime-kernel/browser-lifecycle foundation, lobby/session split and local player lifecycle split are complete architecture directions. Next high-value structural work:
+The runtime-kernel/browser-lifecycle foundation, lobby/session split, local player lifecycle split and procedural weapon-builder split are complete architecture directions. Next high-value structural work:
 
-1. split per-weapon model builders behind stable exports;
-2. separate `p2pHost.ts` peer bookkeeping from authoritative combat without creating multiple authorities;
-3. gradually migrate remaining internal `window.gone*` consumers to typed services/events.
+1. separate `p2pHost.ts` peer bookkeeping from authoritative combat without creating multiple authorities;
+2. gradually migrate remaining internal `window.gone*` consumers to typed services/events.
+
+`models/weaponBuilders.ts` is the stable weapon-model facade. Per-weapon procedural construction belongs in `models/weapons/*.ts`; shared mesh primitives belong in `models/weapons/proceduralShared.ts`. Keep viewmodel/third-person transforms, sockets, GLTF loading and public exports in the facade unless ownership genuinely changes.
 
 `gameplay/localPlayerLifecycle.ts` is the sole browser owner of local HP/death/respawn/spawn-shield transitions and their HUD/VFX/death-camera side effects. `engine.ts` composes it; `networkBindings.ts` synchronizes authoritative snapshots through it rather than mutating lifecycle state directly.
 

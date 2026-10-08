@@ -8,19 +8,23 @@ import { fileURLToPath } from 'url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const PROJECT_ROOT = path.resolve(HERE, '..', '..');
 
-const WEAPON_BUILDER = path.join(PROJECT_ROOT, 'game-web', 'src', 'models', 'weaponBuilders.ts');
+const WEAPON_BUILDERS_ROOT = path.join(PROJECT_ROOT, 'game-web', 'src', 'models', 'weapons');
+const WEAPON_BUILDERS = {
+  assalto: path.join(WEAPON_BUILDERS_ROOT, 'assaultRifle.ts'),
+  cecchino: path.join(WEAPON_BUILDERS_ROOT, 'sniperRifle.ts'),
+  pompa: path.join(WEAPON_BUILDERS_ROOT, 'shotgun.ts'),
+  mitraglietta: path.join(WEAPON_BUILDERS_ROOT, 'smg.ts'),
+  coltello: path.join(WEAPON_BUILDERS_ROOT, 'knife.ts'),
+};
 const ROBOT_BUILDER = path.join(PROJECT_ROOT, 'game-web', 'src', 'models', 'robotBuilder.ts');
 
 // The original project tests pointed at C:\Users\...\Downloads\*.html, which
 // made the test suite impossible to run anywhere except the author's PC.
-// The canonical procedural model sources are now the TypeScript builders that
-// are actually versioned and shipped with the game.
+// The canonical procedural model sources are the per-weapon TypeScript builders
+// that are actually versioned and shipped with the game. Each weapon is inspected
+// independently so one large facade cannot hide a missing or degraded builder.
 export const ASSET_SOURCES = {
-  assalto: WEAPON_BUILDER,
-  cecchino: WEAPON_BUILDER,
-  pompa: WEAPON_BUILDER,
-  mitraglietta: WEAPON_BUILDER,
-  coltello: WEAPON_BUILDER,
+  ...WEAPON_BUILDERS,
   modello: ROBOT_BUILDER,
 };
 
@@ -69,9 +73,7 @@ export function inspectHtmlModelSource(assetKey) {
     content.includes('three.module.js') ||
     content.includes('three.js');
 
-  // Robot uses addPart(); weapon builders use a local add() helper. The weapon
-  // source contains all five builders, so this is a conservative whole-source
-  // hierarchy count rather than depending on deleted one-off HTML exports.
+  // Robot uses addPart(); each weapon builder uses a local add() helper.
   const partRegex = assetKey === 'modello' ? /addPart\(/g : /\badd\(/g;
   const addPartCount = (content.match(partRegex) || []).length;
 

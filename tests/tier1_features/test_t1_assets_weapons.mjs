@@ -1,11 +1,32 @@
 // tests/tier1_features/test_t1_assets_weapons.mjs
 // Tier 1 Feature Coverage: 3D Weapon Asset Inspections (F-01 to F-05)
 
+import fs from 'fs';
+import path from 'path';
 import { assert, assertEqual, assertGreaterThan, assertGreaterThanOrEqual } from '../helpers/assertions.mjs';
-import { inspectHtmlModelSource, ASSET_SOURCES } from '../helpers/asset_inspector.mjs';
+import { inspectHtmlModelSource, ASSET_SOURCES, PROJECT_ROOT } from '../helpers/asset_inspector.mjs';
 import { WEAPON_CONFIGS } from '../helpers/weapon_model.mjs';
 
 export async function run(suite) {
+  suite.test('Weapon builders are independent modules behind the stable facade', () => {
+    const weaponKeys = ['assalto', 'cecchino', 'pompa', 'mitraglietta', 'coltello'];
+    const sourcePaths = weaponKeys.map((key) => ASSET_SOURCES[key]);
+    assertEqual(new Set(sourcePaths).size, weaponKeys.length, 'each weapon must own an independent procedural source');
+
+    const facade = fs.readFileSync(
+      path.join(PROJECT_ROOT, 'game-web', 'src', 'models', 'weaponBuilders.ts'),
+      'utf8',
+    );
+    for (const moduleName of ['assaultRifle', 'sniperRifle', 'shotgun', 'smg', 'knife']) {
+      assert(
+        facade.includes(`./weapons/${moduleName}.ts`),
+        `weaponBuilders facade must delegate to ${moduleName}.ts`,
+      );
+    }
+    assert(!facade.includes('function addWeaponPart('), 'shared procedural primitive must stay outside the facade');
+    assert(!facade.includes('const rifleGroup = new THREE.Group()'), 'facade must not absorb per-weapon procedural construction again');
+  });
+
   // F-01: Asset Extraction - assalto (Cyberpunk Assault Rifle)
   suite.test('F-01: Assalto HTML source exists and is non-empty', () => {
     const info = inspectHtmlModelSource('assalto');
