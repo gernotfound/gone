@@ -26,6 +26,15 @@ export async function run(suite) {
   const roundLifecycle = source('game-web', 'src', 'gameplay', 'deathmatchRoundLifecycle.ts');
   const weapons = source('game-web', 'src', 'gameplay', 'advancedWeaponController.ts');
 
+  suite.test('Canonical Rescue CI validates PR candidates and every merged main commit', () => {
+    const workflow = source('.github', 'workflows', 'rescue-ci.yml');
+    const pushBranches = workflow.match(/^  push:\n    branches:\n((?:      - [^\n]+\n)+)/m)?.[1] ?? '';
+    const prBranches = workflow.match(/^  pull_request:\n    branches:\n((?:      - [^\n]+\n)+)/m)?.[1] ?? '';
+    assert(pushBranches.split('\n').some((line) => line.trim() === '- main'), 'full Rescue CI must run on exact main SHA after squash merge');
+    assert(prBranches.split('\n').some((line) => line.trim() === '- main'), 'PR candidate Rescue CI must remain enabled');
+    assert(workflow.includes('name: Final quality gate'), 'all existing canonical test outcomes must remain gated');
+  });
+
   suite.test('Host transport resilience belongs to P2PHost instead of a runtime monkey-patch', () => {
     assert(!fs.existsSync(networkPatchPath), 'networkStabilityFix prototype patch must stay deleted');
     assert(!runtime.includes('networkStabilityFix'), 'runtime composition must not register a host monkey-patch layer');

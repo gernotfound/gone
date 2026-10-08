@@ -3,6 +3,7 @@ name: GONE Rescue CI
 on:
   push:
     branches:
+      - main
       - rescue-playable-v0-1
       - rescue-playable-v0-2
       - selfhost-v0-3
