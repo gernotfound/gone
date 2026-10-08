@@ -26,6 +26,8 @@ import {
   decodeFireHitscan,
   type ClientStateData,
   type FireHitscanData,
+  type HitConfirmedData,
+  unpackHitConfirmed,
   type PlayerSnapshotEntry,
 } from './binaryProtocol.ts';
 import { CLIENT_STATE_EXT_FLAGS, HEALTH_PICKUP_AUTHORITY } from './clientStateExtensions.ts';
@@ -204,6 +206,36 @@ export class P2PHost {
   private readonly lastHealthPickupAt = new Map<string, number>();
   private readonly movementAuthority = new Map<string, MovementAuthorityState>();
   public readonly __gonePvpHardeningState: CombatValidationStats = createCombatValidationStats();
+  private roundLocked = false;
+  public blockedRoundShots = 0;
+  private readonly acceptedShotObservers = new Set<(shooterId: string, shot: FireHitscanData) => void>();
+  private readonly confirmedHitObservers = new Set<(hit: HitConfirmedData) => void>();
+
+  /** The host is the sole authority for whether the round accepts shots. */
+  public setRoundLocked(locked: boolean): void { this.roundLocked = locked; }
+  public isRoundLocked(): boolean { return this.roundLocked; }
+
+  public subscribeAcceptedShot(listener: (shooterId: string, shot: FireHitscanData) => void): () => void {
+    this.acceptedShotObservers.add(listener);
+    return () => { this.acceptedShotObservers.delete(listener); };
+  }
+
+  public subscribeConfirmedHit(listener: (hit: HitConfirmedData) => void): () => void {
+    this.confirmedHitObservers.add(listener);
+    return () => { this.confirmedHitObservers.delete(listener); };
+  }
+
+  private notifyAcceptedShot(shooterId: string, shot: FireHitscanData): void {
+    for (const listener of this.acceptedShotObservers) {
+      try { listener(shooterId, shot); } catch (error) { console.error('[P2PHost] Shot observer failed', error); }
+    }
+  }
+
+  private notifyConfirmedHit(hit: HitConfirmedData): void {
+    for (const listener of this.confirmedHitObservers) {
+      try { listener(hit); } catch (error) { console.error('[P2PHost] Hit observer failed', error); }
+    }
+  }
 
   constructor(options: P2PHostOptions) {
     this.options = options;
@@ -550,6 +582,10 @@ export class P2PHost {
   }
 
   private processFireHitscan(shooterId: string, shot: FireHitscanData): void {
+    if (this.roundLocked) {
+      this.blockedRoundShots += 1;
+      return;
+    }
     const shooter = this.playerRecords.get(shooterId);
     if (!shooter || !shooter.isAlive) return;
     if (!this.validateAndAnchorShot(shooterId, shooter, shot)) return;
@@ -566,6 +602,7 @@ export class P2PHost {
       shot.direction
     );
     this.broadcastBinary(relayBuffer, shooterId);
+    this.notifyAcceptedShot(shooterId, shot);
 
     const now = performance.now();
     const mazeWallDistance = nearestMazeRayHitDistance(
@@ -697,6 +734,8 @@ export class P2PHost {
       hitZ
     );
     this.broadcastBinary(hitBuffer);
+    const confirmedHit = unpackHitConfirmed(hitBuffer);
+    if (confirmedHit) this.notifyConfirmedHit(confirmedHit);
 
     const eventData: HitConfirmationEvent = {
       victimId: victim.id,
@@ -1048,5 +1087,8 @@ export class P2PHost {
     this.__gonePvpHardeningState.lastClientShotTime.clear();
     this.__gonePvpHardeningState.lastShotSeq.clear();
     this.__gonePvpHardeningState.lastClientStateSeq.clear();
+    this.acceptedShotObservers.clear();
+    this.confirmedHitObservers.clear();
+    this.roundLocked = false;
   }
 }

@@ -1,7 +1,7 @@
-import { P2PClient } from './p2pClient.ts';
-import { P2PHost } from './p2pHost.ts';
-import { PACKET_TYPE, unpackHitConfirmed, type HitConfirmedData } from './binaryProtocol.ts';
-import { isBinaryMessage, toArrayBuffer } from './protocol.ts';
+import { activeP2PClient, activeP2PHost, multiplayerSessionController } from './multiplayerSessionController.ts';
+import type { P2PClient } from './p2pClient.ts';
+import type { P2PHost } from './p2pHost.ts';
+import type { HitConfirmedData } from './binaryProtocol.ts';
 
 export type CombatHitEventDetail = {
   source: 'host' | 'client';
@@ -10,66 +10,37 @@ export type CombatHitEventDetail = {
   at: number;
 };
 
-const HOST_MARKER = '__goneCombatEventBridgeHost';
-const CLIENT_MARKER = '__goneCombatEventBridgeClient';
 let sequence = 0;
 let hostEvents = 0;
 let clientEvents = 0;
 
-function emit(source: 'host' | 'client', buffer: ArrayBuffer): void {
-  if (buffer.byteLength < 1 || new DataView(buffer).getUint8(0) !== PACKET_TYPE.HIT_CONFIRMED) return;
-  const hit = unpackHitConfirmed(buffer);
-  if (!hit) return;
-
+function emit(source: 'host' | 'client', hit: HitConfirmedData): void {
   if (source === 'host') hostEvents += 1;
   else clientEvents += 1;
-
   window.dispatchEvent(new CustomEvent<CombatHitEventDetail>('gone-hit-confirmed', {
-    detail: {
-      source,
-      hit,
-      sequence: ++sequence,
-      at: performance.now(),
-    },
+    detail: { source, hit, sequence: ++sequence, at: performance.now() },
   }));
 }
 
-/**
- * Protocol-level combat event bridge. Consumers such as hitmarkers and score
- * listen to one stable DOM event rather than stacking more mutable client/host
- * callbacks. This remains active even when lobby/reconnect code replaces UI
- * callbacks later in the session.
- */
+/** Pure presentation adapter: protocol ownership remains with P2PHost/P2PClient. */
 export function startCombatEventBridge(): void {
-  const hostProto = P2PHost.prototype as any;
-  if (!hostProto[HOST_MARKER]) {
-    hostProto[HOST_MARKER] = true;
-    const originalBroadcast = hostProto.broadcastBinary;
-    if (typeof originalBroadcast === 'function') {
-      hostProto.broadcastBinary = function(buffer: ArrayBuffer, excludePlayerId?: string) {
-        emit('host', buffer);
-        return originalBroadcast.call(this, buffer, excludePlayerId);
-      };
-    }
-  }
+  let attachedHost: P2PHost | null = null;
+  let attachedClient: P2PClient | null = null;
+  let detachHost: (() => void) | null = null;
+  let detachClient: (() => void) | null = null;
 
-  const clientProto = P2PClient.prototype as any;
-  if (!clientProto[CLIENT_MARKER]) {
-    clientProto[CLIENT_MARKER] = true;
-    const originalHandleMessage = clientProto.handleMessage;
-    if (typeof originalHandleMessage === 'function') {
-      clientProto.handleMessage = function(rawData: unknown) {
-        if (isBinaryMessage(rawData)) {
-          try {
-            emit('client', toArrayBuffer(rawData));
-          } catch {
-            // Invalid packets are still left to the normal client decoder.
-          }
-        }
-        return originalHandleMessage.call(this, rawData);
-      };
+  multiplayerSessionController.subscribe(() => {
+    if (attachedHost !== activeP2PHost) {
+      detachHost?.();
+      attachedHost = activeP2PHost;
+      detachHost = attachedHost?.subscribeConfirmedHit((hit) => emit('host', hit)) ?? null;
     }
-  }
+    if (attachedClient !== activeP2PClient) {
+      detachClient?.();
+      attachedClient = activeP2PClient;
+      detachClient = attachedClient?.subscribeConfirmedHit((hit) => emit('client', hit)) ?? null;
+    }
+  });
 
   (window as any).goneCombatEvents = {
     snapshot: () => ({ sequence, hostEvents, clientEvents }),
