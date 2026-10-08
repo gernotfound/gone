@@ -2,6 +2,7 @@ import './competitiveTouchControls.css';
 import { inputState } from '../controls/playerInput.ts';
 import { useOnScreenControls } from './inputMode.ts';
 import { getTouchPreferences } from './touchPreferences.ts';
+import { reconcilePubgTouchControls } from './pubgTouchControls.ts';
 
 type DragState = {
   pointerId: number | null;
@@ -209,7 +210,7 @@ function selectWeapon(index: number): void {
   void Promise.resolve(result).finally(() => {
     // PUBG touch owns quick-slot label/class/ARIA presentation. Competitive map
     // input only notifies that owner after canonical selection has settled.
-    (window as any).gonePubgTouchControls?.rebind?.();
+    reconcilePubgTouchControls();
   });
 }
 

@@ -290,7 +290,7 @@ Current baseline:
 The runtime-kernel/browser-lifecycle foundation, lobby/session split, local player lifecycle split and procedural weapon-builder split are complete architecture directions. Next high-value structural work:
 
 1. separate `p2pHost.ts` peer bookkeeping from authoritative combat without creating multiple authorities;
-2. gradually migrate remaining internal `window.gone*` consumers to typed services/events. The runtime composition invokes `reconcilePubgTouchControls` directly rather than reaching through the public touch facade.
+2. gradually migrate remaining internal `window.gone*` consumers to typed services/events. Runtime composition and competitive map input invoke `reconcilePubgTouchControls` directly rather than reaching through the public touch facade.
 
 `models/weaponBuilders.ts` is the stable weapon-model facade. Per-weapon procedural construction belongs in `models/weapons/*.ts`; shared mesh primitives belong in `models/weapons/proceduralShared.ts`. Keep viewmodel/third-person transforms, sockets, GLTF loading and public exports in the facade unless ownership genuinely changes.
 

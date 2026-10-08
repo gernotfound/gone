@@ -40,6 +40,9 @@ export async function run(suite) {
     assert(!main.includes('gonePubgTouchControls?.rebind'), 'global facade must not be an internal dependency');
     assert(owner.includes('export function reconcilePubgTouchControls()'), 'owner must export explicit operation');
     assert(owner.includes('rebind: attachWhenAvailable'), 'public facade compatibility must remain');
+    const competitive = fs.readFileSync(path.join(PROJECT_ROOT, 'game-web/src/mobile/competitiveTouchControls.ts'), 'utf8');
+    assert(competitive.includes('reconcilePubgTouchControls();'), 'competitive map must refresh touch state through owner');
+    assert(!competitive.includes('gonePubgTouchControls?.rebind'), 'competitive controls must not call the global facade');
   });
 
   suite.test('Rescue CI includes mandatory static source-health gate', () => {
