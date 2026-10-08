@@ -90,7 +90,7 @@ export async function run(suite) {
       const content = fs.readFileSync(sourcePath, 'utf8');
       assertGreaterThan(content.length, 4000, `Weapon builder must retain substantive geometry: ${weapon}`);
       assert(content.includes(`export function ${factoryName}()`), `Canonical builder must export ${factoryName}`);
-      assert((content.match(/\\badd\\(/g) ?? []).length >= 25, `Procedural model must retain its component geometry: ${weapon}`);
+      assert(content.split('add(').length - 1 >= 25, `Procedural model must retain its component geometry: ${weapon}`);
     }
 
     const robotPath = ASSET_SOURCES.modello;
