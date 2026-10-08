@@ -2,6 +2,8 @@
 // Tier 1 Feature Coverage: Fluo Color Registry, Normalization & HSV Validation (F-14)
 
 import { assert, assertEqual } from '../helpers/assertions.mjs';
+import { LocalColorRegistry, WasmColorRegistryAdapter } from '../../game-web/src/net/colorRegistry.ts';
+import { LocalColorRegistry as HostLocalColorRegistry, WasmColorRegistryAdapter as HostWasmColorRegistryAdapter } from '../../game-web/src/net/p2pHost.ts';
 import {
   normalizeHex,
   isValidHexFormat,
@@ -12,6 +14,51 @@ import {
 } from '../helpers/color_registry_model.mjs';
 
 export async function run(suite) {
+  // Exercise production registries; the historical SessionColorRegistry model above
+  // is not a substitute for testing the implementation used by P2PHost.
+  suite.test('F-14: host color registry has one canonical module with stable facade exports', () => {
+    assertEqual(HostLocalColorRegistry, LocalColorRegistry);
+    assertEqual(HostWasmColorRegistryAdapter, WasmColorRegistryAdapter);
+  });
+
+  suite.test('F-14: real host registry prevents collisions and frees reassigned colors', () => {
+    const registry = new LocalColorRegistry(['#00F0FF', '#FF007F']);
+    assertEqual(registry.requestColor('host', '#00f0ff').color, '#00F0FF');
+    assertEqual(registry.requestColor('guest', '00F0FF').error, 'COLOR_ALREADY_TAKEN');
+    assertEqual(registry.requestColor('guest', '#888888').error, 'INVALID_FLUO_COLOR');
+    assertEqual(registry.requestColor('guest', '#GG00FF').error, 'INVALID_HEX_FORMAT');
+    assertEqual(registry.getAssignedColor('host'), '#00F0FF');
+    assertEqual(registry.requestColor('host', '#FF007F').color, '#FF007F');
+    assertEqual(registry.isColorAvailable('#00F0FF'), true);
+    assertEqual(registry.isColorAvailable('#FF007F'), false);
+    assertEqual(registry.getAvailablePalette().join(','), '#00F0FF');
+    assertEqual(registry.releasePlayer('host'), '#FF007F');
+    assertEqual(registry.releasePlayer('host'), null);
+    assertEqual(registry.getAvailablePalette().length, 2);
+  });
+
+  suite.test('F-14: real WASM color adapter maintains assignments and returns rejected responses', () => {
+    const released = [];
+    const wasm = {
+      request_color: (_id, hex) => JSON.stringify(hex === '#FF007F'
+        ? { success: true, color: hex }
+        : { success: false, error: 'COLOR_ALREADY_TAKEN', message: 'Taken' }),
+      release_player: (id) => released.push(id),
+      is_color_available: (hex) => hex === '#FF007F',
+      get_available_palette: () => ['#FF007F'],
+    };
+    const registry = new WasmColorRegistryAdapter(wasm);
+    assertEqual(registry.requestColor('guest', '#00F0FF').success, false);
+    assertEqual(registry.requestColor('guest', '#00F0FF').error, 'COLOR_ALREADY_TAKEN');
+    assertEqual(registry.requestColor('guest', '#FF007F').color, '#FF007F');
+    assertEqual(registry.getAssignedColor('guest'), '#FF007F');
+    assertEqual(registry.isColorAvailable('#FF007F'), true);
+    assertEqual(registry.getAvailablePalette().join(','), '#FF007F');
+    assertEqual(registry.releasePlayer('guest'), '#FF007F');
+    assertEqual(registry.getAssignedColor('guest'), undefined);
+    assertEqual(released.join(','), 'guest');
+  });
+
   // Hex Normalization & Format
   suite.test('F-14: normalizeHex handles lowercase and missing hash prefix', () => {
     assertEqual(normalizeHex('00f0ff'), '#00F0FF');

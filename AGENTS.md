@@ -89,6 +89,10 @@ It must **not** import DOM or `engine.ts`.
 
 `SessionP2PHost` inside the controller is an explicit compatibility adapter that observes existing lobby `COLOR_CHANGED` broadcast packets; it does not overwrite host methods at runtime.
 
+## Color ownership
+
+`net/colorRegistry.ts` is the canonical host-side neon color allocator (local and WASM adapter). `P2PHost` owns peer/session lifecycle and consumes this allocator; legacy `p2pHost.ts` registry exports are compatibility re-exports only. Do not maintain competing color ownership state inside the host or UI.
+
 ## Direct WebRTC / network authority
 
 - `net/directWebRtc.ts`: manual offer/answer, `iceServers: []`, star host↔guests.
