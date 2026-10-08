@@ -31,6 +31,31 @@ export async function run(suite) {
     assert(p2pHost.includes('this.handlePeerDisconnect(id)'), 'host must clean terminal peers through its own lifecycle');
   });
 
+  suite.test('Remote presentation reads typed session and registry owners, not the browser debug facade', () => {
+    const migratedFiles = [
+      ['gameplay', 'remoteRobotMotion.ts'],
+      ['gameplay', 'killAmmoReset.ts'],
+      ['net', 'pvpTuning.ts'],
+      ['net', 'remoteShotPresentation.ts'],
+      ['net', 'hostRemoteSync.ts'],
+    ];
+    for (const [domain, filename] of migratedFiles) {
+      const code = source('game-web', 'src', domain, filename);
+      assert(!code.includes('.goneGame'), `${filename} must not depend on window.goneGame`);
+    }
+
+    const remoteMotion = source('game-web', 'src', 'gameplay', 'remoteRobotMotion.ts');
+    const hostSync = source('game-web', 'src', 'net', 'hostRemoteSync.ts');
+    const shotPresentation = source('game-web', 'src', 'net', 'remoteShotPresentation.ts');
+    const pvpTuning = source('game-web', 'src', 'net', 'pvpTuning.ts');
+
+    assert(remoteMotion.includes("from './remotePlayerRegistry.ts'"), 'remote animation must use registry ownership');
+    assert(hostSync.includes("from './multiplayerSessionController.ts'"), 'host rendering must read the authoritative session');
+    assert(hostSync.includes('removeRemotePlayer(id)'), 'host rendering cleanup must go through registry disposal');
+    assert(shotPresentation.includes("from '../gameplay/remotePlayerRegistry.ts'"), 'shot VFX must resolve actual remote instances');
+    assert(pvpTuning.includes('const client = activeP2PClient'), 'network timing must read the active session directly');
+  });
+
   suite.test('Local combat lifecycle has one focused owner outside engine and networking', () => {
     assert(localPlayerLifecycle.includes('class LocalPlayerLifecycleController'), 'local HP/death/respawn/shield lifecycle needs one owner');
     assert(localPlayerLifecycle.includes('public handleDeath()') && localPlayerLifecycle.includes('public handleRespawn('), 'lifecycle owner must expose explicit transitions');

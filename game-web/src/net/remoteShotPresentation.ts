@@ -11,6 +11,8 @@ import {
 } from '../models/index.ts';
 import { getWeaponRuntimeById } from '../weapons/weaponConfig.ts';
 import type { FireHitscanData } from './binaryProtocol.ts';
+import { remotePlayers } from '../gameplay/remotePlayerRegistry.ts';
+import { activeP2PHost, activeP2PClient } from './multiplayerSessionController.ts';
 
 const HOST_MARKER = '__goneRemoteShotHostWrapped';
 const CLIENT_MARKER = '__goneRemoteShotClientWrapped';
@@ -30,8 +32,7 @@ function roundLocked(): boolean {
 }
 
 function exactRemoteMuzzle(shooterId: string, weapon: WeaponModelType, fallback?: readonly number[]): THREE.Vector3 {
-  const api = (window as any).goneGame;
-  const remote = api?.remotePlayers?.get?.(shooterId);
+  const remote = remotePlayers.get(shooterId);
   const group = remote?.group as THREE.Group | undefined;
 
   if (group) {
@@ -79,9 +80,8 @@ function presentRemoteShot(shooterId: string, shot: FireHitscanData): void {
   raycaster.near = 0.01;
   raycaster.far = cfg.maxRange;
 
-  const api = (window as any).goneGame;
   const targets: THREE.Object3D[] = [...getChunkMeshes(), ...getMazeRaycastTargets()];
-  for (const [playerId, remote] of api?.remotePlayers?.entries?.() ?? []) {
+  for (const [playerId, remote] of remotePlayers) {
     if (playerId !== shooterId && remote?.group) targets.push(remote.group);
   }
 
@@ -133,9 +133,8 @@ export function startRemoteShotPresentation(): void {
   (window as any).__goneRemoteShotPresentationStarted = true;
 
   const attach = () => {
-    const api = (window as any).goneGame;
-    attachHost(api?.getP2PHost?.());
-    attachClient(api?.getP2PClient?.());
+    attachHost(activeP2PHost);
+    attachClient(activeP2PClient);
   };
 
   attach();

@@ -1,4 +1,5 @@
 import { WEAPON_SOCKET_NAME } from '../models/index.ts';
+import { remotePlayers } from './remotePlayerRegistry.ts';
 
 type MotionState = {
   group: any;
@@ -70,13 +71,10 @@ export function startRemoteRobotMotion(): void {
   (window as any).__goneRemoteRobotMotionStarted = true;
 
   const frame = (now: number) => {
-    const remotes = (window as any).goneGame?.remotePlayers as Map<string, any> | undefined;
     const aliveIds = new Set<string>();
-    if (remotes instanceof Map) {
-      for (const [id, remote] of remotes) {
-        aliveIds.add(id);
-        updateRemote(id, remote, now);
-      }
+    for (const [id, remote] of remotePlayers) {
+      aliveIds.add(id);
+      updateRemote(id, remote, now);
     }
 
     for (const [id, state] of states) {
