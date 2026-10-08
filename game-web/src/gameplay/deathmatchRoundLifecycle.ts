@@ -1,35 +1,34 @@
-import { WEAPON_KEYS, WEAPON_RUNTIME } from '../weapons/weaponConfig.ts';
+import { inputState } from '../controls/playerInput.ts';
+import { resetAllWeaponAmmoForRound } from './advancedWeaponController.ts';
 import type { DeathmatchSyncEventDetail } from '../net/deathmatchAuthority.ts';
 
-const WRAP_MARKER = '__goneDeathmatchRoundFireWrapped';
 let lastRound = 0;
 let locked = false;
 let localRoundResets = 0;
 let blockedLocalShots = 0;
+let respawnLocalPlayer: (() => void) | null = null;
 
-function api(): any {
-  return (window as any).goneGame;
+/** Engine supplies its local player lifecycle transition once at composition. */
+export function configureRoundLocalRespawn(callback: () => void): void {
+  respawnLocalPlayer = callback;
 }
 
-function resetAmmoInventory(): void {
-  const ammo = (window as any).goneWeapons?.ammo;
-  if (!ammo) return;
-  for (const key of WEAPON_KEYS) {
-    const state = ammo[key];
-    const cfg = WEAPON_RUNTIME[key];
-    if (!state || !cfg) continue;
-    state.magazine = cfg.magazineSize;
-    state.reserve = cfg.reserveAmmo;
-  }
+/**
+ * The engine calls this before committing any local shot. This is the actual
+ * gate for both its private trigger path and compatibility facade callers.
+ */
+export function canFireLocalRoundShot(): boolean {
+  if (!locked && (window as any).__goneDeathmatchRoundLocked !== true) return true;
+  blockedLocalShots += 1;
+  inputState.fire = false;
+  return false;
 }
 
 function resetLocalPlayerForRound(): void {
-  const game = api();
-  // Reset local lifecycle immediately; the host-selected world snapshot owns
-  // the physical respawn coordinate and will reconcile the player position.
-  game?.handleLocalPlayerRespawn?.();
-  resetAmmoInventory();
-  if (game?.keys) game.keys.fire = false;
+  // Position reconciliation remains host-authoritative via the next snapshot.
+  respawnLocalPlayer?.();
+  resetAllWeaponAmmoForRound();
+  inputState.fire = false;
   localRoundResets += 1;
 }
 
@@ -46,34 +45,16 @@ function applySync(detail: DeathmatchSyncEventDetail): void {
   (window as any).__goneDeathmatchRoundLocked = locked;
 
   if (roundAdvanced) resetLocalPlayerForRound();
-  if (locked && api()?.keys) api().keys.fire = false;
-}
-
-function wrapLocalFire(): void {
-  const game = api();
-  if (!game || game[WRAP_MARKER] || typeof game.fireWeapon !== 'function') return;
-  game[WRAP_MARKER] = true;
-  const original = game.fireWeapon;
-  game.fireWeapon = (...args: any[]) => {
-    if (locked || (window as any).__goneDeathmatchRoundLocked === true) {
-      blockedLocalShots += 1;
-      if (game.keys) game.keys.fire = false;
-      return;
-    }
-    return original(...args);
-  };
+  if (locked) inputState.fire = false;
 }
 
 /**
- * Keeps the visible round countdown and the actual combat lifecycle aligned.
- * Once a winner is declared local fire is blocked immediately. When the host
- * advances the round, the local lifecycle resets and the following authoritative
- * world snapshot supplies the exact host-selected position and fresh weapon inventory.
+ * Observes host-authoritative round transitions. It never overwrites the
+ * engine's fireWeapon method and needs no recurring patch/retry timer.
  */
 export function startDeathmatchRoundLifecycle(): void {
   if ((window as any).__goneDeathmatchRoundLifecycleStarted) return;
   (window as any).__goneDeathmatchRoundLifecycleStarted = true;
-  wrapLocalFire();
 
   window.addEventListener('gone-deathmatch-sync', ((event: CustomEvent<DeathmatchSyncEventDetail>) => {
     applySync(event.detail);
@@ -82,10 +63,9 @@ export function startDeathmatchRoundLifecycle(): void {
   window.addEventListener('gone-session-changed', () => {
     lastRound = 0;
     locked = false;
+    inputState.fire = false;
     (window as any).__goneDeathmatchRoundLocked = false;
   });
-
-  window.setInterval(wrapLocalFire, 500);
 
   (window as any).goneRoundLifecycle = {
     snapshot: () => ({

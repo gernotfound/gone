@@ -52,6 +52,8 @@ import {
 } from './networkBindings.ts';
 import { presentLegacyRemoteHitscan } from '../net/legacyRemoteShotPresentation.ts';
 import { LocalPlayerLifecycleController } from './localPlayerLifecycle.ts';
+import { fireWithPrecision } from './precisionShotRuntime.ts';
+import { canFireLocalRoundShot, configureRoundLocalRespawn } from './deathmatchRoundLifecycle.ts';
 
 export { WEAPON_COMBAT_STATS };
 export type { WeaponStats } from '../weapons/weaponCombatStats.ts';
@@ -193,6 +195,8 @@ export function handleLocalPlayerDamage(newHp: number): void {
   localPlayerLifecycle.handleDamage(newHp);
 }
 
+configureRoundLocalRespawn(handleLocalPlayerRespawn);
+
 const viewmodelCache = new Map<WeaponModelType, THREE.Group>();
 const recoilOffset = new THREE.Vector3();
 const recoilRotation = new THREE.Euler();
@@ -245,6 +249,12 @@ function fireWeapon(): void {
     shotCooldown > 1e-4
   ) return;
 
+  if (!canFireLocalRoundShot()) return;
+  fireWithPrecision(currentWeaponType, commitWeaponShot);
+}
+
+/** One authoritative local shot implementation; wrappers cannot bypass it. */
+function commitWeaponShot(): void {
   const stats = WEAPON_COMBAT_STATS[currentWeaponType];
   const runtime = getWeaponRuntime(currentWeaponType);
   shotCooldown = 1 / stats.fireRateRps;

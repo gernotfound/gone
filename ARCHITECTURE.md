@@ -108,6 +108,10 @@ Touch sustained FIRE must route to `advancedWeaponController`; it must not leave
 
 `engine.ts` registers `SessionRuntimeBridge` and asks the session controller to broadcast game start instead of iterating host peer internals.
 
+### Local-shot ownership and deathmatch transitions
+
+The engine's `fireWeapon` checks the round lifecycle's synchronous `canFireLocalRoundShot()` permission, then executes `fireWithPrecision` around its single shot commit. It must not be wrapped at runtime: direct engine input, finite-ammo controls and `window.goneGame.fireWeapon` all use the same shot gate and trajectory. `precisionShotRuntime` temporarily perturbs/restores the camera in `finally`, while its startup function exposes compatibility accuracy diagnostics only. `deathmatchRoundLifecycle` subscribes to authoritative round events; it neither wraps fire methods nor runs a repair timer. At round reset the local lifecycle callback and ammo controller restore state without mutating the browser debug facade's inventory.
+
 ### Ammo authority invariant
 
 `advancedWeaponController.ts` is the sole authoritative browser owner of local magazine/reserve/reload state. Each successful ranged shot decrements magazine exactly once; zero magazine produces no shot until reload succeeds. This contract is global across desktop/mobile.
