@@ -15,7 +15,9 @@ export async function run(suite) {
     assert(selectionStart >= 0 && selectionEnd > selectionStart, 'competitive weapon selection helper must remain inspectable');
     assert(selection.includes('const result = game?.switchWeapon?.(index)'), 'competitive map selection must still call the canonical indexed weapon API');
     assert(selection.includes('Promise.resolve(result).finally'), 'presentation sync must wait until canonical selection settles');
-    assert(selection.includes('(window as any).gonePubgTouchControls?.rebind?.()'), 'competitive layer must hand quick-slot presentation back to the PUBG owner');
+    assert(competitive.includes("import { reconcilePubgTouchControls } from './pubgTouchControls.ts'"), 'competitive map must import the canonical PUBG presentation owner');
+    assert(selection.includes('reconcilePubgTouchControls()'), 'competitive layer must hand quick-slot presentation back to the PUBG owner');
+    assert(!selection.includes('gonePubgTouchControls?.rebind'), 'competitive selection must not depend on the global compatibility facade');
     assert(!selection.includes("classList.toggle('is-active'"), 'weapon selection helper must not duplicate quick-slot visual ownership');
     assert(!selection.includes("setAttribute('aria-pressed'"), 'weapon selection helper must not duplicate quick-slot ARIA ownership');
   });
