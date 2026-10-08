@@ -243,7 +243,7 @@ Before merging a structural/runtime change:
 - keep expensive work out of per-frame paths;
 - update this document and `AGENTS.md` when ownership changes;
 - add deterministic Tier tests plus real browser smoke for affected interaction/network paths;
-- run full CI on the branch;
+- run full CI on the branch; the exact-head checkout, complete smoke set and tier completion semantics are protected by `scripts/check_ci_contract.mjs` and the E2E runner;
 - squash exactly once to `main`;
 - verify the independent full Rescue CI `push` run on the resulting `main` SHA (not merely the green PR candidate);
 - verify production Vercel SHA/build ID/headers/runtime state separately.

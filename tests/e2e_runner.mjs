@@ -35,6 +35,12 @@ Options:
   }
 }
 
+if (selectedTiers.length === 0 || new Set(selectedTiers).size !== selectedTiers.length ||
+    selectedTiers.some((tier) => !Number.isInteger(tier) || tier < 1 || tier > 4)) {
+  console.error('Invalid tier selection: expected unique tier numbers from 1 through 4.');
+  process.exit(1);
+}
+
 const TIER_CONFIGS = [
   {
     tierNum: 1,
@@ -109,6 +115,9 @@ Selected Tiers: [${selectedTiers.join(', ')}] | Verbose Mode: ${verbose ? 'ON' :
 
     if (!fs.existsSync(tier.dir)) {
       console.error(`[ERROR] Directory not found: ${tier.dir}`);
+      tierResults.push({ tier: `T${tier.tierNum}`, name: tier.name, total: 0, passed: 0, failed: 1, durationMs: 0, minRequired: tier.minThreshold });
+      totalFailed++;
+      failedTestDetails.push({ tier: tier.tierNum, file: tier.dir, test: 'Missing suite directory', error: new Error('Required tier directory does not exist') });
       continue;
     }
 
@@ -116,6 +125,12 @@ Selected Tiers: [${selectedTiers.join(', ')}] | Verbose Mode: ${verbose ? 'ON' :
       .readdirSync(tier.dir)
       .filter((f) => f.endsWith('.mjs') || f.endsWith('.js'))
       .sort();
+
+    if (files.length === 0) {
+      console.error(`[ERROR] No test files in ${tier.dir}`);
+      totalFailed++;
+      failedTestDetails.push({ tier: tier.tierNum, file: tier.dir, test: 'Empty suite directory', error: new Error('Required tier contains no test files') });
+    }
 
     let tierTests = 0;
     let tierPassed = 0;
@@ -133,6 +148,13 @@ Selected Tiers: [${selectedTiers.join(', ')}] | Verbose Mode: ${verbose ? 'ON' :
         tierFailed++;
         totalFailed++;
         failedTestDetails.push({ tier: tier.tierNum, file, test: 'Import/Setup', error: importErr });
+        continue;
+      }
+
+      if (harness.tests.length === 0) {
+        tierFailed++;
+        totalFailed++;
+        failedTestDetails.push({ tier: tier.tierNum, file, test: 'Empty test module', error: new Error('Test file registered no cases') });
         continue;
       }
 
@@ -224,7 +246,17 @@ Tier   Category                                 Total   Passed   Failed  Status
   console.log(`Total Execution Time: ${globalDuration}ms`);
   console.log(`================================================================================\n`);
 
-  if (failedTestDetails.length > 0) {
+  const unmetThresholds = tierResults.filter((result) =>
+    result.failed > 0 || result.total < result.minRequired
+  );
+  if (unmetThresholds.length > 0 || totalTests < requiredTotal) {
+    console.error('E2E minimum coverage or suite completion requirements not met.');
+    for (const result of unmetThresholds) {
+      console.error(`  - ${result.tier}: ${result.total}/${result.minRequired} cases, ${result.failed} failures`);
+    }
+  }
+
+  if (failedTestDetails.length > 0 || unmetThresholds.length > 0 || totalTests < requiredTotal) {
     console.error(`FAILED TESTS BREAKDOWN (${failedTestDetails.length} failures):`);
     for (const f of failedTestDetails) {
       console.error(`  - [T${f.tier} | ${f.file}] ${f.test}`);

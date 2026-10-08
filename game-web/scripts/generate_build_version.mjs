@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { selectBuildIdentity } from './build_identity.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..');
@@ -23,13 +24,12 @@ function safeBuildId(raw) {
   return (normalized || 'dev').slice(0, 80);
 }
 
-const buildId = safeBuildId(
-  process.env.VERCEL_GIT_COMMIT_SHA ||
-  process.env.GITHUB_SHA ||
-  process.env.GONE_BUILD_ID ||
-  gitSha() ||
-  'dev',
-);
+const buildId = safeBuildId(selectBuildIdentity({
+  vercelSha: process.env.VERCEL_GIT_COMMIT_SHA,
+  explicitBuildId: process.env.GONE_BUILD_ID,
+  checkoutSha: gitSha(),
+  eventSha: process.env.GITHUB_SHA,
+}));
 
 const generatedDir = path.join(root, 'src', 'generated');
 const publicDir = path.join(root, 'public');
