@@ -15,6 +15,7 @@ import {
   type JoinAcceptedMessage,
   type SessionPlayerInfo,
 } from './protocol.ts';
+import { decodeDeathmatchSnapshot, DEATHMATCH_SYNC_OPCODE, type DeathmatchSnapshot } from './deathmatchProtocol.ts';
 import {
   decodeLobbyMessage,
   encodeLobbyJoin,
@@ -84,12 +85,36 @@ export class P2PClient {
 
   private channel: IDataChannel | null = null;
   public config: P2PClientConfig;
+  private readonly hitObservers = new Set<(hit: HitConfirmedData) => void>();
+  private readonly shotObservers = new Set<(shot: FireHitscanData) => void>();
+  private readonly roundObservers = new Set<(snapshot: DeathmatchSnapshot) => void>();
 
   // 30 Hz Client State Tick Loop variables
   private stateTickTimer: ReturnType<typeof setInterval> | null = null;
   private stateProvider: (() => ClientStateInput) | null = null;
   private stateSequence: number = 0;
   private shotSequence: number = 0;
+
+  public subscribeConfirmedHit(listener: (hit: HitConfirmedData) => void): () => void {
+    this.hitObservers.add(listener);
+    return () => { this.hitObservers.delete(listener); };
+  }
+
+  public subscribeRemoteShot(listener: (shot: FireHitscanData) => void): () => void {
+    this.shotObservers.add(listener);
+    return () => { this.shotObservers.delete(listener); };
+  }
+
+  public subscribeDeathmatchSync(listener: (snapshot: DeathmatchSnapshot) => void): () => void {
+    this.roundObservers.add(listener);
+    return () => { this.roundObservers.delete(listener); };
+  }
+
+  private notify<T>(observers: Set<(value: T) => void>, value: T): void {
+    for (const listener of observers) {
+      try { listener(value); } catch (error) { console.error('[P2PClient] Protocol observer failed', error); }
+    }
+  }
 
   constructor(config: P2PClientConfig) {
     this.config = config;
@@ -155,6 +180,13 @@ export class P2PClient {
     const buffer = toArrayBuffer(rawData);
     if (buffer.byteLength < 1) return;
     const opcode = new DataView(buffer).getUint8(0);
+
+    // This binary extension opcode is above the generic lobby range.
+    if (opcode === DEATHMATCH_SYNC_OPCODE) {
+      const snapshot = decodeDeathmatchSnapshot(buffer);
+      if (snapshot) this.notify(this.roundObservers, snapshot);
+      return;
+    }
 
     if (opcode >= 0x10) {
       const msg = decodeLobbyMessage(buffer);
@@ -256,6 +288,7 @@ export class P2PClient {
               this.isAlive = false;
             }
           }
+          this.notify(this.hitObservers, hit);
           this.config.onHitConfirmed?.(hit);
         }
         break;
@@ -263,6 +296,7 @@ export class P2PClient {
       case PACKET_TYPE.FIRE_HITSCAN: { // 0x03
         const shot = unpackFireHitscan(buffer);
         if (shot) {
+          this.notify(this.shotObservers, shot);
           this.config.onBinaryHitscanFired?.(shot);
         }
         break;
