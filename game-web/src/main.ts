@@ -1,7 +1,7 @@
 import './style.css';
 import { startInputModeSettings } from './mobile/inputMode.ts';
 import { startMobileSessionResume } from './mobile/mobileSessionResume.ts';
-import { startPubgTouchControls } from './mobile/pubgTouchControls.ts';
+import { reconcilePubgTouchControls, startPubgTouchControls } from './mobile/pubgTouchControls.ts';
 import { startCompetitiveTouchControls } from './mobile/competitiveTouchControls.ts';
 import {
   reconcileSmartphoneControlsGuard,
@@ -52,7 +52,7 @@ const DEVICE_MODULES: readonly RuntimeModuleDefinition[] = [
     phase: 'device',
     dependsOn: ['smartphoneControlsGuard', 'advancedWeaponController'],
     start: startPubgTouchControls,
-    reconcile: () => (window as any).gonePubgTouchControls?.rebind?.(),
+    reconcile: reconcilePubgTouchControls,
   },
   {
     name: 'competitiveTouchControls',
