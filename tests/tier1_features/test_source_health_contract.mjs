@@ -31,6 +31,11 @@ export async function run(suite) {
     const findings = unsafeSourcePatterns(parse("eval('1'); new Function('return 1');"));
     assert(findings.length === 2);
     assert(unsafeSourcePatterns(parse("const value = 1 + 1;")).length === 0);
+    assert(unsafeSourcePatterns(parse("P2PHost.prototype.broadcastBinary = () => {};")).some(
+      (issue) => issue.includes('protocol prototype')), 'direct host prototype mutation must fail');
+    assert(unsafeSourcePatterns(parse("const proto = P2PClient.prototype as any; proto.handleMessage = () => {};")).some(
+      (issue) => issue.includes('protocol prototype')), 'aliased client prototype mutation must fail');
+
   });
 
   suite.test('Mobile runtime reconciles through typed owner, not window facade', () => {
