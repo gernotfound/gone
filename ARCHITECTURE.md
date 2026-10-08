@@ -118,6 +118,9 @@ Touch sustained FIRE must route to `advancedWeaponController`; it must not leave
 
 ### 6. Networking (`game-web/src/net/`)
 
+`net/colorRegistry.ts` owns neon color allocation and uniqueness for the host, including the local implementation and WASM adapter. `p2pHost.ts` re-exports its public types/classes for existing imports but does not implement the registry. Combat and peer/session state stay authoritative in `P2PHost`.
+
+
 The browser host remains authoritative for PvP. Visual rays/tracers never own damage. Canonical generated maze walls also participate in host-side hitscan occlusion; client raycasts only mirror that authority for presentation.
 
 #### Movement authority
