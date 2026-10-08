@@ -12,10 +12,11 @@ import {
 import { getWeaponRuntimeById } from '../weapons/weaponConfig.ts';
 import type { FireHitscanData } from './binaryProtocol.ts';
 import { remotePlayers } from '../gameplay/remotePlayerRegistry.ts';
-import { activeP2PHost, activeP2PClient } from './multiplayerSessionController.ts';
+import { activeP2PHost, activeP2PClient, multiplayerSessionController } from './multiplayerSessionController.ts';
+import type { P2PHost } from './p2pHost.ts';
+import type { P2PClient } from './p2pClient.ts';
+import { isLocalRoundLocked } from '../gameplay/deathmatchRoundLifecycle.ts';
 
-const HOST_MARKER = '__goneRemoteShotHostWrapped';
-const CLIENT_MARKER = '__goneRemoteShotClientWrapped';
 const fallbackMuzzle = new THREE.Vector3();
 const localMuzzle = new THREE.Vector3();
 const direction = new THREE.Vector3();
@@ -28,7 +29,7 @@ function gameplayVisible(): boolean {
 }
 
 function roundLocked(): boolean {
-  return (window as any).__goneDeathmatchRoundLocked === true;
+  return isLocalRoundLocked() || activeP2PHost?.isRoundLocked() === true;
 }
 
 function exactRemoteMuzzle(shooterId: string, weapon: WeaponModelType, fallback?: readonly number[]): THREE.Vector3 {
@@ -102,41 +103,32 @@ function presentRemoteShot(shooterId: string, shot: FireHitscanData): void {
   soundSynth.playWeaponSound(weapon, remoteAudioGain(start));
 }
 
-function attachHost(host: any): void {
-  if (!host || host[HOST_MARKER]) return;
-  const original = host.processFireHitscan;
-  if (typeof original !== 'function') return;
-
-  host[HOST_MARKER] = true;
-  host.processFireHitscan = function(shooterId: string, shot: FireHitscanData) {
-    if (this.__goneDeathmatchRoundLocked === true) return original.call(this, shooterId, shot);
-    if (shooterId !== this.hostPlayer?.id) presentRemoteShot(shooterId, shot);
-    return original.call(this, shooterId, shot);
-  };
-}
-
-function attachClient(client: any): void {
-  if (!client?.config || client[CLIENT_MARKER]) return;
-  client[CLIENT_MARKER] = true;
-
-  client.config.onBinaryHitscanFired = (shot: FireHitscanData) => {
-    if (roundLocked()) return;
-    const shooterId = client.slotToPlayerId?.get?.(shot.shooterSlot) ?? `peer_slot_${shot.shooterSlot}`;
-    if (shooterId === client.playerId) return;
-    presentRemoteShot(shooterId, shot);
-  };
-}
-
-/** Guarantees enemy muzzle flash + tracer presentation on host and guests. */
+/** Presentation observes accepted host shots and validated guest relay packets. */
 export function startRemoteShotPresentation(): void {
   if ((window as any).__goneRemoteShotPresentationStarted) return;
   (window as any).__goneRemoteShotPresentationStarted = true;
 
-  const attach = () => {
-    attachHost(activeP2PHost);
-    attachClient(activeP2PClient);
-  };
+  let attachedHost: P2PHost | null = null;
+  let attachedClient: P2PClient | null = null;
+  let detachHost: (() => void) | null = null;
+  let detachClient: (() => void) | null = null;
 
-  attach();
-  window.setInterval(attach, 200);
+  multiplayerSessionController.subscribe(() => {
+    if (attachedHost !== activeP2PHost) {
+      detachHost?.();
+      attachedHost = activeP2PHost;
+      detachHost = attachedHost?.subscribeAcceptedShot((shooterId, shot) => {
+        if (shooterId !== attachedHost?.hostPlayer.id) presentRemoteShot(shooterId, shot);
+      }) ?? null;
+    }
+    if (attachedClient !== activeP2PClient) {
+      detachClient?.();
+      attachedClient = activeP2PClient;
+      const boundClient = attachedClient;
+      detachClient = boundClient?.subscribeRemoteShot((shot: FireHitscanData) => {
+        const shooterId = boundClient.slotToPlayerId.get(shot.shooterSlot) ?? `peer_slot_${shot.shooterSlot}`;
+        if (shooterId !== boundClient.playerId) presentRemoteShot(shooterId, shot);
+      }) ?? null;
+    }
+  });
 }

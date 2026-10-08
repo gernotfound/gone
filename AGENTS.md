@@ -296,7 +296,7 @@ The runtime-kernel/browser-lifecycle foundation, lobby/session split, local play
 
 `gameplay/localPlayerLifecycle.ts` is the sole browser owner of local HP/death/respawn/spawn-shield transitions and their HUD/VFX/death-camera side effects. `engine.ts` composes it; `networkBindings.ts` synchronizes authoritative snapshots through it rather than mutating lifecycle state directly.
 
-Transport readiness and stale-peer cleanup belong directly to `P2PHost.broadcastBinary`. Do not reintroduce `networkStabilityFix.ts`, prototype replacement, or another runtime repair layer.
+Transport readiness and stale-peer cleanup belong directly to `P2PHost.broadcastBinary`. Combat hit/accepted-shot events and deathmatch round locking are now emitted or enforced directly by `P2PHost`; `P2PClient` owns deathmatch protocol decoding. Adapters subscribe to typed events on session transitions, never modify `P2PHost`/`P2PClient` methods or poll to reconnect callbacks. Do not reintroduce `networkStabilityFix.ts`, prototype replacement, or another runtime repair layer.
 
 Remote presentation and session observers (`remoteRobotMotion.ts`, `hostRemoteSync.ts`, `pvpTuning.ts`, `remoteShotPresentation.ts`, `killAmmoReset.ts`) use the existing typed `remotePlayerRegistry` and `multiplayerSessionController` owners. `window.goneGame` remains a compatibility/debug facade, never the internal source of truth for these modules.
 

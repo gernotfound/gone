@@ -139,7 +139,7 @@ The host rejects duplicate/backward sequence numbers, non-increasing client time
 
 Direct WebRTC (`directWebRtc.ts`) uses `iceServers: []` by project policy. `NativeRtcDataChannel` owns heartbeat/transport resilience: ~3 s heartbeat, ~15 s expiry, ~6 s grace for transient `disconnected`, deterministic terminal teardown.
 
-`P2PHost.broadcastBinary` owns send-time channel readiness and stale-peer cleanup. Expected closing/closed-channel sends are discarded, terminal peers are disconnected through the normal host lifecycle, and unexpected send failures remain observable. There is no prototype patch or runtime `networkStabilityFix` repair layer.
+`P2PHost` owns round-lock checks at the authoritative shot entry and typed combat subscriptions, with `P2PClient` owning deathmatch packet decoding. Presentation adapters follow session transitions and subscribe to canonical protocol events; runtime prototype/method interception is forbidden. `P2PHost.broadcastBinary` owns send-time channel readiness and stale-peer cleanup. Expected closing/closed-channel sends are discarded, terminal peers are disconnected through the normal host lifecycle, and unexpected send failures remain observable. There is no prototype patch or runtime `networkStabilityFix` repair layer.
 
 `selfHostSession.ts` owns only local relay transport/status presentation. It **reuses `multiplayerSessionController`** for host registration and guest client/session callbacks; it must not create a parallel `P2PClient` lifecycle or roster implementation.
 

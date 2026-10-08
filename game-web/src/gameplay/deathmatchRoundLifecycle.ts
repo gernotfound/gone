@@ -48,6 +48,10 @@ function applySync(detail: DeathmatchSyncEventDetail): void {
   if (locked) inputState.fire = false;
 }
 
+export function isLocalRoundLocked(): boolean {
+  return locked;
+}
+
 /**
  * Observes host-authoritative round transitions. It never overwrites the
  * engine's fireWeapon method and needs no recurring patch/retry timer.

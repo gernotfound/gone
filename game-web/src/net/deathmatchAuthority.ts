@@ -1,8 +1,9 @@
-import { P2PClient } from './p2pClient.ts';
+import { activeP2PHost, activeP2PClient, multiplayerSessionController } from './multiplayerSessionController.ts';
+import type { P2PClient } from './p2pClient.ts';
+import type { P2PHost } from './p2pHost.ts';
 import type { CombatHitEventDetail } from './combatEventBridge.ts';
 import {
   DEATHMATCH_TARGET_KILLS,
-  decodeDeathmatchSnapshot,
   encodeDeathmatchSnapshot,
   type DeathmatchScoreRow,
   type DeathmatchSnapshot,
@@ -15,7 +16,7 @@ export type DeathmatchSyncEventDetail = {
 };
 
 type HostState = {
-  host: any;
+  host: P2PHost;
   round: number;
   winnerSlot: number | null;
   resetAt: number;
@@ -25,8 +26,6 @@ type HostState = {
   lastBroadcastAt: number;
 };
 
-const CLIENT_MARKER = '__goneDeathmatchAuthorityClient';
-const ROUND_GUARD_MARKER = '__goneDeathmatchRoundGuard';
 const ROUND_RESET_DELAY_MS = 7000;
 const RECOVERY_BROADCAST_MS = 1000;
 const CHECK_INTERVAL_MS = 250;
@@ -35,12 +34,7 @@ let lastClientSnapshot: DeathmatchSnapshot | null = null;
 let packetsSent = 0;
 let packetsReceived = 0;
 let roundResets = 0;
-let blockedRoundShots = 0;
 let queuedBroadcast = false;
-
-function gameApi(): any {
-  return (window as any).goneGame;
-}
 
 function emptyRow(slot: number): DeathmatchScoreRow {
   return { slot, kills: 0, deaths: 0, damage: 0, headshots: 0 };
@@ -56,25 +50,11 @@ function emit(source: 'host' | 'client', snapshot: DeathmatchSnapshot): void {
   }));
 }
 
-function setRoundLock(host: any, value: boolean): void {
-  if (host) host.__goneDeathmatchRoundLocked = value;
+function setRoundLock(host: P2PHost, value: boolean): void {
+  host.setRoundLocked(value);
 }
 
-function attachRoundGuard(host: any): void {
-  if (!host || host[ROUND_GUARD_MARKER]) return;
-  const original = host.processFireHitscan;
-  if (typeof original !== 'function') return;
-  host[ROUND_GUARD_MARKER] = true;
-  host.processFireHitscan = function(shooterId: string, shot: unknown) {
-    if (this.__goneDeathmatchRoundLocked === true) {
-      blockedRoundShots += 1;
-      return;
-    }
-    return original.call(this, shooterId, shot);
-  };
-}
-
-function roster(host: any): Array<{ slot: number; id: string }> {
+function roster(host: P2PHost): Array<{ slot: number; id: string }> {
   const entries: Array<{ slot: number; id: string }> = [];
   for (const record of host?.playerRecords?.values?.() ?? []) {
     const slot = Number(record?.slot);
@@ -147,7 +127,7 @@ function scheduleBroadcast(): void {
   queuedBroadcast = true;
   queueMicrotask(() => {
     queuedBroadcast = false;
-    const host = gameApi()?.getP2PHost?.();
+    const host = activeP2PHost;
     if (hostState && hostState.host === host) broadcast(hostState);
   });
 }
@@ -167,8 +147,7 @@ function resetRound(state: HostState): void {
   roundResets += 1;
 }
 
-function createHostState(host: any): HostState {
-  attachRoundGuard(host);
+function createHostState(host: P2PHost): HostState {
   setRoundLock(host, false);
   const state: HostState = {
     host,
@@ -186,7 +165,7 @@ function createHostState(host: any): HostState {
 
 function ingestHostHit(detail: CombatHitEventDetail): void {
   if (detail.source !== 'host') return;
-  const host = gameApi()?.getP2PHost?.();
+  const host = activeP2PHost;
   if (!host) return;
   if (!hostState || hostState.host !== host) hostState = createHostState(host);
   const state = hostState;
@@ -211,27 +190,14 @@ function ingestHostHit(detail: CombatHitEventDetail): void {
   scheduleBroadcast();
 }
 
-function patchClientProtocol(): void {
-  const proto = P2PClient.prototype as any;
-  if (proto[CLIENT_MARKER]) return;
-  proto[CLIENT_MARKER] = true;
-  const original = proto.handleMessage;
-  if (typeof original !== 'function') return;
-
-  proto.handleMessage = function(rawData: unknown) {
-    const snapshot = decodeDeathmatchSnapshot(rawData);
-    if (snapshot) {
-      packetsReceived += 1;
-      lastClientSnapshot = cloneSnapshot(snapshot);
-      emit('client', snapshot);
-      return;
-    }
-    return original.call(this, rawData);
-  };
+function ingestClientSnapshot(snapshot: DeathmatchSnapshot): void {
+  packetsReceived += 1;
+  lastClientSnapshot = cloneSnapshot(snapshot);
+  emit('client', snapshot);
 }
 
 function tick(): void {
-  const host = gameApi()?.getP2PHost?.();
+  const host = activeP2PHost;
   if (!host) {
     hostState = null;
     return;
@@ -243,7 +209,6 @@ function tick(): void {
     return;
   }
 
-  attachRoundGuard(host);
   const state = hostState;
   const rosterChanged = syncRoster(state);
   if (state.winnerSlot !== null && performance.now() >= state.resetAt) {
@@ -258,7 +223,16 @@ function tick(): void {
 export function startDeathmatchAuthority(): void {
   if ((window as any).__goneDeathmatchAuthorityStarted) return;
   (window as any).__goneDeathmatchAuthorityStarted = true;
-  patchClientProtocol();
+  let attachedClient: P2PClient | null = null;
+  let detachClient: (() => void) | null = null;
+  multiplayerSessionController.subscribe(() => {
+    if (attachedClient !== activeP2PClient) {
+      detachClient?.();
+      attachedClient = activeP2PClient;
+      lastClientSnapshot = null;
+      detachClient = attachedClient?.subscribeDeathmatchSync(ingestClientSnapshot) ?? null;
+    }
+  });
   window.addEventListener('gone-hit-confirmed', ((event: CustomEvent<CombatHitEventDetail>) => {
     ingestHostHit(event.detail);
   }) as EventListener);
@@ -270,7 +244,7 @@ export function startDeathmatchAuthority(): void {
       return lastClientSnapshot ? cloneSnapshot(lastClientSnapshot) : null;
     },
     reset: () => {
-      const host = gameApi()?.getP2PHost?.();
+      const host = activeP2PHost;
       if (!host || !hostState || hostState.host !== host) return false;
       resetRound(hostState);
       broadcast(hostState);
@@ -280,7 +254,7 @@ export function startDeathmatchAuthority(): void {
       packetsSent,
       packetsReceived,
       roundResets,
-      blockedRoundShots,
+      blockedRoundShots: activeP2PHost?.blockedRoundShots ?? 0,
       locked: hostState?.winnerSlot !== null,
     }),
   };
