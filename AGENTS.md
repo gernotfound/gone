@@ -41,7 +41,7 @@ Rules:
 - Browser FPS: TypeScript + Vite 8 + Three.js under `game-web/`.
 - Core: Rust/WASM under `game-core/`; `game-web/pkg/game_core.js` remains the functional browser fallback.
 - Browser compile gate: `tsc && vite build` with unused-code checks and `erasableSyntaxOnly`; do not use TypeScript syntax that requires runtime erasure transforms such as parameter properties.
-- Full PR gate: `.github/workflows/rescue-ci.yml` — TypeScript/Vite, all E2E tiers, Chromium runtime/direct multiplayer/scale/combat/session/self-host/full-match/mobile smokes, Rust and final quality gate.
+- Full PR and post-merge `main` gate: `.github/workflows/rescue-ci.yml` — the exact PR candidate SHA and each squash commit on `main` run the same TypeScript/Vite, all E2E tiers, Chromium runtime/direct multiplayer/scale/combat/session/self-host/full-match/mobile smokes, Rust and final quality gate. A green PR run does not stand in for the independent `main` run.
 - Vite/Rolldown keeps Three.js in the stable `three-vendor` chunk with strict execution order. Do not broadly split side-effect-heavy application modules without measurement.
 
 ## Runtime kernel / lifecycle

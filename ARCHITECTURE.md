@@ -245,4 +245,5 @@ Before merging a structural/runtime change:
 - add deterministic Tier tests plus real browser smoke for affected interaction/network paths;
 - run full CI on the branch;
 - squash exactly once to `main`;
+- verify the independent full Rescue CI `push` run on the resulting `main` SHA (not merely the green PR candidate);
 - verify production Vercel SHA/build ID/headers/runtime state separately.
