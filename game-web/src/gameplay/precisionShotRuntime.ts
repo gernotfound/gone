@@ -37,7 +37,7 @@ function readReticleAccuracy(weapon: WeaponKey): number {
   if (Number.isFinite(parsed)) return clamp01(parsed);
 
   // First frame / missing DOM fallback. ADS remains tighter than hip-fire.
-  return weaponsApi()?.isAiming?.() === true ? 0.94 : 0.82;
+  return isAdvancedWeaponAiming() ? 0.94 : 0.82;
 }
 
 function perturbDirection(direction: THREE.Vector3, spreadRad: number): THREE.Vector3 {
