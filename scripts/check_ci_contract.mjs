@@ -16,6 +16,7 @@ export function validateRescueCiContract({workflow,smokeScripts}) {
   need("Checkout must verify event SHA",/if \[ "\$\{actual_sha\}" != "\$\{EXPECTED_SHA\}" \]; then/);
   need("Expected SHA must bind PR head or push",/EXPECTED_SHA: \$\{\{ github\.event\.pull_request\.head\.sha \|\| github\.sha \}\}/);
   need("CI contract checker must run",/run: node scripts\/check_ci_contract\.mjs/);
+  need("Static source health gate must run",/run: node scripts\/check_source_health\.mjs/);
   need("Full Vite+TS build must run",/npm run build --prefix game-web/);
   need("All E2E tiers must run",/node tests\/e2e_runner\.mjs/);
   need("Rust tests must run",/cargo test --manifest-path game-core\/Cargo\.toml/);

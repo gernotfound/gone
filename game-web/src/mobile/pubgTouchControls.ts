@@ -426,6 +426,12 @@ function snapshot(): FireDragSnapshot {
   };
 }
 
+// Runtime composition calls this owner directly; the global facade remains only
+// for external integrations and diagnostic browser smokes.
+export function reconcilePubgTouchControls(): void {
+  attachWhenAvailable();
+}
+
 export function startPubgTouchControls(): void {
   if ((window as any).__gonePubgTouchControlsStarted) {
     attachWhenAvailable();
