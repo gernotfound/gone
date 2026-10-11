@@ -245,6 +245,7 @@ Before merging a structural/runtime change:
 - add deterministic Tier tests plus real browser smoke for affected interaction/network paths;
 - run full CI and the independent CodeQL JavaScript/TypeScript workflow on the branch;
 - run full CI on the branch including pinned Playwright Chromium/WebKit mobile checks and the P2P prototype guard;
+- review the export-liveness audit (`rescue-unused-exports` artifact) before removing any exported API; a potential unused symbol is advisory and cannot be removed without checking tests and browser consumers;
 - run full CI on the branch; `scripts/check_source_health.mjs` verifies source safety and module reachability, and the exact-head checkout, complete smoke set and tier completion semantics are protected by `scripts/check_ci_contract.mjs` and the E2E runner;
 - squash exactly once to `main`;
 - verify the independent full Rescue CI `push` run on the resulting `main` SHA (not merely the green PR candidate);

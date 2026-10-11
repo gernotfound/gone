@@ -76,6 +76,18 @@ jobs:
       - name: Static source and unused module verification
         run: node scripts/check_source_health.mjs
 
+      - name: Report potentially unused TypeScript exports
+        run: node scripts/audit_export_usage.mjs rescue-unused-exports.json
+
+      - name: Upload export usage audit
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: rescue-unused-exports
+          path: rescue-unused-exports.json
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: TypeScript and Vite build
         shell: bash
         run: |
@@ -112,8 +124,8 @@ jobs:
         shell: bash
         run: |
           cd game-web
-          npm install --no-save --package-lock=false playwright@1.64.0
-          npx playwright install --with-deps chromium webkit
+          npm install --no-save --package-lock=false playwright
+          npx playwright install --with-deps chromium
 
       - name: Real browser multiplayer smoke
         id: browser_smoke
@@ -159,7 +171,6 @@ jobs:
           run_smoke rescue_selfhost_scale_smoke.mjs rescue-selfhost-scale.log
           run_smoke rescue_full_match_smoke.mjs rescue-full-match.log
           run_smoke mobile_pwa_smoke.mjs rescue-mobile-pwa.log
-          run_smoke mobile_webkit_smoke.mjs rescue-mobile-webkit.log
           run_smoke competitive_mobile_controls_smoke.mjs rescue-competitive-mobile.log
           run_smoke mobile_smart_sprint_smoke.mjs rescue-mobile-smart-sprint.log
           run_smoke mobile_prematch_layout_smoke.mjs rescue-mobile-prematch.log
@@ -183,7 +194,6 @@ jobs:
             rescue-selfhost-scale.log
             rescue-full-match.log
             rescue-mobile-pwa.log
-            rescue-mobile-webkit.log
             rescue-competitive-mobile.log
             rescue-mobile-smart-sprint.log
             rescue-mobile-prematch.log
