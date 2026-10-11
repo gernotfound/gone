@@ -33,12 +33,37 @@ export function collectRelativeDependencies(sourceFile) {
 
 export function unsafeSourcePatterns(sourceFile) {
   const problems = [];
+  const patchedProtoAliases = new Set();
+  // Reject runtime patches against protocol owners, including aliases of their prototypes.
+  function isProtocolPrototype(node) {
+    return ts.isPropertyAccessExpression(node)
+      && node.name.text === 'prototype'
+      && ts.isIdentifier(node.expression)
+      && (node.expression.text === 'P2PHost' || node.expression.text === 'P2PClient');
+  }
+  function collectAliases(node) {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer
+      && (isProtocolPrototype(node.initializer)
+        || (ts.isAsExpression(node.initializer) && isProtocolPrototype(node.initializer.expression)))) {
+      patchedProtoAliases.add(node.name.text);
+    }
+    ts.forEachChild(node, collectAliases);
+  }
+  collectAliases(sourceFile);
   function visit(node) {
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'eval') {
       problems.push('dynamic eval is forbidden');
     }
     if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'Function') {
       problems.push('dynamic Function constructor is forbidden');
+    }
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      const receiver = ts.isPropertyAccessExpression(node.left) || ts.isElementAccessExpression(node.left)
+        ? node.left.expression : null;
+      if (receiver && (isProtocolPrototype(receiver)
+        || (ts.isIdentifier(receiver) && patchedProtoAliases.has(receiver.text)))) {
+        problems.push('protocol prototype method replacement is forbidden');
+      }
     }
     ts.forEachChild(node, visit);
   }

@@ -112,8 +112,8 @@ jobs:
         shell: bash
         run: |
           cd game-web
-          npm install --no-save --package-lock=false playwright
-          npx playwright install --with-deps chromium
+          npm install --no-save --package-lock=false playwright@1.64.0
+          npx playwright install --with-deps chromium webkit
 
       - name: Real browser multiplayer smoke
         id: browser_smoke
@@ -159,6 +159,7 @@ jobs:
           run_smoke rescue_selfhost_scale_smoke.mjs rescue-selfhost-scale.log
           run_smoke rescue_full_match_smoke.mjs rescue-full-match.log
           run_smoke mobile_pwa_smoke.mjs rescue-mobile-pwa.log
+          run_smoke mobile_webkit_smoke.mjs rescue-mobile-webkit.log
           run_smoke competitive_mobile_controls_smoke.mjs rescue-competitive-mobile.log
           run_smoke mobile_smart_sprint_smoke.mjs rescue-mobile-smart-sprint.log
           run_smoke mobile_prematch_layout_smoke.mjs rescue-mobile-prematch.log
@@ -182,6 +183,7 @@ jobs:
             rescue-selfhost-scale.log
             rescue-full-match.log
             rescue-mobile-pwa.log
+            rescue-mobile-webkit.log
             rescue-competitive-mobile.log
             rescue-mobile-smart-sprint.log
             rescue-mobile-prematch.log
