@@ -106,6 +106,7 @@ It must **not** import DOM or `engine.ts`.
 - Movement through canonical maze walls is a host-side rejection reason. Local prediction resolves the same geometry with wall sliding.
 - Host hitscan must stop at canonical maze walls before applying player damage; local/remote raycasts include the rendered maze only for matching presentation.
 - Spawn/respawn are explicit host-authorized transitions that reset movement validation; clients reconcile from authoritative self snapshots rather than inventing a second multiplayer respawn coordinate.
+- A host may open its lobby before game preload, but a guest join must await the single-flight `runtime/gameCoreInitialization.ts` WASM initializer before computing terrain-based spawn height. Failed initialization rejects the join without allocating a slot. Engine preload reuses the same initialization promise; never add a duplicate terrain formula or an arbitrary spawn Y.
 - `gameplay/networkBindings.ts` may snap the local predicted player only for first authority seed, host respawn or large authority divergence; normal prediction remains local.
 - Binary core opcodes: 0x01 CLIENT_STATE, 0x02 WORLD_SNAPSHOT, 0x03 FIRE_HITSCAN, 0x04 HIT_CONFIRMED.
 - `NativeRtcDataChannel`: ~3 s heartbeat, ~15 s timeout, ~6 s grace for transient `disconnected`.
