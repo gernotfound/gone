@@ -40,6 +40,7 @@ Rules:
 
 - Browser FPS: TypeScript + Vite 8 + Three.js under `game-web/`.
 - Core: Rust/WASM under `game-core/`; `game-web/pkg/game_core.js` remains the functional browser fallback.
+- Potential unused named TypeScript exports are reported conservatively by `scripts/audit_export_usage.mjs` across browser source, tests and scripts. Output is uploaded as a CI artifact; it is advisory, not proof that a compatibility API can be deleted. Dead modules remain a hard failure of `scripts/check_source_health.mjs`.
 - Browser compile gate: `tsc && vite build` with unused-code checks and `erasableSyntaxOnly`; do not use TypeScript syntax that requires runtime erasure transforms such as parameter properties.
 - Separate pinned CodeQL workflow `.github/workflows/codeql.yml` scans JavaScript/TypeScript on PR heads and `main` commits. `easy-launch-ci.yml` also pins checkout and verifies the actual commit. Do not disable these independent security and launcher checks to unblock releases.
 - Browser smoke now includes Linux WebKit mobile/PWA checks in addition to Chromium: this catches WebKit-specific regressions but is **not** equivalent to a physical iPhone/Safari test. The Playwright version is fixed rather than installed from a moving latest tag. Source health rejects reintroduced P2P prototype method replacements.
