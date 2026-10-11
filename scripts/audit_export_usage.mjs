@@ -69,7 +69,19 @@ export function auditExportUsage(sources, sourceRoot) {
     used.set(filename, new Set());
     // References inside the declaring module count too (even if imported nowhere).
     function visit(node) {
-      if (ts.isIdentifier(node)) {
+      // Member and object-property names are not lexical references to a local export.
+      // Shorthand properties remain references and must still count.
+      const parent = node.parent;
+      const isPropertyName = parent && (
+        (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
+        (ts.isPropertyAssignment(parent) && parent.name === node) ||
+        (ts.isPropertyDeclaration(parent) && parent.name === node) ||
+        (ts.isPropertySignature(parent) && parent.name === node) ||
+        (ts.isMethodDeclaration(parent) && parent.name === node) ||
+        (ts.isGetAccessorDeclaration(parent) && parent.name === node) ||
+        (ts.isSetAccessorDeclaration(parent) && parent.name === node)
+      );
+      if (ts.isIdentifier(node) && !isPropertyName) {
         for (const declaration of exports) {
           if (node.text === declaration.name && node.getStart(source) !== declaration.declarationStart) {
             used.get(filename).add(declaration.name);

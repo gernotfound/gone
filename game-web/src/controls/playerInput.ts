@@ -173,7 +173,3 @@ export function resetInputState() {
     inputState.timestamp = performance.now();
 }
 
-export function setAim(yaw: number, pitch: number) {
-    inputState.yaw = yaw;
-    inputState.pitch = pitch;
-}

@@ -177,11 +177,6 @@ export function initMinimap() {
     }
 }
 
-export function invalidateGlobalMap(): void {
-    cachedGlobalMap = null;
-    cachedHeightSource = null;
-}
-
 export function drawMinimap(
     playerX: number,
     playerZ: number,

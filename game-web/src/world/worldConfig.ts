@@ -30,17 +30,6 @@ export function chunkCoordToWorld(coord: number): number {
   return coord * CHUNK_SIZE;
 }
 
-export function chunkDistanceSq(
-  cx: number,
-  cz: number,
-  centerX: number,
-  centerZ: number,
-): number {
-  const dx = cx - centerX;
-  const dz = cz - centerZ;
-  return dx * dx + dz * dz;
-}
-
 export function isChunkInLoadRadius(dx: number, dz: number): boolean {
   return dx * dx + dz * dz <= CHUNK_RADIUS * CHUNK_RADIUS + 1;
 }

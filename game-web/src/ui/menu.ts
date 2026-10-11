@@ -12,14 +12,6 @@ export let isMusicPlaying = false;
 export function setIsMusicPlaying(val: boolean) { isMusicPlaying = val; }
 export let volumes = { master: 1.0, music: 1.0, sfx: 1.0 };
 
-export function isMenuOpen() {
-    const controlsMenu = document.getElementById('controls-menu');
-    return !DOM.mainMenu.classList.contains('hidden') ||
-        !DOM.settingsMenu.classList.contains('hidden') ||
-        !DOM.multiplayerLobby.classList.contains('hidden') ||
-        Boolean(controlsMenu && !controlsMenu.classList.contains('hidden'));
-}
-
 export function updateNetworkStatus() {
     if (!navigator.onLine) {
         DOM.netDot.className = 'w-2 h-2 rounded-full bg-red-500 shadow-[0_0_5px_rgba(239,68,68,0.8)]';

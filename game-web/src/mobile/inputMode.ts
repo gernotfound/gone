@@ -99,10 +99,6 @@ function applyMode(): void {
   };
 }
 
-export function getInputMode(): InputMode {
-  return currentMode;
-}
-
 export function useOnScreenControls(): boolean {
   return currentMode === 'screen';
 }
