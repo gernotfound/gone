@@ -13,6 +13,7 @@ import {
 import { P2PClient, type ClientConnectionStatus } from './p2pClient.ts';
 import { P2PHost, type P2PHostOptions } from './p2pHost.ts';
 import { SimpleLagCompensator } from './simpleLagCompensator.ts';
+import { ensureGameCoreInitialized } from '../runtime/gameCoreInitialization.ts';
 import type { IDataChannel, SessionPlayerInfo } from './protocol.ts';
 
 export type LobbyPlayer = {
@@ -235,6 +236,7 @@ class MultiplayerSessionController {
     const host = new SessionP2PHost({
       hostPlayer: { id: 'host', name: playerName || 'Giocatore', color },
       lagCompensator: new SimpleLagCompensator(500),
+      beforeJoin: ensureGameCoreInitialized,
       onPlayerJoined: (player) => {
         this.upsertPlayer(sessionPlayerToLobby(player));
         this.setNotice(`${player.name.toUpperCase()} COLLEGATO DIRETTAMENTE.`, 'success');
@@ -259,6 +261,11 @@ class MultiplayerSessionController {
     this.players = [sessionPlayerToLobby(host.hostPlayer)];
     this.attachHost(host);
     this.setNotice('HOST PRONTO', 'success');
+    void ensureGameCoreInitialized().catch((error) => {
+      if (activeP2PHost !== host) return;
+      console.error('[G.O.N.E. WASM]', error);
+      this.setNotice('MOTORE NON DISPONIBILE', 'error');
+    });
     return host;
   }
 

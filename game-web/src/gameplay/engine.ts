@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import init, { PhysicsInput, step_physics } from '../../pkg/game_core.js';
+import { PhysicsInput, step_physics } from '../../pkg/game_core.js';
+import { ensureGameCoreInitialized } from '../runtime/gameCoreInitialization.ts';
 import { sceneManager } from '../rendering/scene.ts';
 import { inputState, initInput } from '../controls/playerInput.ts';
 import { updateChunks, getChunkMeshes, getTerrainHeightAt } from '../world/chunkManager.ts';
@@ -377,7 +378,7 @@ async function performPreload(): Promise<void> {
     if (!hasInitializedWasm) {
       updateLoadingProgress(10, 'DOWNLOAD MOTORE WASM...');
       await new Promise((resolve) => setTimeout(resolve, 200));
-      await init();
+      await ensureGameCoreInitialized();
       hasInitializedWasm = true;
     }
 

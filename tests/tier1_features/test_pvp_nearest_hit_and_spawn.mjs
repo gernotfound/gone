@@ -1,5 +1,6 @@
 import { assertEqual, assertGreaterThan } from '../helpers/assertions.mjs';
 import { P2PHost } from '../../game-web/src/net/p2pHost.ts';
+import { encodeLobbyJoin } from '../../game-web/src/net/binaryProtocol.ts';
 import { getSafestRespawnPoint, SPAWN_POINTS } from '../../game-web/src/gameplay/spawnSelection.ts';
 
 function combatRecord(id, slot, z) {
@@ -76,6 +77,77 @@ export async function run(suite) {
     assertEqual(timed.position.z, -400);
     assertEqual(host.getAuthoritativeRespawnCount(), 2);
     host.destroy();
+  });
+
+  suite.test('Guest join waits for terrain readiness before allocating authoritative spawn', async () => {
+    let releaseReadiness = () => {};
+    let terrainReady = false;
+    const readiness = new Promise((resolve) => { releaseReadiness = resolve; });
+    const sent = [];
+    const channel = {
+      readyState: 'open',
+      send: (buffer) => sent.push(buffer),
+      close() { this.readyState = 'closed'; this.onclose?.(); },
+    };
+    const host = new P2PHost({
+      hostPlayer: { id: 'host', name: 'HOST', color: '#00F0FF' },
+      beforeJoin: () => readiness,
+    });
+    host.setRespawnPositionResolver((slot) => {
+      if (!terrainReady) throw new Error('Terrain core not ready');
+      return { x: slot * 10, y: 50 + slot, z: 0 };
+    });
+    host.registerPeer('guest', channel);
+    channel.onmessage({ data: encodeLobbyJoin('guest', 'Guest', '#FF007F') });
+    channel.onmessage({ data: encodeLobbyJoin('guest', 'Guest', '#FF007F') });
+    assertEqual(host.playerRecords.has('guest'), false, 'no guest state before core readiness');
+    assertEqual(sent.length, 0, 'guest must not receive a premature join acceptance');
+
+    terrainReady = true;
+    releaseReadiness();
+    await new Promise((resolve) => setImmediate(resolve));
+    assertEqual(host.playerRecords.get('guest')?.position.y, 51, 'host must use canonical ready terrain resolver');
+    assertEqual(sent.length, 1, 'duplicate pending join packets must create exactly one acceptance');
+    host.destroy();
+  });
+
+  suite.test('Failed terrain startup rejects join without reserving a player slot', async () => {
+    let reportedError = null;
+    let closeCount = 0;
+    const channel = {
+      readyState: 'open',
+      send() { throw new Error('join must not be accepted'); },
+      close() { closeCount += 1; this.readyState = 'closed'; this.onclose?.(); },
+    };
+    const host = new P2PHost({
+      hostPlayer: { id: 'host', name: 'HOST', color: '#00F0FF' },
+      beforeJoin: () => Promise.reject(new Error('WASM startup failed')),
+      onError: (error) => { reportedError = error; },
+    });
+    host.registerPeer('guest', channel);
+    channel.onmessage({ data: encodeLobbyJoin('guest', 'Guest', '#FF007F') });
+    await new Promise((resolve) => setImmediate(resolve));
+    assertEqual(reportedError?.message, 'WASM startup failed');
+    assertEqual(closeCount, 1, 'failed initialization must close the guest channel');
+    assertEqual(host.playerRecords.has('guest'), false, 'failed join must not create player authority');
+    assertEqual(host.playerIdToSlot.has('guest'), false, 'failed join must not reserve a slot');
+    host.destroy();
+  });
+
+  suite.test('Destroyed host never admits a guest from a late readiness completion', async () => {
+    let releaseReadiness = () => {};
+    const readiness = new Promise((resolve) => { releaseReadiness = resolve; });
+    const channel = { readyState: 'open', send() { throw new Error('late join must not send'); } };
+    const host = new P2PHost({
+      hostPlayer: { id: 'host', name: 'HOST', color: '#00F0FF' },
+      beforeJoin: () => readiness,
+    });
+    host.registerPeer('guest', channel);
+    channel.onmessage({ data: encodeLobbyJoin('guest', 'Guest', '#FF007F') });
+    host.destroy();
+    releaseReadiness();
+    await new Promise((resolve) => setImmediate(resolve));
+    assertEqual(host.playerRecords.has('guest'), false, 'late async completions cannot resurrect torn-down sessions');
   });
 
   suite.test('Threat-aware respawn maximizes nearest-opponent distance deterministically', () => {

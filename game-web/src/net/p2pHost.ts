@@ -128,6 +128,8 @@ export interface P2PHostOptions {
   hostPlayer: HostPlayerConfig;
   colorRegistry?: IColorRegistry;
   lagCompensator?: WasmLagCompensator | IWasmLagCompensator;
+  /** Terrain-based spawn authority must be ready before a guest is admitted. */
+  beforeJoin?: () => Promise<void>;
   onPlayerJoined?: (player: SessionPlayerInfo) => void;
   onPlayerLeft?: (playerId: string, freedColor: string) => void;
   onPlayerRespawned?: (playerId: string) => void;
@@ -210,6 +212,8 @@ export class P2PHost {
   public blockedRoundShots = 0;
   private readonly acceptedShotObservers = new Set<(shooterId: string, shot: FireHitscanData) => void>();
   private readonly confirmedHitObservers = new Set<(hit: HitConfirmedData) => void>();
+  private readonly pendingJoinChannels = new Set<IDataChannel>();
+  private destroyed = false;
 
   /** The host is the sole authority for whether the round accepts shots. */
   public setRoundLocked(locked: boolean): void { this.roundLocked = locked; }
@@ -353,7 +357,7 @@ export class P2PHost {
       const msg = decodeLobbyMessage(buffer);
       if (!msg) return;
       switch (msg.type) {
-        case 'JOIN_REQUEST': this.processJoinRequest(channel, msg as any); break;
+        case 'JOIN_REQUEST': this.acceptJoinWhenReady(channel, msg as any); break;
         case 'COLOR_REQUEST': this.processColorChangeRequest(channel, msg as any); break;
       }
       return;
@@ -955,6 +959,37 @@ export class P2PHost {
     }
   }
 
+  private acceptJoinWhenReady(
+    channel: IDataChannel,
+    msg: { type: 'JOIN_REQUEST'; playerId: string; playerName: string; proposedColor: string },
+  ): void {
+    if (this.destroyed || this.pendingJoinChannels.has(channel)) return;
+    const beforeJoin = this.options.beforeJoin;
+    if (!beforeJoin) {
+      this.processJoinRequest(channel, msg);
+      return;
+    }
+
+    this.pendingJoinChannels.add(channel);
+    // Preserve the synchronous contract for isolated hosts without a readiness
+    // hook. Production hosts must finish WASM initialization before resolving
+    // the authoritative terrain height for the first guest spawn.
+    void Promise.resolve()
+      .then(() => beforeJoin())
+      .then(() => {
+        if (this.destroyed || channel.readyState === 'closing' || channel.readyState === 'closed') return;
+        this.processJoinRequest(channel, msg);
+      })
+      .catch((error: unknown) => {
+        if (this.destroyed) return;
+        this.options.onError?.(error instanceof Error ? error : new Error(String(error)));
+        try { channel.close?.(); } catch { /* transport may already be closed */ }
+      })
+      .finally(() => {
+        this.pendingJoinChannels.delete(channel);
+      });
+  }
+
   private processJoinRequest(
     channel: IDataChannel,
     msg: { type: 'JOIN_REQUEST'; playerId: string; playerName: string; proposedColor: string }
@@ -1076,6 +1111,8 @@ export class P2PHost {
   }
 
   public destroy(): void {
+    this.destroyed = true;
+    this.pendingJoinChannels.clear();
     this.stopSnapshotTick();
     this.peers.clear();
     this.playerRecords.clear();
