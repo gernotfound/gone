@@ -286,10 +286,6 @@ function ensureSessionSubscription(): void {
   multiplayerSessionController.subscribe(renderSession);
 }
 
-export function setLobbyGameStartCb(callback: () => void): void {
-  onGameStartCb = callback;
-}
-
 /** UI-facing reset facade; network ownership remains in the session controller. */
 export function resetMultiplayerSession(): void {
   multiplayerSessionController.reset();
