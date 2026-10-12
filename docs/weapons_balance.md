@@ -34,6 +34,9 @@ At the 20 m benchmark (2 m for knife):
 
 The shotgun is deliberately slower at the 20 m benchmark because it is now a close-range weapon with a stronger range identity rather than a universal two-shot option.
 
+
+The live browser host uses `net/simpleLagCompensator.ts` for rewind against the visible robot hitbox. It linearly interpolates host-received historical positions at the bounded shot time, matching Rust's temporal sampling contract rather than snapping to one 30 Hz state. The existing host-clock-domain fallback and spawn/respawn history clearing remain in effect.
+
 ## Real precision / spread
 
 The FPS crosshair is not presentation-only. `gameplay/dynamicPrecisionReticle.ts` computes a normalized live accuracy value from movement, crouching, sprinting, airborne state, ADS and recent shots. `gameplay/precisionShotRuntime.ts` maps that value into the weapon cone below and perturbs the same ray used by local hitscan, tracer and the FIRE_HITSCAN packet.
