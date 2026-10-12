@@ -92,17 +92,33 @@ export class SimpleLagCompensator {
     }
     targetTime = Math.max(newest.timestamp - maxUnlag, Math.min(newest.timestamp, targetTime));
 
-    let snapshot = newest;
-    let bestDistance = Math.abs(newest.timestamp - targetTime);
-    for (let i = history.length - 2; i >= 0; i -= 1) {
-      const candidate = history[i];
-      const delta = Math.abs(candidate.timestamp - targetTime);
-      if (delta <= bestDistance) {
-        snapshot = candidate;
-        bestDistance = delta;
-      } else if (candidate.timestamp < targetTime) {
+    // Snapshot receipt times are host-monotonic and ordered. Rewind to the
+    // position between the bounding states, not the nearest 30 Hz sample:
+    // fast-moving targets can travel more than their hitbox width per tick.
+    let snapshot = history[0];
+    for (let i = history.length - 1; i > 0; i -= 1) {
+      const newer = history[i];
+      const older = history[i - 1];
+      if (targetTime >= newer.timestamp) {
+        snapshot = newer;
         break;
       }
+      if (targetTime < older.timestamp) continue;
+      const span = newer.timestamp - older.timestamp;
+      if (span <= 1e-6) {
+        snapshot = newer;
+        break;
+      }
+      const alpha = Math.max(0, Math.min(1, (targetTime - older.timestamp) / span));
+      snapshot = {
+        timestamp: targetTime,
+        x: older.x + (newer.x - older.x) * alpha,
+        y: older.y + (newer.y - older.y) * alpha,
+        z: older.z + (newer.z - older.z) * alpha,
+        radius: older.radius + (newer.radius - older.radius) * alpha,
+        height: older.height + (newer.height - older.height) * alpha,
+      };
+      break;
     }
 
     // Anchor horizontal shot origin to the newest authoritative shooter state.
