@@ -1,5 +1,6 @@
 import { soundSynth } from '../audio/index.ts';
 import { readDirectOfferFromLocation } from '../net/directWebRtc.ts';
+import { readRoomInviteFromLocation, normalizeRoomCode, isRoomCode } from '../net/shortRoomSignaling.ts';
 import { setupSelfHostedSessionFromLocation } from '../net/selfHostSession.ts';
 import { browserLifecycle } from '../runtime/browserLifecycle.ts';
 import { setupLobby, initLobbyEvents, resetMultiplayerSession } from './lobby.ts';
@@ -179,6 +180,28 @@ export function setupMenu(callbacks: {
         setupLobby(true, undefined, callbacks.onPlayMultiplayer);
     });
 
+    const roomInput = document.getElementById('room-code-input') as HTMLInputElement;
+    const roomJoin = document.getElementById('btn-join-room') as HTMLButtonElement;
+    const roomError = document.getElementById('room-code-error') as HTMLElement;
+    roomInput?.addEventListener('input', () => {
+        roomInput.value = normalizeRoomCode(roomInput.value).slice(0, 5);
+        roomError.textContent = '';
+    });
+    const joinRoom = () => {
+        const code = normalizeRoomCode(roomInput.value);
+        if (!isRoomCode(code)) {
+            roomError.textContent = 'INSERISCI UN CODICE VALIDO DI 5 CARATTERI';
+            return;
+        }
+        roomError.textContent = '';
+        resetMultiplayerSession();
+        openJoinLobby(code, callbacks.onPlayMultiplayer);
+    };
+    roomJoin?.addEventListener('click', joinRoom);
+    roomInput?.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') joinRoom();
+    });
+
     DOM.btnBackLobby.addEventListener('click', () => {
         resetMultiplayerSession();
         DOM.multiplayerLobby.classList.remove('flex');
@@ -202,7 +225,7 @@ export function setupMenu(callbacks: {
     const handleInvite = () => {
         if (setupSelfHostedSessionFromLocation(callbacks.onPlayMultiplayer)) return;
 
-        const directOffer = readDirectOfferFromLocation();
+        const directOffer = readRoomInviteFromLocation() || readDirectOfferFromLocation();
         if (!directOffer) return;
         resetMultiplayerSession();
         openJoinLobby(directOffer, callbacks.onPlayMultiplayer);
