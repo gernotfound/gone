@@ -435,4 +435,62 @@ export async function run(suite) {
     assertEqual(host.colorRegistry.isColorAvailable('#FF007F'), true);
     host.destroy();
   });
+
+  suite.test('Guest transport replacement ignores old callbacks and resets previous authority state', () => {
+    const statuses = [];
+    const makeChannel = (readyState) => ({
+      readyState,
+      sent: [],
+      closeCount: 0,
+      send(packet) { this.sent.push(packet); },
+      close() {
+        this.closeCount += 1;
+        this.readyState = 'closed';
+        this.onclose?.();
+      },
+    });
+    const first = makeChannel('connecting');
+    const second = makeChannel('open');
+    const client = new P2PClient({
+      playerId: 'guest',
+      playerName: 'Guest',
+      onStatusChange: (status) => statuses.push(status),
+    });
+
+    client.connect(first, '#FF007F');
+    const staleOpen = first.onopen;
+    const staleMessage = first.onmessage;
+    const staleClose = first.onclose;
+    client.playerSlot = 3;
+    client.assignedColor = '#FF007F';
+    client.sessionPlayers = [{ id: 'guest', slot: 3, color: '#FF007F', name: 'Guest' }];
+    client.slotToPlayerId.set(3, 'guest');
+    client.playerIdToSlot.set('guest', 3);
+    client.status = 'connected';
+
+    client.connect(second, '#39FF14');
+    assertEqual(first.closeCount, 1, 'superseded channel must be closed');
+    assertEqual(client.channel, second, 'only the replacement channel may own callbacks');
+    assertEqual(client.status, 'connecting');
+    assertEqual(client.playerSlot, null, 'old slot must not authorize a new channel');
+    assertEqual(client.assignedColor, null);
+    assertEqual(client.sessionPlayers.length, 0);
+    assertEqual(client.playerIdToSlot.size, 0);
+    assertEqual(second.sent.length, 1, 'replacement channel must send exactly one join request');
+
+    // Capture callbacks before replacement to simulate queued browser events
+    // that have already been dispatched even though handlers were detached.
+    staleOpen?.();
+    staleMessage?.({ data: encodeLobbyJoin('guest', 'Ghost', '#FFE600') });
+    staleClose?.();
+    assertEqual(client.channel, second, 'stale close cannot tear down new transport');
+    assertEqual(client.status, 'connecting');
+    assertEqual(second.sent.length, 1, 'stale open must not send a second join on the replacement');
+    assertEqual(statuses.at(-1), 'connecting');
+
+    second.onclose?.();
+    assertEqual(client.channel, null, 'live close must detach its own transport');
+    assertEqual(client.status, 'disconnected');
+    client.disconnect();
+  });
 }
