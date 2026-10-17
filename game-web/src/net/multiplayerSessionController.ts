@@ -12,7 +12,7 @@ import {
 } from './directWebRtc.ts';
 import {
   closeRoom, fetchRoomOffer, pollRoomAnswer, publishRoomAnswer,
-  publishRoomOffer, buildRoomInviteUrl,
+  publishRoomOffer,
 } from './shortRoomSignaling.ts';
 import { P2PClient, type ClientConnectionStatus } from './p2pClient.ts';
 import { P2PHost, type P2PHostOptions } from './p2pHost.ts';
@@ -326,16 +326,24 @@ class MultiplayerSessionController {
         void this.prepareHostInvite().catch((error) => this.setNotice(errorMessage(error).toUpperCase(), 'error'));
         return;
       }
+      let receivedAnswer = false;
       try {
         const answer = await pollRoomAnswer(this.pendingRoom.code, this.pendingRoom.hostSecret);
         if (this.inviteVersion !== version || !this.pendingRoom) return;
         if (answer) {
+          receivedAnswer = true;
           await this.applyHostAnswer(answer);
           return;
         }
       } catch (error) {
         if (this.inviteVersion !== version || !this.pendingRoom) return;
         console.warn('[G.O.N.E.] Scambio codice stanza:', error);
+        if (receivedAnswer) {
+          // An invalid / claimed answer must not trap the host in an endless
+          // retry loop with the same immutable guest reply.
+          void this.prepareHostInvite().catch((failure) => this.setNotice(errorMessage(failure).toUpperCase(), 'error'));
+          return;
+        }
         this.setNotice('INVITO NON RAGGIUNGIBILE. NUOVO TENTATIVO...', 'error');
       }
       if (this.inviteVersion === version && this.pendingRoom) {
@@ -398,7 +406,13 @@ class MultiplayerSessionController {
 
   async startRoomGuest(code: string, options: GuestStartOptions): Promise<void> {
     // Validate the server-side invitation before replacing the current session.
-    const offerCode = await fetchRoomOffer(code);
+    let offerCode: string;
+    try {
+      offerCode = await fetchRoomOffer(code);
+    } catch (error) {
+      this.setNotice(errorMessage(error).toUpperCase(), 'error');
+      throw error;
+    }
     const client = this.createGuestClient(options);
     this.inviteKind = 'none';
     this.inviteValue = '';

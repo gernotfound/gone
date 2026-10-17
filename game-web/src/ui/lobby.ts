@@ -117,9 +117,11 @@ function syncNativeShareButton(snapshot: MultiplayerSessionSnapshot): void {
 
   const hostInvite = snapshot.inviteKind === 'host-link';
   button.textContent = snapshot.inviteKind === 'room-code' ? 'CONDIVIDI CODICE' : hostInvite ? 'CONDIVIDI INVITO' : 'INVIA RISPOSTA';
-  button.setAttribute('aria-label', hostInvite
-    ? 'Condividi invito multiplayer con le app del dispositivo'
-    : 'Invia risposta di connessione all’host con le app del dispositivo');
+  button.setAttribute('aria-label', snapshot.inviteKind === 'room-code'
+    ? 'Condividi il codice stanza di 5 caratteri'
+    : hostInvite
+      ? 'Condividi invito multiplayer con le app del dispositivo'
+      : 'Invia risposta di connessione all’host con le app del dispositivo');
 }
 
 function hostPlayButton(): void {
@@ -266,7 +268,8 @@ function renderSession(snapshot: MultiplayerSessionSnapshot): void {
   if (snapshot.role === 'host') {
     hostPlayButton();
     if (snapshot.inviteKind === 'room-code') {
-      removeDirectControls();
+      document.getElementById('direct-host-controls')?.remove();
+      document.getElementById('direct-guest-help')?.remove();
       DOM.inviteLinkContainer.classList.remove('hidden');
       setInviteLabel('CODICE STANZA (5 CARATTERI)');
       DOM.btnCopyLink.textContent = 'COPIA CODICE';
@@ -316,6 +319,7 @@ function renderSession(snapshot: MultiplayerSessionSnapshot): void {
   }
 
   removeDirectControls();
+  if (snapshot.notice?.kind === 'error') guestStatus(snapshot.notice.text, true);
 }
 
 function ensureSessionSubscription(): void {

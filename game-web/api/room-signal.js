@@ -57,6 +57,16 @@ async function load(path) {
   if (!response.ok) throw new Error(`blob_read_${response.status}`);
   return response.json();
 }
+// Vercel Blob has no TTL primitive: records are logically expired at 120s,
+ // and stale physical files are opportunistically removed during room creation.
+async function sweepExpired() {
+  const listing = await blobApi(`?prefix=${encodeURIComponent(ROOT)}&limit=100`, { method: 'GET', headers: {} });
+  const stale = (listing.blobs || [])
+    .filter((entry) => Date.now() - Date.parse(entry.uploadedAt) > 5 * 60_000)
+    .map((entry) => entry.pathname);
+  if (stale.length) await remove(stale);
+}
+
 async function remove(paths) {
   await blobApi('/delete', {
     method: 'POST', headers: { 'content-type': 'application/json' },
@@ -100,6 +110,10 @@ export default async function handler(req, res) {
         return error(res, 400, 'invalid_offer');
       }
       const decoded = JSON.parse(Buffer.from(input.offer, 'base64url').toString('utf8'));
+      // Cleanup is best-effort and must not make a new invitation unavailable.
+      try { await sweepExpired(); } catch (cleanupError) {
+        console.warn('[G.O.N.E. signaling] stale cleanup unavailable:', cleanupError instanceof Error ? cleanupError.message : 'unknown');
+      }
       const expiresAt = Date.now() + ROOM_TTL_MS;
       for (let attempt = 0; attempt < 7; attempt += 1) {
         const selected = roomCode();
@@ -117,6 +131,11 @@ export default async function handler(req, res) {
 
     const record = await load(roomPath(code, 'offer'));
     if (!record) return error(res, 404, 'room_not_found');
+    if (operation === 'close') {
+      if (!ownsRoom(record, input.hostSecret)) return error(res, 403, 'invalid_host');
+      await remove([roomPath(code, 'offer'), roomPath(code, 'answer')]);
+      return res.status(200).json({ ok: true });
+    }
     if (!Number.isFinite(record.expiresAt) || Date.now() >= record.expiresAt) return error(res, 410, 'room_expired');
 
     if (operation === 'offer') {
@@ -128,12 +147,8 @@ export default async function handler(req, res) {
       if (saved.collision) return error(res, 409, 'room_already_claimed');
       return res.status(201).json({ ok: true });
     }
-    if (operation === 'poll' || operation === 'close') {
+    if (operation === 'poll') {
       if (!ownsRoom(record, input.hostSecret)) return error(res, 403, 'invalid_host');
-      if (operation === 'close') {
-        await remove([roomPath(code, 'offer'), roomPath(code, 'answer')]);
-        return res.status(200).json({ ok: true });
-      }
       const answer = await load(roomPath(code, 'answer'));
       return res.status(200).json({ ok: true, answer: answer?.answer ?? null, expiresAt: record.expiresAt });
     }
