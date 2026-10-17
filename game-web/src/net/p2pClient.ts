@@ -126,7 +126,26 @@ export class P2PClient {
    * Initiates connection to Host over a WebRTC DataChannel and proposes a neon color.
    */
   public connect(channel: IDataChannel, proposedColor: string): void {
+    const previous = this.channel;
+    this.stopStateTick();
+    if (previous && previous !== channel) {
+      // An obsolete transport cannot reset or send through its successor.
+      previous.onmessage = null;
+      previous.onopen = null;
+      previous.onclose = null;
+      previous.onerror = null;
+      try { previous.close?.(); } catch { /* transport may already be terminal */ }
+    }
+
     this.channel = channel;
+    this.assignedColor = null;
+    this.playerSlot = null;
+    this.sessionPlayers = [];
+    this.lastRejection = null;
+    this.slotToPlayerId.clear();
+    this.playerIdToSlot.clear();
+    this.stateSequence = 0;
+    this.shotSequence = 0;
     this.proposedColor = proposedColor;
     this.setStatus('connecting');
 
@@ -140,24 +159,27 @@ export class P2PClient {
     }
 
     channel.onmessage = (ev: { data: any }) => {
-      this.handleMessage(ev.data);
+      if (this.channel === channel) this.handleMessage(ev.data);
     };
 
     channel.onclose = () => {
+      if (this.channel !== channel) return;
+      this.channel = null;
       this.handleDisconnect();
     };
 
     channel.onerror = (err: any) => {
-      this.config.onError?.(new Error(`DataChannel error: ${err}`));
+      if (this.channel === channel) this.config.onError?.(new Error(`DataChannel error: ${err}`));
     };
 
     const sendJoinRequest = () => {
-      // Send JOIN_REQUEST with proposed fluo color
+      if (this.channel !== channel || (channel.readyState !== undefined && channel.readyState !== 'open')) return;
+      // Always send on the channel that owns this callback, not the latest channel.
       const joinReqBuf = encodeLobbyJoin(this.playerId, this.playerName, this.proposedColor);
       try {
-        this.channel!.send(joinReqBuf);
+        channel.send(joinReqBuf);
       } catch (err: any) {
-        this.config.onError?.(new Error(`Send failed: ${err?.message || err}`));
+        if (this.channel === channel) this.config.onError?.(new Error(`Send failed: ${err?.message || err}`));
       }
     };
 
@@ -438,13 +460,14 @@ export class P2PClient {
    */
   public disconnect(): void {
     this.stopStateTick();
-    if (this.channel) {
-      try {
-        this.channel.close?.();
-      } catch {
-        // ignore
-      }
-      this.channel = null;
+    const channel = this.channel;
+    this.channel = null;
+    if (channel) {
+      channel.onmessage = null;
+      channel.onopen = null;
+      channel.onclose = null;
+      channel.onerror = null;
+      try { channel.close?.(); } catch { /* transport already closed */ }
     }
     this.handleDisconnect();
   }
