@@ -208,6 +208,8 @@ export class NativeRtcDataChannel implements IDataChannel {
     private disconnectTimer: number | null = null;
     private heartbeatTimer: number | null = null;
     private lastInboundAt = performance.now();
+    private lastHeartbeatTickAt = 0;
+    private heartbeatRecoveryUntil = 0;
     private closeNotified = false;
     private readonly pageHideHandler: () => void;
 
@@ -258,11 +260,23 @@ export class NativeRtcDataChannel implements IDataChannel {
 
     private startHeartbeat(): void {
         if (this.heartbeatTimer !== null) return;
+        this.lastHeartbeatTickAt = performance.now();
+        this.heartbeatRecoveryUntil = 0;
         this.heartbeatTimer = window.setInterval(() => {
             if (this.channel.readyState !== 'open') return;
 
-            const silenceMs = performance.now() - this.lastInboundAt;
-            if (silenceMs >= HEARTBEAT_TIMEOUT_MS) {
+            const now = performance.now();
+            const tickGap = now - this.lastHeartbeatTickAt;
+            this.lastHeartbeatTickAt = now;
+            // A delayed event loop (terrain/shader preload, backgrounded tab)
+            // cannot inspect inbound messages that are still queued. Require
+            // one fresh liveness window after it resumes before expiring RTC.
+            // Regular 3s ticks still enforce the original 15s silence timeout.
+            if (tickGap > HEARTBEAT_INTERVAL_MS * 2) {
+                this.heartbeatRecoveryUntil = now + HEARTBEAT_TIMEOUT_MS;
+            }
+            const silenceMs = now - this.lastInboundAt;
+            if (silenceMs >= HEARTBEAT_TIMEOUT_MS && now >= this.heartbeatRecoveryUntil) {
                 this.terminate(new Error('Peer non raggiungibile: heartbeat WebRTC scaduto.'));
                 return;
             }
@@ -280,6 +294,8 @@ export class NativeRtcDataChannel implements IDataChannel {
             window.clearInterval(this.heartbeatTimer);
             this.heartbeatTimer = null;
         }
+        this.heartbeatRecoveryUntil = 0;
+        this.lastHeartbeatTickAt = 0;
     }
 
     private clearDisconnectTimer(): void {
