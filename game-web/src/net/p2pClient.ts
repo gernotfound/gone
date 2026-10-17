@@ -408,6 +408,10 @@ export class P2PClient {
     if (this.status !== 'connected' || !this.channel) return;
 
     if (this.playerSlot !== null) {
+      // Reliable ordered delivery synchronizes weapon selection and the
+      // authoritative shooter transform ahead of the hit event. Otherwise
+      // switching weapons between state ticks can suppress the guest shot.
+      this.sendCurrentState();
       const shotSeq = (this.shotSequence++) & 0xff;
       const clientTime = performance.now();
       const buffer = packFireHitscan(

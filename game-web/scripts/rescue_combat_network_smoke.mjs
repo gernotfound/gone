@@ -149,6 +149,40 @@ async function main() {
     const afterMissHp = await host.evaluate(() => window.goneGame.getP2PHost().playerRecords.get('host')?.hp);
     invariant(afterMissHp === hitHp, `Miss changed authoritative HP from ${hitHp} to ${afterMissHp}`);
 
+
+    console.log('[combat] Checking the host renderer after starting a real game');
+    await host.locator('#btn-play-multiplayer').click();
+    await waitFor(
+      () => host.evaluate(() =>
+        window.goneGame?.vfxManager?.isReady()
+        && !document.getElementById('game-canvas')?.classList.contains('hidden')),
+      'host canvas/VFX initialized', 90_000, 100,
+    );
+    // Losing pointer lock hides the HUD, not the still-visible 3D scene.
+    await host.evaluate(() => document.getElementById('game-ui').classList.add('hidden'));
+    const priorAccepted = await host.evaluate(() =>
+      window.goneGame.getP2PHost().__gonePvpHardeningState.accepted,
+    );
+
+    await guest.evaluate((shooter) => {
+      window.goneGame.getP2PClient().fireHitscan(
+        0, [shooter.x, shooter.y - 0.2, shooter.z], [0, 0, 1],
+      );
+    }, shooterState);
+
+    const visualResult = await waitFor(
+      () => host.evaluate((prior) => {
+        const hostSession = window.goneGame.getP2PHost();
+        const visibleTracer = window.goneGame.vfxManager.getTracerPool().getTracers()
+          .some((tracer) => tracer.active && tracer.weaponType === 'assalto');
+        return hostSession.__gonePvpHardeningState.accepted > prior && visibleTracer
+          ? { accepted: hostSession.__gonePvpHardeningState.accepted, visibleTracer }
+          : null;
+      }, priorAccepted),
+      'accepted guest shot renders a host tracer', 8000, 15,
+    );
+    invariant(visualResult.visibleTracer, 'the host has not rendered the guest bullet');
+
     if (errors.length > 0) {
       throw new Error(`Browser exceptions detected:\n${errors.join('\n')}`);
     }
