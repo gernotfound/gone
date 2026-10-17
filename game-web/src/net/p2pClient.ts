@@ -138,12 +138,8 @@ export class P2PClient {
     }
 
     this.channel = channel;
-    this.assignedColor = null;
-    this.playerSlot = null;
-    this.sessionPlayers = [];
+    this.clearAssignedSession();
     this.lastRejection = null;
-    this.slotToPlayerId.clear();
-    this.playerIdToSlot.clear();
     this.stateSequence = 0;
     this.shotSequence = 0;
     this.proposedColor = proposedColor;
@@ -511,14 +507,18 @@ export class P2PClient {
     this.config.onColorRejected?.(this.lastRejection);
   }
 
-  private handleDisconnect(): void {
-    this.stopStateTick();
-    this.setStatus('disconnected');
+  private clearAssignedSession(): void {
     this.assignedColor = null;
     this.playerSlot = null;
     this.sessionPlayers = [];
     this.slotToPlayerId.clear();
     this.playerIdToSlot.clear();
+  }
+
+  private handleDisconnect(): void {
+    this.stopStateTick();
+    this.clearAssignedSession();
+    this.setStatus('disconnected');
   }
 
   private setStatus(status: ClientConnectionStatus): void {
