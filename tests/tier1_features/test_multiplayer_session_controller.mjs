@@ -49,6 +49,18 @@ export async function run(suite) {
     assert(engine.includes('multiplayerSessionController.broadcastGameStart()'), 'game start broadcast must not iterate private host peers');
   });
 
+  suite.test('Direct host answers cannot outlive the offer, role or pending rotation', () => {
+    const applyAnswer = controller.slice(
+      controller.indexOf('async applyHostAnswer(answerCode: string)'),
+      controller.indexOf('async startDirectGuest('),
+    );
+    assert(applyAnswer.includes('this.applyingHostAnswer = true'), 'host SDP application must be single-flight');
+    assert(applyAnswer.includes('this.applyingHostAnswer = false'), 'host SDP application must release the single-flight guard');
+    assert(applyAnswer.includes('activeP2PHost !== answeredHost'), 'old negotiations may never attach to a replacement host');
+    assert(applyAnswer.includes('this.inviteVersion !== answeredVersion'), 'old answers or rotation timers cannot overwrite a new invite');
+    assert(applyAnswer.includes('this.pendingHostOffer !== accepted'), 'peer admission must remain bound to the exact negotiated offer');
+  });
+
   suite.test('Polling session patch layer is removed', () => {
     assert(!fs.existsSync(legacyLifecycle), 'sessionLifecycleHardening patch layer must stay deleted');
     assert(!runtime.includes('sessionLifecycleHardening'), 'runtime composition must not re-register the deleted patch layer');
