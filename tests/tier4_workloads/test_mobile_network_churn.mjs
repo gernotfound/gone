@@ -116,6 +116,49 @@ export async function run(suite) {
 
       const heartbeat = [...intervalEntries.values()].find((entry) => entry.ms === 3000);
       assert.ok(heartbeat, 'open channels must install the 3s heartbeat cadence');
+      
+      // Simulate a blocked game-loading event loop. The peer must not be
+      // declared dead before queued WebRTC messages can be processed.
+      const originalPerformance = Object.getOwnPropertyDescriptor(globalThis, 'performance');
+      let fakeTime = 0;
+      Object.defineProperty(globalThis, 'performance', {
+        configurable: true,
+        value: { now: () => fakeTime },
+      });
+      try {
+        const healthyRaw = new FakeChannel();
+        const healthy = new NativeRtcDataChannel(healthyRaw, new FakePeerConnection());
+        const healthyTick = [...intervalEntries.values()].at(-1).fn;
+        fakeTime = 3000;
+        healthyTick();
+        assert.equal(healthyRaw.readyState, 'open');
+        fakeTime = 70000;
+        healthyTick();
+        assert.equal(healthyRaw.readyState, 'open', 'suspended local timers cannot prove a remote timeout');
+        assert.ok(healthyRaw.sent.includes('__gone_ping__'), 'recovery must probe the existing peer');
+
+        fakeTime = 70010;
+        healthyRaw.emit('message', { data: '__gone_pong__' });
+        fakeTime = 73000;
+        healthyTick();
+        assert.equal(healthyRaw.readyState, 'open', 'live peer must recover without SDP renegotiation');
+        healthy.close();
+
+        fakeTime = 0;
+        const staleRaw = new FakeChannel();
+        const stale = new NativeRtcDataChannel(staleRaw, new FakePeerConnection());
+        const staleTick = [...intervalEntries.values()].at(-1).fn;
+        let staleErrors = 0;
+        stale.onerror = () => { staleErrors += 1; };
+        for (let elapsed = 3000; elapsed <= 18000; elapsed += 3000) {
+          fakeTime = elapsed;
+          staleTick();
+        }
+        assert.equal(staleRaw.readyState, 'closed', 'nonresponsive peer with regular timer cadence still times out');
+        assert.equal(staleErrors, 1, 'real expiry must report exactly one terminal error');
+      } finally {
+        if (originalPerformance) Object.defineProperty(globalThis, 'performance', originalPerformance);
+      }
     } finally {
       globalThis.window = originalWindow;
     }
