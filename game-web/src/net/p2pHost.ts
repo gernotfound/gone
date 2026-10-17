@@ -193,6 +193,9 @@ export class P2PHost {
   public readonly colorRegistry: IColorRegistry;
 
   private peers = new Map<string, PeerConnectionRecord>();
+  // The transport binding is established before JOIN and is independent of
+  // player-supplied packet identities. A channel can never represent two peers.
+  private readonly channelPeerIds = new Map<IDataChannel, string>();
   public options: P2PHostOptions;
   public lagCompensator: WasmLagCompensator | IWasmLagCompensator | null = null;
 
@@ -336,16 +339,34 @@ export class P2PHost {
   }
 
   public registerPeer(peerId: string, channel: IDataChannel): void {
+    if (this.destroyed || this.channelPeerIds.has(channel) || peerId === this.hostPlayer.id) {
+      if (this.destroyed || peerId === this.hostPlayer.id) {
+        try { channel.close?.(); } catch { /* transport already closed */ }
+      }
+      return;
+    }
+    // A duplicate registration must not replace an established player or
+    // leave an older channel able to disconnect its successor.
+    if (this.peers.has(peerId) || [...this.channelPeerIds.values()].includes(peerId)) {
+      try { channel.close?.(); } catch { /* transport already closed */ }
+      return;
+    }
+    this.channelPeerIds.set(channel, peerId);
     if ('binaryType' in channel) {
       try { channel.binaryType = 'arraybuffer'; } catch { /* mock fallback */ }
     }
 
     channel.onmessage = (ev: { data: any }) => this.handleChannelMessage(peerId, channel, ev.data);
-    channel.onclose = () => this.handlePeerDisconnect(peerId);
+    channel.onclose = () => {
+      if (this.channelPeerIds.get(channel) !== peerId) return;
+      this.channelPeerIds.delete(channel);
+      if (this.peers.get(peerId)?.channel === channel) this.handlePeerDisconnect(peerId);
+    };
     channel.onerror = (err: any) => this.options.onError?.(new Error(`Peer ${peerId} error: ${err}`));
   }
 
   public handleChannelMessage(peerId: string, channel: IDataChannel, rawData: unknown): void {
+    if (this.destroyed || this.channelPeerIds.get(channel) !== peerId) return;
     if (isBinaryMessage(rawData)) this.handleBinaryChannelMessage(peerId, channel, toArrayBuffer(rawData));
   }
 
@@ -357,8 +378,12 @@ export class P2PHost {
       const msg = decodeLobbyMessage(buffer);
       if (!msg) return;
       switch (msg.type) {
-        case 'JOIN_REQUEST': this.acceptJoinWhenReady(channel, msg as any); break;
-        case 'COLOR_REQUEST': this.processColorChangeRequest(channel, msg as any); break;
+        case 'JOIN_REQUEST':
+          if (msg.playerId === peerId) this.acceptJoinWhenReady(channel, msg as any);
+          break;
+        case 'COLOR_REQUEST':
+          if (msg.playerId === peerId) this.processColorChangeRequest(channel, msg as any);
+          break;
       }
       return;
     }
@@ -995,6 +1020,7 @@ export class P2PHost {
     msg: { type: 'JOIN_REQUEST'; playerId: string; playerName: string; proposedColor: string }
   ): void {
     const { playerId, playerName, proposedColor } = msg;
+    if (this.destroyed || this.channelPeerIds.get(channel) !== playerId || this.peers.has(playerId)) return;
     const validation = this.colorRegistry.requestColor(playerId, proposedColor);
 
     if (!validation.success) {
@@ -1007,7 +1033,15 @@ export class P2PHost {
       return;
     }
 
-    const assignedSlot = this.allocateSlot(playerId);
+    let assignedSlot: number;
+    try {
+      assignedSlot = this.allocateSlot(playerId);
+    } catch {
+      // Claiming a color must never leak capacity when the lobby is full.
+      this.colorRegistry.releasePlayer(playerId);
+      try { channel.close?.(); } catch { /* transport already closed */ }
+      return;
+    }
     const assignedColor = validation.color!;
     const newPlayerInfo: SessionPlayerInfo = {
       id: playerId,
@@ -1040,7 +1074,17 @@ export class P2PHost {
     this.resetMovementAuthority(playerId, now);
 
     const sessionPlayers = this.getAllSessionPlayers();
-    channel.send(encodeLobbyJoinAccepted(playerId, assignedColor, assignedSlot, sessionPlayers));
+    try {
+      channel.send(encodeLobbyJoinAccepted(playerId, assignedColor, assignedSlot, sessionPlayers));
+    } catch (error) {
+      this.peers.delete(playerId);
+      this.playerRecords.delete(playerId);
+      this.releaseSlot(playerId);
+      this.colorRegistry.releasePlayer(playerId);
+      this.options.onError?.(error instanceof Error ? error : new Error(String(error)));
+      try { channel.close?.(); } catch { /* transport already closed */ }
+      return;
+    }
     this.broadcastBinary(encodeLobbyPlayerJoined(newPlayerInfo), playerId);
     this.options.onPlayerJoined?.(newPlayerInfo);
   }
@@ -1051,7 +1095,7 @@ export class P2PHost {
   ): void {
     const { playerId, requestedColor } = msg;
     const peer = this.peers.get(playerId);
-    if (!peer) return;
+    if (!peer || peer.channel !== channel) return;
 
     const validation = this.colorRegistry.requestColor(playerId, requestedColor);
     if (!validation.success) {
@@ -1075,6 +1119,7 @@ export class P2PHost {
     if (!peer) return;
 
     this.peers.delete(peerId);
+    if (this.channelPeerIds.get(peer.channel) === peerId) this.channelPeerIds.delete(peer.channel);
     this.releaseSlot(peerId);
     this.playerRecords.delete(peerId);
     this.__gonePvpHardeningState.lastClientShotTime.delete(peerId);
@@ -1115,6 +1160,7 @@ export class P2PHost {
     this.pendingJoinChannels.clear();
     this.stopSnapshotTick();
     this.peers.clear();
+    this.channelPeerIds.clear();
     this.playerRecords.clear();
     this.slotManager.reset();
     this.slotToPlayerId.clear();
