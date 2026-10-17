@@ -1,5 +1,5 @@
 import { P2PHost } from '../../game-web/src/net/p2pHost.ts';
-import { PACKET_OPCODES, decodeClientState, decodeFireHitscan } from '../../game-web/src/net/binaryProtocol.ts';
+import { PACKET_OPCODES, decodeClientState, decodeFireHitscan, encodeLobbyJoin, encodeLobbyColorRequest } from '../../game-web/src/net/binaryProtocol.ts';
 import { P2PClient } from '../../game-web/src/net/p2pClient.ts';
 import { assert, assertEqual } from '../helpers/assertions.mjs';
 import { MAZE_PLAYER_RADIUS, MAZE_WALLS } from '../../game-web/src/world/mazeLayout.ts';
@@ -85,6 +85,7 @@ export async function run(suite) {
 
     const host = new P2PHost({ hostPlayer: { id: 'host', name: 'Host', color: '#00F0FF' } });
     const guest = createGuestRecord({ activeWeapon: 0 });
+    host.registerPeer('guest', channel);
     host.playerRecords.set('guest', guest);
     host.playerIdToSlot.set('guest', 1);
     let acceptedVisualShots = 0;
@@ -305,4 +306,133 @@ export async function run(suite) {
     host.destroy();
   });
 
+
+  suite.test('Transport identity prevents forged joins, color changes and duplicate peer takeover', () => {
+    const host = new P2PHost({ hostPlayer: { id: 'host', name: 'Host', color: '#00F0FF' } });
+    const makeChannel = () => ({
+      readyState: 'open',
+      packets: [],
+      send(packet) { this.packets.push(packet); },
+      close() { this.readyState = 'closed'; this.onclose?.(); },
+    });
+    const alice = makeChannel();
+    const bob = makeChannel();
+    host.registerPeer('alice', alice);
+    host.registerPeer('bob', bob);
+
+    host.handleChannelMessage('alice', alice, encodeLobbyJoin('host', 'ImpersonatedHost', '#FF007F'));
+    host.handleChannelMessage('alice', alice, encodeLobbyJoin('bob', 'ImpersonatedBob', '#39FF14'));
+    assertEqual(host.getClientCount(), 0, 'claimed player IDs must match the registered channel');
+    host.handleChannelMessage('alice', alice, encodeLobbyJoin('alice', 'Alice', '#FF007F'));
+    host.handleChannelMessage('bob', bob, encodeLobbyJoin('bob', 'Bob', '#39FF14'));
+    assertEqual(host.getClientCount(), 2);
+
+    const originalColor = host.playerRecords.get('bob').color;
+    host.handleChannelMessage('alice', alice, encodeLobbyColorRequest('bob', '#FFE600'));
+    host.handleChannelMessage('bob', alice, encodeLobbyColorRequest('bob', '#FFE600'));
+    assertEqual(host.playerRecords.get('bob').color, originalColor, 'another channel may not change Bob color');
+
+    host.handleChannelMessage('bob', bob, encodeLobbyColorRequest('bob', '#FFE600'));
+    assertEqual(host.playerRecords.get('bob').color, '#FFE600', 'own color update must still work');
+
+    const duplicate = makeChannel();
+    host.registerPeer('bob', duplicate);
+    assertEqual(duplicate.readyState, 'closed', 'duplicate identity must not replace its existing transport');
+    host.handleChannelMessage('bob', duplicate, encodeLobbyJoin('bob', 'Hijacked', '#FFE600'));
+    assertEqual(host.getClientCount(), 2);
+    assertEqual(host.playerRecords.get('bob').name, 'Bob');
+
+    host.handlePeerDisconnect('bob');
+    const replacement = makeChannel();
+    host.registerPeer('bob', replacement);
+    host.handleChannelMessage('bob', replacement, encodeLobbyJoin('bob', 'BobAgain', '#39FF14'));
+    bob.onclose?.();
+    assertEqual(host.getClientCount(), 2, 'stale channel close must not remove a rejoined peer');
+    assertEqual(host.playerRecords.get('bob').name, 'BobAgain');
+    host.destroy();
+  });
+
+  suite.test('Joining a peer is transactional when its response cannot be sent', () => {
+    let reported = 0;
+    const host = new P2PHost({
+      hostPlayer: { id: 'host', name: 'Host', color: '#00F0FF' },
+      onError: () => { reported += 1; },
+    });
+    const channel = {
+      readyState: 'open',
+      send() { throw new Error('simulated transport send failure'); },
+      close() { this.readyState = 'closed'; this.onclose?.(); },
+    };
+    host.registerPeer('guest', channel);
+    host.handleChannelMessage('guest', channel, encodeLobbyJoin('guest', 'Guest', '#FF007F'));
+    assertEqual(reported, 1);
+    assertEqual(host.getClientCount(), 0);
+    assertEqual(host.playerRecords.has('guest'), false);
+    assertEqual(host.playerIdToSlot.has('guest'), false);
+    assertEqual(host.colorRegistry.isColorAvailable('#FF007F'), true);
+    host.destroy();
+  });
+
+  suite.test('Pending WASM admission cannot resurrect a disconnected peer', async () => {
+    let finishPreload;
+    const ready = new Promise((resolve) => { finishPreload = resolve; });
+    const host = new P2PHost({
+      hostPlayer: { id: 'host', name: 'Host', color: '#00F0FF' },
+      beforeJoin: () => ready,
+    });
+    const channel = {
+      readyState: 'open',
+      send() {},
+      close() { this.readyState = 'closed'; this.onclose?.(); },
+    };
+    host.registerPeer('guest', channel);
+    host.handleChannelMessage('guest', channel, encodeLobbyJoin('guest', 'Guest', '#FF007F'));
+    await Promise.resolve();
+    channel.close();
+    finishPreload();
+    await ready;
+    await new Promise((resolve) => setImmediate(resolve));
+    assertEqual(host.getClientCount(), 0);
+    assertEqual(host.playerRecords.has('guest'), false);
+    assertEqual(host.colorRegistry.isColorAvailable('#FF007F'), true);
+    host.destroy();
+  });
+
+  suite.test('Full lobby capacity releases the provisional color claim', () => {
+    const host = new P2PHost({ hostPlayer: { id: 'host', name: 'Host', color: '#00F0FF' } });
+    for (let slot = 1; slot < host.slotManager.maxSlots; slot += 1) {
+      host.allocateSlot('reserved-' + slot);
+    }
+    const channel = {
+      readyState: 'open',
+      send() { throw new Error('capacity rejection must not send an accepted join'); },
+      close() { this.readyState = 'closed'; this.onclose?.(); },
+    };
+    host.registerPeer('guest', channel);
+    host.handleChannelMessage('guest', channel, encodeLobbyJoin('guest', 'Guest', '#FF007F'));
+    assertEqual(channel.readyState, 'closed');
+    assertEqual(host.getClientCount(), 0);
+    assertEqual(host.playerIdToSlot.has('guest'), false);
+    assertEqual(host.colorRegistry.isColorAvailable('#FF007F'), true, 'capacity errors cannot reserve colors');
+    host.destroy();
+  });
+
+  suite.test('Synchronous channel close during admission cannot announce a departed peer', () => {
+    let joined = 0;
+    const host = new P2PHost({
+      hostPlayer: { id: 'host', name: 'Host', color: '#00F0FF' },
+      onPlayerJoined: () => { joined += 1; },
+    });
+    const channel = {
+      readyState: 'open',
+      send() { this.close(); },
+      close() { this.readyState = 'closed'; this.onclose?.(); },
+    };
+    host.registerPeer('guest', channel);
+    host.handleChannelMessage('guest', channel, encodeLobbyJoin('guest', 'Guest', '#FF007F'));
+    assertEqual(joined, 0, 'admission must not announce a closed channel');
+    assertEqual(host.getClientCount(), 0);
+    assertEqual(host.colorRegistry.isColorAvailable('#FF007F'), true);
+    host.destroy();
+  });
 }
