@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import roomHandler from '../../game-web/api/room-signal.js';
 
+export async function run(suite) {
+  suite.test('Short-code API enforces private single-use SDP exchange, expiry and owner permissions', async () => {
 const previousToken = process.env.BLOB_READ_WRITE_TOKEN;
 process.env.BLOB_READ_WRITE_TOKEN = 'vercel_blob_rw_TESTSTORE_test';
 const originalFetch = globalThis.fetch;
@@ -16,6 +18,11 @@ globalThis.fetch = async (input, init) => {
   operations += 1;
   const url = new URL(input);
   if (url.hostname === 'vercel.com') {
+    if (init.method === 'GET') {
+      return response(200, { blobs: [...data].map(([pathname]) => ({
+        pathname, uploadedAt: new Date().toISOString(),
+      })) });
+    }
     if (init.method === 'PUT') {
       const path = url.searchParams.get('pathname');
       if (data.has(path)) return response(409, { error: { code: 'blob_already_exists' } });
@@ -109,4 +116,6 @@ try {
   Date.now = originalNow;
   if (previousToken === undefined) delete process.env.BLOB_READ_WRITE_TOKEN;
   else process.env.BLOB_READ_WRITE_TOKEN = previousToken;
+}
+  });
 }
