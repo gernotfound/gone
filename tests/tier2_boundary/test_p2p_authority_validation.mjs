@@ -397,4 +397,42 @@ export async function run(suite) {
     assertEqual(host.colorRegistry.isColorAvailable('#FF007F'), true);
     host.destroy();
   });
+
+  suite.test('Full lobby capacity releases the provisional color claim', () => {
+    const host = new P2PHost({ hostPlayer: { id: 'host', name: 'Host', color: '#00F0FF' } });
+    for (let slot = 1; slot < host.slotManager.maxSlots; slot += 1) {
+      host.allocateSlot('reserved-' + slot);
+    }
+    const channel = {
+      readyState: 'open',
+      send() { throw new Error('capacity rejection must not send an accepted join'); },
+      close() { this.readyState = 'closed'; this.onclose?.(); },
+    };
+    host.registerPeer('guest', channel);
+    host.handleChannelMessage('guest', channel, encodeLobbyJoin('guest', 'Guest', '#FF007F'));
+    assertEqual(channel.readyState, 'closed');
+    assertEqual(host.getClientCount(), 0);
+    assertEqual(host.playerIdToSlot.has('guest'), false);
+    assertEqual(host.colorRegistry.isColorAvailable('#FF007F'), true, 'capacity errors cannot reserve colors');
+    host.destroy();
+  });
+
+  suite.test('Synchronous channel close during admission cannot announce a departed peer', () => {
+    let joined = 0;
+    const host = new P2PHost({
+      hostPlayer: { id: 'host', name: 'Host', color: '#00F0FF' },
+      onPlayerJoined: () => { joined += 1; },
+    });
+    const channel = {
+      readyState: 'open',
+      send() { this.close(); },
+      close() { this.readyState = 'closed'; this.onclose?.(); },
+    };
+    host.registerPeer('guest', channel);
+    host.handleChannelMessage('guest', channel, encodeLobbyJoin('guest', 'Guest', '#FF007F'));
+    assertEqual(joined, 0, 'admission must not announce a closed channel');
+    assertEqual(host.getClientCount(), 0);
+    assertEqual(host.colorRegistry.isColorAvailable('#FF007F'), true);
+    host.destroy();
+  });
 }
