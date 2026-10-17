@@ -1,4 +1,5 @@
 import { chromium } from 'playwright';
+import { useUnavailableRoomRendezvous } from './helpers/manual_room_fallback.mjs';
 
 const BASE = process.env.GONE_PREVIEW_URL || 'http://127.0.0.1:4173';
 const failures = [];
@@ -299,6 +300,7 @@ try {
     deviceScaleFactor: 2,
     userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Mobile/15E148 Safari/604.1',
   });
+  await useUnavailableRoomRendezvous(context);
   const page = await context.newPage();
   const cdp = await context.newCDPSession(page);
   page.on('pageerror', (error) => failures.push(`pageerror: ${error.message}`));
