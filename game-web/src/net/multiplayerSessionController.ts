@@ -135,6 +135,7 @@ class MultiplayerSessionController {
   private guestDirectSession: DirectGuestAnswer | null = null;
   private pendingRoom: { code: string; hostSecret: string } | null = null;
   private roomPollTimer: number | null = null;
+  private applyingHostAnswer = false;
   private inviteVersion = 0;
   private readonly directHostSessions = new Set<DirectHostOffer>();
   private notice: MultiplayerSessionSnapshot['notice'] = null;
@@ -330,7 +331,7 @@ class MultiplayerSessionController {
       try {
         const answer = await pollRoomAnswer(this.pendingRoom.code, this.pendingRoom.hostSecret);
         if (this.inviteVersion !== version || !this.pendingRoom) return;
-        if (answer) {
+        if (answer && !this.applyingHostAnswer) {
           receivedAnswer = true;
           await this.applyHostAnswer(answer);
           return;
@@ -355,29 +356,63 @@ class MultiplayerSessionController {
 
   async applyHostAnswer(answerCode: string): Promise<void> {
     const accepted = this.pendingHostOffer;
-    if (!accepted || !activeP2PHost || !answerCode.trim()) {
+    const answeredHost = activeP2PHost;
+    const answeredVersion = this.inviteVersion;
+    if (!accepted || !answeredHost || !answerCode.trim()) {
       throw new Error('Manca una risposta valida dell’amico.');
     }
+    if (this.applyingHostAnswer) {
+      throw new Error('Una risposta è già in elaborazione.');
+    }
 
-    this.setNotice('COLLEGAMENTO DIRETTO...', 'info');
-    await accepted.applyAnswer(answerCode.trim(), (peerId) => {
-      this.registerHostPeer(peerId, accepted.channel);
-    });
-    this.directHostSessions.delete(accepted);
-    this.pendingHostOffer = null;
-    const room = this.pendingRoom;
-    this.pendingRoom = null;
-    if (this.roomPollTimer !== null) window.clearTimeout(this.roomPollTimer);
-    this.roomPollTimer = null;
-    if (room) void closeRoom(room.code, room.hostSecret).catch(() => {});
-    this.setNotice('RISPOSTA ACCETTATA. ATTESA DEL GIOCATORE...', 'success');
-
-    window.setTimeout(() => {
-      if (activeP2PHost) void this.prepareHostInvite().catch((error) => {
-        console.error('[G.O.N.E.] Invito diretto fallito', error);
-        this.setNotice(errorMessage(error).toUpperCase(), 'error');
+    this.applyingHostAnswer = true;
+    try {
+      this.setNotice('COLLEGAMENTO DIRETTO...', 'info');
+      await accepted.applyAnswer(answerCode.trim(), (peerId) => {
+        // Identity must be registered before RTC opens, but never on a
+        // replacement host if an asynchronous negotiation was superseded.
+        if (
+          activeP2PHost !== answeredHost
+          || this.inviteVersion !== answeredVersion
+          || this.pendingHostOffer !== accepted
+        ) throw new Error('La stanza host è cambiata durante la negoziazione.');
+        this.registerHostPeer(peerId, accepted.channel);
       });
-    }, 350);
+
+      if (
+        activeP2PHost !== answeredHost
+        || this.inviteVersion !== answeredVersion
+        || this.pendingHostOffer !== accepted
+      ) {
+        accepted.close();
+        throw new Error('La stanza host è cambiata durante la negoziazione.');
+      }
+
+      this.directHostSessions.delete(accepted);
+      this.pendingHostOffer = null;
+      const room = this.pendingRoom;
+      this.pendingRoom = null;
+      if (this.roomPollTimer !== null) window.clearTimeout(this.roomPollTimer);
+      this.roomPollTimer = null;
+      if (room) void closeRoom(room.code, room.hostSecret).catch(() => {});
+      this.setNotice('RISPOSTA ACCETTATA. ATTESA DEL GIOCATORE...', 'success');
+
+      // A queued rotation cannot overwrite a new host session or newer invite.
+      window.setTimeout(() => {
+        if (
+          activeP2PHost !== answeredHost
+          || this.inviteVersion !== answeredVersion
+          || this.pendingHostOffer !== null
+        ) return;
+        void this.prepareHostInvite().catch((error) => {
+          if (activeP2PHost !== answeredHost) return;
+          console.error('[G.O.N.E.] Invito diretto fallito', error);
+          this.setNotice(errorMessage(error).toUpperCase(), 'error');
+        });
+      }, 350);
+    } finally {
+      this.applyingHostAnswer = false;
+    }
   }
 
   async startDirectGuest(offerCode: string, options: GuestStartOptions): Promise<string> {
