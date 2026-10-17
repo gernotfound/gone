@@ -165,6 +165,7 @@ jobs:
           run_smoke runtime_stability_smoke.mjs rescue-runtime-stability.log
           run_smoke rescue_browser_smoke.mjs rescue-browser-smoke.log
           run_smoke rescue_webrtc_scale_smoke.mjs rescue-webrtc-scale.log
+          run_smoke short_room_code_smoke.mjs rescue-short-room-code.log
           run_smoke rescue_combat_network_smoke.mjs rescue-combat-network.log
           run_smoke rescue_session_resilience_smoke.mjs rescue-session-resilience.log
           run_smoke rescue_selfhost_relay_smoke.mjs rescue-selfhost-relay.log

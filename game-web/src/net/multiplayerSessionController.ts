@@ -10,6 +10,10 @@ import {
   type DirectGuestAnswer,
   type DirectHostOffer,
 } from './directWebRtc.ts';
+import {
+  closeRoom, fetchRoomOffer, pollRoomAnswer, publishRoomAnswer,
+  publishRoomOffer, buildRoomInviteUrl,
+} from './shortRoomSignaling.ts';
 import { P2PClient, type ClientConnectionStatus } from './p2pClient.ts';
 import { P2PHost, type P2PHostOptions } from './p2pHost.ts';
 import { SimpleLagCompensator } from './simpleLagCompensator.ts';
@@ -25,7 +29,7 @@ export type LobbyPlayer = {
 
 export type SessionRole = 'none' | 'host' | 'client';
 export type SessionNoticeKind = 'info' | 'success' | 'error';
-export type SessionInviteKind = 'none' | 'host-link' | 'guest-answer';
+export type SessionInviteKind = 'none' | 'room-code' | 'host-link' | 'guest-answer';
 
 export type MultiplayerSessionSnapshot = {
   generation: number;
@@ -129,6 +133,9 @@ class MultiplayerSessionController {
   private localSessionId: string | null = null;
   private pendingHostOffer: DirectHostOffer | null = null;
   private guestDirectSession: DirectGuestAnswer | null = null;
+  private pendingRoom: { code: string; hostSecret: string } | null = null;
+  private roomPollTimer: number | null = null;
+  private inviteVersion = 0;
   private readonly directHostSessions = new Set<DirectHostOffer>();
   private notice: MultiplayerSessionSnapshot['notice'] = null;
   private inviteKind: SessionInviteKind = 'none';
@@ -272,22 +279,70 @@ class MultiplayerSessionController {
   async prepareHostInvite(): Promise<string> {
     const host = activeP2PHost;
     if (!host) throw new Error('La stanza host non è attiva.');
+    const version = ++this.inviteVersion;
     this.closePendingHostOffer();
-    this.inviteKind = 'host-link';
+    this.inviteKind = 'room-code';
     this.inviteValue = '';
-    this.setNotice('GENERAZIONE INVITO DIRETTO...', 'info');
+    this.setNotice('CREAZIONE CODICE STANZA...', 'info');
 
     const offer = await createDirectHostOffer();
-    if (activeP2PHost !== host) {
+    if (activeP2PHost !== host || this.inviteVersion !== version) {
       offer.close();
       throw new Error('La stanza host è cambiata durante la creazione dell’invito.');
     }
 
     this.pendingHostOffer = offer;
     this.directHostSessions.add(offer);
-    this.inviteValue = buildDirectInviteUrl(offer.offerCode);
-    this.setNotice('INVITO PRONTO. INVIA IL LINK.', 'success');
-    return this.inviteValue;
+    const hostSecret = crypto.randomUUID() + crypto.randomUUID();
+    try {
+      const room = await publishRoomOffer(offer.offerCode, hostSecret);
+      if (activeP2PHost !== host || this.inviteVersion !== version) {
+        void closeRoom(room.code, hostSecret).catch(() => {});
+        throw new Error('La stanza host è cambiata.');
+      }
+      this.pendingRoom = { code: room.code, hostSecret };
+      this.inviteKind = 'room-code';
+      this.inviteValue = room.code;
+      this.setNotice('COMUNICA IL CODICE DI 5 CARATTERI.', 'success');
+      this.scheduleRoomPoll(version, room.expiresAt);
+      return room.code;
+    } catch (error) {
+      if (activeP2PHost !== host || this.inviteVersion !== version) throw error;
+      // A local self-host or a temporarily unavailable service must remain
+      // usable through the existing manual exchange, never a fake short code.
+      console.warn('[G.O.N.E.] Accesso con codice non disponibile:', error);
+      this.inviteKind = 'host-link';
+      this.inviteValue = buildDirectInviteUrl(offer.offerCode);
+      this.setNotice('CODICE NON DISPONIBILE: USA INVITO MANUALE.', 'error');
+      return this.inviteValue;
+    }
+  }
+
+  private scheduleRoomPoll(version: number, expiresAt: number): void {
+    if (this.roomPollTimer !== null) window.clearTimeout(this.roomPollTimer);
+    const tick = async () => {
+      if (this.inviteVersion !== version || !this.pendingRoom || !activeP2PHost) return;
+      if (Date.now() >= expiresAt) {
+        void this.prepareHostInvite().catch((error) => this.setNotice(errorMessage(error).toUpperCase(), 'error'));
+        return;
+      }
+      try {
+        const answer = await pollRoomAnswer(this.pendingRoom.code, this.pendingRoom.hostSecret);
+        if (this.inviteVersion !== version || !this.pendingRoom) return;
+        if (answer) {
+          await this.applyHostAnswer(answer);
+          return;
+        }
+      } catch (error) {
+        if (this.inviteVersion !== version || !this.pendingRoom) return;
+        console.warn('[G.O.N.E.] Scambio codice stanza:', error);
+        this.setNotice('INVITO NON RAGGIUNGIBILE. NUOVO TENTATIVO...', 'error');
+      }
+      if (this.inviteVersion === version && this.pendingRoom) {
+        this.roomPollTimer = window.setTimeout(() => { void tick(); }, 2500);
+      }
+    };
+    this.roomPollTimer = window.setTimeout(() => { void tick(); }, 1500);
   }
 
   async applyHostAnswer(answerCode: string): Promise<void> {
@@ -302,6 +357,11 @@ class MultiplayerSessionController {
     });
     this.directHostSessions.delete(accepted);
     this.pendingHostOffer = null;
+    const room = this.pendingRoom;
+    this.pendingRoom = null;
+    if (this.roomPollTimer !== null) window.clearTimeout(this.roomPollTimer);
+    this.roomPollTimer = null;
+    if (room) void closeRoom(room.code, room.hostSecret).catch(() => {});
     this.setNotice('RISPOSTA ACCETTATA. ATTESA DEL GIOCATORE...', 'success');
 
     window.setTimeout(() => {
@@ -336,6 +396,33 @@ class MultiplayerSessionController {
     }
   }
 
+  async startRoomGuest(code: string, options: GuestStartOptions): Promise<void> {
+    // Validate the server-side invitation before replacing the current session.
+    const offerCode = await fetchRoomOffer(code);
+    const client = this.createGuestClient(options);
+    this.inviteKind = 'none';
+    this.inviteValue = '';
+    this.setNotice('COLLEGAMENTO CON CODICE...', 'info');
+    try {
+      const session = await createDirectGuestAnswer(offerCode, client.playerId);
+      if (activeP2PClient !== client) {
+        session.close();
+        throw new Error('La sessione guest è cambiata durante la negoziazione.');
+      }
+      this.guestDirectSession?.close();
+      this.guestDirectSession = session;
+      client.connect(session.channel, localPlayerColor);
+      await publishRoomAnswer(code, session.answerCode);
+      if (activeP2PClient === client) this.setNotice('ATTESA CONNESSIONE DIRETTA...', 'info');
+    } catch (error) {
+      if (activeP2PClient === client) {
+        this.reset();
+        this.setNotice(errorMessage(error).toUpperCase(), 'error');
+      }
+      throw error;
+    }
+  }
+
   startGuestOnChannel(channel: IDataChannel, options: GuestStartOptions): P2PClient {
     const client = this.createGuestClient(options);
     this.inviteKind = 'none';
@@ -360,6 +447,7 @@ class MultiplayerSessionController {
   }
 
   reset(): void {
+    ++this.inviteVersion;
     this.closePendingHostOffer();
     for (const session of this.directHostSessions) {
       try { session.close(); } catch { /* no-op */ }
@@ -509,6 +597,11 @@ class MultiplayerSessionController {
   }
 
   private closePendingHostOffer(): void {
+    if (this.roomPollTimer !== null) window.clearTimeout(this.roomPollTimer);
+    this.roomPollTimer = null;
+    const room = this.pendingRoom;
+    this.pendingRoom = null;
+    if (room) void closeRoom(room.code, room.hostSecret).catch(() => {});
     if (!this.pendingHostOffer) return;
     try { this.pendingHostOffer.close(); } catch { /* no-op */ }
     this.directHostSessions.delete(this.pendingHostOffer);

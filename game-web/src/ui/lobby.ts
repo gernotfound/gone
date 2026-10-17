@@ -5,6 +5,7 @@ import {
   type LobbyPlayer,
   type MultiplayerSessionSnapshot,
 } from '../net/multiplayerSessionController.ts';
+import { isRoomCode, buildRoomInviteUrl } from '../net/shortRoomSignaling.ts';
 import { DOM } from './dom.ts';
 
 export let localRobotPreview: THREE.Group | null = null;
@@ -26,6 +27,7 @@ function playerName(): string {
 
 function removeDirectControls(): void {
   document.getElementById('direct-host-controls')?.remove();
+  document.getElementById('room-host-controls')?.remove();
   document.getElementById('direct-guest-help')?.remove();
 }
 
@@ -66,10 +68,16 @@ async function copyInviteValue(feedbackButton: HTMLButtonElement = DOM.btnCopyLi
 async function shareCurrentInvite(): Promise<void> {
   const snapshot = multiplayerSessionController.snapshot();
   if (!nativeShareSupported() || !snapshot.inviteValue) return;
-  if (snapshot.inviteKind !== 'host-link' && snapshot.inviteKind !== 'guest-answer') return;
+  if (snapshot.inviteKind !== 'host-link' && snapshot.inviteKind !== 'guest-answer' && snapshot.inviteKind !== 'room-code') return;
 
   try {
-    if (snapshot.inviteKind === 'host-link') {
+    if (snapshot.inviteKind === 'room-code') {
+      await navigator.share({
+        title: 'G.O.N.E. PvP',
+        text: `Entra nella mia partita con il codice ${snapshot.inviteValue}`,
+        url: buildRoomInviteUrl(snapshot.inviteValue),
+      });
+    } else if (snapshot.inviteKind === 'host-link') {
       await navigator.share({
         title: 'G.O.N.E. PvP',
         text: 'Unisciti alla mia partita G.O.N.E.',
@@ -103,12 +111,12 @@ function syncNativeShareButton(snapshot: MultiplayerSessionSnapshot): void {
   const button = ensureNativeShareButton();
   const shareable = nativeShareSupported()
     && Boolean(snapshot.inviteValue)
-    && (snapshot.inviteKind === 'host-link' || snapshot.inviteKind === 'guest-answer');
+    && (snapshot.inviteKind === 'room-code' || snapshot.inviteKind === 'host-link' || snapshot.inviteKind === 'guest-answer');
   button.classList.toggle('hidden', !shareable);
   if (!shareable) return;
 
   const hostInvite = snapshot.inviteKind === 'host-link';
-  button.textContent = hostInvite ? 'CONDIVIDI INVITO' : 'INVIA RISPOSTA';
+  button.textContent = snapshot.inviteKind === 'room-code' ? 'CONDIVIDI CODICE' : hostInvite ? 'CONDIVIDI INVITO' : 'INVIA RISPOSTA';
   button.setAttribute('aria-label', hostInvite
     ? 'Condividi invito multiplayer con le app del dispositivo'
     : 'Invia risposta di connessione all’host con le app del dispositivo');
@@ -127,6 +135,23 @@ function guestStatus(text: string, error = false): void {
   DOM.btnPlayMultiplayer.className = error
     ? 'w-2/3 bg-red-950/70 cursor-not-allowed text-red-200 font-black text-base py-3 rounded-xl shadow-md uppercase tracking-widest border border-red-700'
     : 'w-2/3 bg-slate-700 cursor-not-allowed text-white font-black text-xl py-3 rounded-xl shadow-md uppercase tracking-widest border border-slate-600';
+}
+
+function installHostRoomControls(): void {
+  if (document.getElementById('room-host-controls')) return;
+  const panel = document.createElement('div');
+  panel.id = 'room-host-controls';
+  panel.className = 'mt-3 flex flex-col gap-2 rounded-xl border border-cyan-500/30 bg-cyan-950/20 p-3';
+  panel.innerHTML = `
+    <p class="text-xs leading-relaxed text-slate-300">Il tuo amico apre G.O.N.E., sceglie ENTRA CON CODICE e inserisce queste 5 lettere/numeri. Nessuna risposta da copiare.</p>
+    <button id="btn-room-refresh" type="button" class="bg-slate-800 hover:bg-slate-700 border border-slate-600 text-white font-bold text-sm px-3 py-2 rounded-lg">NUOVO CODICE</button>
+    <div id="room-host-status" class="text-xs font-bold text-cyan-300" role="status" aria-live="polite"></div>`;
+  DOM.inviteLinkContainer.appendChild(panel);
+  panel.querySelector('#btn-room-refresh')?.addEventListener('click', () => {
+    void multiplayerSessionController.prepareHostInvite().catch((error) => {
+      console.error('[G.O.N.E.] Nuovo invito fallito', error);
+    });
+  });
 }
 
 function installHostDirectControls(): void {
@@ -240,14 +265,27 @@ function renderSession(snapshot: MultiplayerSessionSnapshot): void {
 
   if (snapshot.role === 'host') {
     hostPlayButton();
+    if (snapshot.inviteKind === 'room-code') {
+      removeDirectControls();
+      DOM.inviteLinkContainer.classList.remove('hidden');
+      setInviteLabel('CODICE STANZA (5 CARATTERI)');
+      DOM.btnCopyLink.textContent = 'COPIA CODICE';
+      DOM.inviteLinkInput.value = snapshot.inviteValue || 'CREAZIONE...';
+      DOM.inviteLinkInput.classList.add('text-center', 'text-2xl', 'tracking-[.3em]', 'font-black');
+      installHostRoomControls();
+      const status = document.getElementById('room-host-status');
+      if (status) status.textContent = snapshot.notice?.text ?? '';
+      return;
+    }
     if (snapshot.inviteKind !== 'host-link') {
-      document.getElementById('direct-host-controls')?.remove();
+      removeDirectControls();
       return;
     }
 
     removeDirectControls();
     DOM.inviteLinkContainer.classList.remove('hidden');
-    setInviteLabel('1. INVIA QUESTO LINK A UN AMICO');
+    DOM.inviteLinkInput.classList.remove('text-center', 'text-2xl', 'tracking-[.3em]', 'font-black');
+    setInviteLabel('INVITO MANUALE (SERVIZIO CODICI NON DISPONIBILE)');
     DOM.btnCopyLink.textContent = 'COPIA LINK';
     DOM.inviteLinkInput.value = snapshot.inviteValue || 'GENERAZIONE INVITO DIRETTO...';
     installHostDirectControls();
@@ -310,7 +348,10 @@ export function setupLobby(
       });
     }
   } else if (directOfferCode) {
-    void multiplayerSessionController.startDirectGuest(directOfferCode, {
+    const join = isRoomCode(directOfferCode)
+      ? multiplayerSessionController.startRoomGuest.bind(multiplayerSessionController)
+      : multiplayerSessionController.startDirectGuest.bind(multiplayerSessionController);
+    void join(directOfferCode, {
       playerName: name,
       onGameStart: () => {
         DOM.multiplayerLobby.classList.remove('flex');

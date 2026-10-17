@@ -9,7 +9,7 @@ Read this first. This is the dense working context for `gernotfound/gone`; use i
 - Vercel is configured for `main` deployment only. Never manually deploy a feature branch.
 - Recheck current `main` before branching/merging; do not rely on a remembered SHA.
 - The owner tests physical iPhone/PWA. Treat those reports as hardware QA; browser emulation is necessary but not equivalent.
-- No paid/external multiplayer runtime infrastructure: no hosted signaling/relay/database/STUN/TURN/PeerJS cloud/Firebase/Supabase.
+- No paid multiplayer runtime infrastructure, hosted game authority, TURN, hosted game servers, PeerJS cloud or Firebase/Supabase. **Explicit product-approved exception:** same-origin Vercel /api/room-signal + a private Hobby-tier Vercel Blob store can temporarily exchange the direct WebRTC offer/answer using one-time five-character codes. The browser host remains gameplay authority; no STUN/TURN servers are introduced. Never enable paid storage or upgrade the plan without owner approval.
 - Direct `iceServers: []` connectivity still depends on LAN/NAT/IPv6. A terminal RTC close requires renegotiation; never claim magic reconnect.
 - There are currently no production users requiring data migrations/backfills. Prefer current-state cleanup and canonical contracts over retroactive compatibility migrations unless explicitly requested.
 
@@ -98,7 +98,7 @@ It must **not** import DOM or `engine.ts`.
 
 ## Direct WebRTC / network authority
 
-- `net/directWebRtc.ts`: manual offer/answer, `iceServers: []`, star host↔guests.
+- `net/directWebRtc.ts`: canonical SDP/RTC negotiation, `iceServers: []`, star host↔guests; manual SDP is a fallback. `net/shortRoomSignaling.ts` is a thin same-origin five-character rendezvous client and `game-web/api/room-signal.js` owns short-lived private Blob SDP records, server-generated CSPRNG codes, owner capability checks and expiry. No gameplay state, player identity/coordinates or replay payloads are stored remotely.
 - Browser host is authoritative.
 - Guest movement is client-predicted but host-validated. `net/movementAuthority.ts` owns the movement envelope; `p2pHost.ts` owns accepted transform state.
 - Movement limits come from Rust physics (30 m/s max horizontal, 25 m/s jump, 54 m/s terminal fall), use host receipt time, bounded jitter/cumulative credit and a separate per-packet teleport ceiling.
