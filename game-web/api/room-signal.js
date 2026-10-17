@@ -26,7 +26,8 @@ async function blobApi(path, init) {
     ...init,
     headers: {
       authorization: `Bearer ${token()}`,
-      'x-api-version': '12',
+      'x-api-version': '13',
+      'x-vercel-blob-store-id': storeId(),
       ...init.headers,
     },
     signal: AbortSignal.timeout(8_000),

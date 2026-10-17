@@ -18,6 +18,8 @@ globalThis.fetch = async (input, init) => {
   operations += 1;
   const url = new URL(input);
   if (url.hostname === 'vercel.com') {
+    assert.equal(init.headers['x-api-version'], '13', 'Blob requests must use the current SDK API protocol');
+    assert.equal(init.headers['x-vercel-blob-store-id'], 'TESTSTORE', 'storage must be restricted to linked private store');
     if (init.method === 'GET') {
       return response(200, { blobs: [...data].map(([pathname]) => ({
         pathname, uploadedAt: new Date().toISOString(),
