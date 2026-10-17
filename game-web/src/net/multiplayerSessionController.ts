@@ -372,8 +372,18 @@ class MultiplayerSessionController {
     if (room) void closeRoom(room.code, room.hostSecret).catch(() => {});
     this.setNotice('RISPOSTA ACCETTATA. ATTESA DEL GIOCATORE...', 'success');
 
+    // Only the host/invitation that accepted this answer may schedule the next
+    // room code. A reset or manually created invite invalidates this callback.
+    const answeredHost = activeP2PHost;
+    const answeredVersion = this.inviteVersion;
     window.setTimeout(() => {
-      if (activeP2PHost) void this.prepareHostInvite().catch((error) => {
+      if (
+        activeP2PHost !== answeredHost
+        || this.inviteVersion !== answeredVersion
+        || this.pendingHostOffer !== null
+      ) return;
+      void this.prepareHostInvite().catch((error) => {
+        if (activeP2PHost !== answeredHost) return;
         console.error('[G.O.N.E.] Invito diretto fallito', error);
         this.setNotice(errorMessage(error).toUpperCase(), 'error');
       });
