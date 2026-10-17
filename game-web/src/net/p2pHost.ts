@@ -339,10 +339,9 @@ export class P2PHost {
   }
 
   public registerPeer(peerId: string, channel: IDataChannel): void {
-    if (this.destroyed || this.channelPeerIds.has(channel) || peerId === this.hostPlayer.id) {
-      if (this.destroyed || peerId === this.hostPlayer.id) {
-        try { channel.close?.(); } catch { /* transport already closed */ }
-      }
+    if (this.channelPeerIds.has(channel)) return;
+    if (this.destroyed || peerId === this.hostPlayer.id) {
+      try { channel.close?.(); } catch { /* transport already closed */ }
       return;
     }
     // A duplicate registration must not replace an established player or
@@ -1085,6 +1084,9 @@ export class P2PHost {
       try { channel.close?.(); } catch { /* transport already closed */ }
       return;
     }
+    // A channel may close synchronously during send; never announce a player
+    // that was already removed by the transport close callback.
+    if (this.peers.get(playerId)?.channel !== channel) return;
     this.broadcastBinary(encodeLobbyPlayerJoined(newPlayerInfo), playerId);
     this.options.onPlayerJoined?.(newPlayerInfo);
   }
