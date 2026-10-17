@@ -57,6 +57,8 @@ Browser matches use the room creator as authoritative host. The host validates l
 
 The Rust `intersect_ray_cylinder` function remains as a compatibility API for historical WASM callers/tests; it is **not** the intended live browser mannequin hitbox.
 
+Guest `FIRE_HITSCAN` packets are preceded by the current `CLIENT_STATE` on the same ordered channel, so a legitimate weapon switch is visible to the host before shot validation. Accepted remote-shot presentation follows the rendered world canvas instead of the HUD and is not suppressed by potentially delayed local round presentation state.
+
 ## Invariants
 
 - No ranged damage past configured hard range.

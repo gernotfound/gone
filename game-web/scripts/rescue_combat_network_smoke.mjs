@@ -149,6 +149,63 @@ async function main() {
     const afterMissHp = await host.evaluate(() => window.goneGame.getP2PHost().playerRecords.get('host')?.hp);
     invariant(afterMissHp === hitHp, `Miss changed authoritative HP from ${hitHp} to ${afterMissHp}`);
 
+
+    console.log('[combat] Checking the host renderer after starting a real game');
+    await host.locator('#btn-play-multiplayer').click();
+    await waitFor(
+      () => host.evaluate(() =>
+        window.goneGame?.vfxManager?.isReady()
+        && !document.getElementById('game-canvas')?.classList.contains('hidden')),
+      'host canvas/VFX initialized', 90_000, 100,
+    );
+    // Losing pointer lock hides the HUD, not the still-visible 3D scene.
+    await host.evaluate(() => document.getElementById('game-ui').classList.add('hidden'));
+    const priorAccepted = await host.evaluate(() =>
+      window.goneGame.getP2PHost().__gonePvpHardeningState.accepted,
+    );
+
+    await guest.evaluate((shooter) => {
+      window.goneGame.getP2PClient().fireHitscan(
+        0, [shooter.x, shooter.y - 0.2, shooter.z], [0, 0, 1],
+      );
+    }, shooterState);
+
+    const hostShotDiagnostics = () => host.evaluate(() => {
+      const session = window.goneGame.getP2PHost();
+      const pool = window.goneGame.vfxManager.getTracerPool();
+      return {
+        accepted: session.__gonePvpHardeningState.accepted,
+        rejectedWeapon: session.__gonePvpHardeningState.rejectedWeapon,
+        rejectedCadence: session.__gonePvpHardeningState.rejectedCadence,
+        rejectedDirection: session.__gonePvpHardeningState.rejectedDirection,
+        roundLocked: session.isRoundLocked(),
+        guestWeapon: session.playerRecords.get("guest")?.activeWeapon,
+        guestAlive: [...session.playerRecords.values()].filter(r => r.id !== session.hostPlayer.id).map(r => r.isAlive),
+        canvasVisible: !document.getElementById('game-canvas')?.classList.contains('hidden'),
+        hudVisible: !document.getElementById('game-ui')?.classList.contains('hidden'),
+        vfxReady: window.goneGame.vfxManager.isReady(),
+        tracersEverSpawned: pool.getTracers().filter(t => t.length > 0).length,
+        tracersActive: pool.getActiveCount(),
+      };
+    });
+    try {
+      await waitFor(() => hostShotDiagnostics().then((d) =>
+        d.accepted > priorAccepted ? d : null), 'host accepts the guest shot', 6000, 30);
+      const visualResult = await waitFor(
+        () => host.evaluate(() => {
+          const tracers = window.goneGame.vfxManager.getTracerPool().getTracers();
+          // Persistent beam endpoints remain after the short visible lifetime.
+          return tracers.some(t => t.length > 0 && t.weaponType === 'assalto'
+            && t.start.lengthSq() > 0 && t.end.lengthSq() > 0);
+        }),
+        'host spawns a real guest bullet tracer', 3000, 20,
+      );
+      invariant(visualResult, 'host did not construct the guest beam');
+    } catch (error) {
+      console.log('[combat] HOST_SHOT_DIAGNOSTICS', JSON.stringify(await hostShotDiagnostics()));
+      throw error;
+    }
+
     if (errors.length > 0) {
       throw new Error(`Browser exceptions detected:\n${errors.join('\n')}`);
     }

@@ -1,5 +1,6 @@
 import { P2PHost } from '../../game-web/src/net/p2pHost.ts';
-import { PACKET_OPCODES } from '../../game-web/src/net/binaryProtocol.ts';
+import { PACKET_OPCODES, decodeClientState, decodeFireHitscan } from '../../game-web/src/net/binaryProtocol.ts';
+import { P2PClient } from '../../game-web/src/net/p2pClient.ts';
 import { assert, assertEqual } from '../helpers/assertions.mjs';
 import { MAZE_PLAYER_RADIUS, MAZE_WALLS } from '../../game-web/src/world/mazeLayout.ts';
 
@@ -70,6 +71,38 @@ function createClientState(overrides = {}) {
 }
 
 export async function run(suite) {
+  suite.test('Guest sends fresh weapon authority ahead of a shot on its ordered channel', () => {
+    const sent = [];
+    const channel = { readyState: 'open', send(packet) { sent.push(packet); } };
+    const client = new P2PClient({ playerId: 'guest', playerName: 'Guest' });
+    client.channel = channel;
+    client.playerSlot = 1;
+    client.status = 'connected';
+    client.setStateProvider(() => ({
+      position: { x: 0, y: 17.5, z: 0 },
+      yaw: 0, pitch: 0, activeWeapon: 3, flags: 1,
+    }));
+
+    const host = new P2PHost({ hostPlayer: { id: 'host', name: 'Host', color: '#00F0FF' } });
+    const guest = createGuestRecord({ activeWeapon: 0 });
+    host.playerRecords.set('guest', guest);
+    host.playerIdToSlot.set('guest', 1);
+    let acceptedVisualShots = 0;
+    host.subscribeAcceptedShot(() => { acceptedVisualShots += 1; });
+
+    client.fireHitscan(3, [0, 17.3, 0], [0, 0, 1]);
+    assertEqual(sent.length, 2, 'shot must follow its weapon state');
+    assertEqual(decodeClientState(sent[0])?.activeWeapon, 3);
+    assertEqual(decodeFireHitscan(sent[1])?.weaponType, 3);
+
+    for (const packet of sent) host.handleChannelMessage('guest', channel, packet);
+    assertEqual(guest.activeWeapon, 3);
+    assertEqual(acceptedVisualShots, 1, 'host must publish an accepted shot to its renderer');
+    assertEqual(host.__gonePvpHardeningState.rejectedWeapon, 0);
+    host.destroy();
+    client.disconnect();
+  });
+
   suite.test('Host receipt clock prevents forged client timestamps from bypassing fire cadence', () => {
     const host = new P2PHost({ hostPlayer: { id: 'host', name: 'Host', color: '#00F0FF' } });
     const guest = createGuestRecord();

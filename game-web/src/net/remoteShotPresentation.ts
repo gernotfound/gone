@@ -15,7 +15,6 @@ import { remotePlayers } from '../gameplay/remotePlayerRegistry.ts';
 import { activeP2PHost, activeP2PClient, multiplayerSessionController } from './multiplayerSessionController.ts';
 import type { P2PHost } from './p2pHost.ts';
 import type { P2PClient } from './p2pClient.ts';
-import { isLocalRoundLocked } from '../gameplay/deathmatchRoundLifecycle.ts';
 
 const fallbackMuzzle = new THREE.Vector3();
 const localMuzzle = new THREE.Vector3();
@@ -24,12 +23,10 @@ const hitPoint = new THREE.Vector3();
 const raycaster = new THREE.Raycaster();
 
 function gameplayVisible(): boolean {
-  const gameUi = document.getElementById('game-ui');
-  return !!gameUi && !gameUi.classList.contains('hidden');
-}
-
-function roundLocked(): boolean {
-  return isLocalRoundLocked() || activeP2PHost?.isRoundLocked() === true;
+  // Pointer-lock loss hides the HUD while the rendered world remains visible.
+  // Remote shots belong to the world canvas, not to transient HUD visibility.
+  const canvas = document.getElementById('game-canvas');
+  return !!canvas && !canvas.classList.contains('hidden');
 }
 
 function exactRemoteMuzzle(shooterId: string, weapon: WeaponModelType, fallback?: readonly number[]): THREE.Vector3 {
@@ -68,7 +65,9 @@ function remoteAudioGain(start: THREE.Vector3): number {
 }
 
 function presentRemoteShot(shooterId: string, shot: FireHitscanData): void {
-  if (roundLocked() || !gameplayVisible() || !vfxManager.isReady()) return;
+  // Host-authorized shot events need no second, potentially delayed UI round
+  // lock gate; the host has already decided whether the shot is permitted.
+  if (!gameplayVisible() || !vfxManager.isReady()) return;
 
   const cfg = getWeaponRuntimeById(shot.weaponType);
   const weapon = cfg.key as WeaponModelType;
