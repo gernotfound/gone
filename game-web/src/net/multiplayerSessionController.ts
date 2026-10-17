@@ -331,7 +331,7 @@ class MultiplayerSessionController {
       try {
         const answer = await pollRoomAnswer(this.pendingRoom.code, this.pendingRoom.hostSecret);
         if (this.inviteVersion !== version || !this.pendingRoom) return;
-        if (answer) {
+        if (answer && !this.applyingHostAnswer) {
           receivedAnswer = true;
           await this.applyHostAnswer(answer);
           return;
