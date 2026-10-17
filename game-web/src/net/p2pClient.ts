@@ -517,8 +517,8 @@ export class P2PClient {
 
   private handleDisconnect(): void {
     this.stopStateTick();
-    this.clearAssignedSession();
     this.setStatus('disconnected');
+    this.clearAssignedSession();
   }
 
   private setStatus(status: ClientConnectionStatus): void {
