@@ -20,7 +20,8 @@ type RoomReply = {
 };
 
 export class RoomSignalingError extends Error {
-  constructor(readonly code: string) {
+  readonly code: string;
+  constructor(code: string) {
     super(({
       invalid_code: 'Il codice deve avere 5 caratteri.',
       room_not_found: 'Stanza non trovata. Verifica il codice.',
@@ -31,6 +32,7 @@ export class RoomSignalingError extends Error {
       invalid_answer: 'Risposta della connessione non valida.',
     } as Record<string, string>)[code] || 'Impossibile completare il collegamento.');
     this.name = 'RoomSignalingError';
+    this.code = code;
   }
 }
 
