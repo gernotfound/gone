@@ -1,4 +1,5 @@
 import { chromium } from 'playwright';
+import { useUnavailableRoomRendezvous } from './helpers/manual_room_fallback.mjs';
 
 const BASE_URL = process.env.GONE_SMOKE_URL || 'http://127.0.0.1:4173';
 const TIMEOUT = 25_000;
@@ -88,12 +89,7 @@ async function main() {
   });
 
   const context = await browser.newContext({ viewport: { width: 1024, height: 720 } });
-  // Vite preview has no Vercel functions. Simulate an unavailable rendezvous
-  // so this existing 8-peer smoke verifies that manual SDP fallback remains live.
-  await context.route('**/api/room-signal', (route) => route.fulfill({
-    status: 200, contentType: 'application/json',
-    body: JSON.stringify({ ok: false, error: 'rendezvous_not_configured' }),
-  }));
+  await useUnavailableRoomRendezvous(context);
   const errors = [];
   const host = await context.newPage();
   attachDiagnostics(host, 'host', errors);

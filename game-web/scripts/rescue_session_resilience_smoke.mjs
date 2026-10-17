@@ -1,4 +1,5 @@
 import { chromium } from 'playwright';
+import { useUnavailableRoomRendezvous } from './helpers/manual_room_fallback.mjs';
 
 const BASE_URL = process.env.GONE_SMOKE_URL || 'http://127.0.0.1:4173';
 const TIMEOUT = 25_000;
@@ -70,6 +71,7 @@ async function main() {
   const hostContext = await browser.newContext({ viewport: { width: 1000, height: 700 } });
   const guestAContext = await browser.newContext({ viewport: { width: 1000, height: 700 } });
   const guestBContext = await browser.newContext({ viewport: { width: 1000, height: 700 } });
+  await Promise.all([hostContext, guestAContext, guestBContext].map(useUnavailableRoomRendezvous));
   const errors = [];
   const host = await hostContext.newPage();
   const guestA = await guestAContext.newPage();
